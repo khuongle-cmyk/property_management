@@ -18,7 +18,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           padding: "24px",
         }}
       >
-        <div style={{ maxWidth: 900, margin: "0 auto" }}>
+        <div style={{ maxWidth: 1200, margin: "0 auto" }}>
           <AppNav />
           {children}
         </div>

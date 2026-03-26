@@ -47,7 +47,8 @@ function PublicBookingForm() {
       .from("bookable_spaces")
       .select("id, name, space_type, hourly_price, requires_approval, space_status")
       .eq("property_id", propertyId)
-      .eq("space_status", "available")
+      .eq("space_status", "vacant")
+      .not("space_type", "eq", "office")
       .order("name", { ascending: true });
 
     if (error) {

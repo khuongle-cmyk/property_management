@@ -44,6 +44,7 @@ export default function NewBookingPage() {
   const [visitorName, setVisitorName] = useState("");
   const [visitorEmail, setVisitorEmail] = useState("");
   const [memberUserId, setMemberUserId] = useState("");
+  const [onBehalfTenantEmail, setOnBehalfTenantEmail] = useState("");
 
   const canCreate = useMemo(
     () => roles.some((r) => ["super_admin", "owner", "manager", "tenant"].includes(r)),
@@ -52,6 +53,11 @@ export default function NewBookingPage() {
 
   const canBookForOthers = useMemo(
     () => roles.some((r) => ["super_admin", "owner", "manager"].includes(r)),
+    [roles]
+  );
+
+  const showOnBehalfTenantEmailField = useMemo(
+    () => roles.some((r) => ["owner", "manager"].includes(r)),
     [roles]
   );
 
@@ -111,7 +117,8 @@ export default function NewBookingPage() {
       .from("bookable_spaces")
       .select("id, name, space_type, hourly_price, requires_approval, space_status")
       .eq("property_id", pid)
-      .eq("space_status", "available")
+      .eq("space_status", "vacant")
+      .not("space_type", "eq", "office")
       .order("name", { ascending: true });
 
     if (sErr) throw new Error(sErr.message);
@@ -183,6 +190,12 @@ export default function NewBookingPage() {
       setBookerMode("self");
     }
   }, [canBookForOthers, bookerMode]);
+
+  useEffect(() => {
+    if (bookerMode === "self") {
+      setOnBehalfTenantEmail("");
+    }
+  }, [bookerMode]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -276,11 +289,17 @@ export default function NewBookingPage() {
     const row = data as { id: string; status: string; total_price: number };
 
     try {
+      const emailBody: Record<string, unknown> = { bookingId: row.id, kind: "created" };
+      const isOwnerManagerOnBehalf =
+        showOnBehalfTenantEmailField && (bookerMode === "visitor" || bookerMode === "member");
+      if (isOwnerManagerOnBehalf && onBehalfTenantEmail.trim()) {
+        emailBody.onBehalfTenantEmail = onBehalfTenantEmail.trim();
+      }
       await fetch("/api/bookings/email", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bookingId: row.id, kind: "created" }),
+        body: JSON.stringify(emailBody),
       });
     } catch {
       /* non-fatal */
@@ -407,6 +426,22 @@ export default function NewBookingPage() {
                     </option>
                   ))}
                 </select>
+              ) : null}
+              {showOnBehalfTenantEmailField && (bookerMode === "visitor" || bookerMode === "member") ? (
+                <label style={{ display: "grid", gap: 6, marginTop: 12 }}>
+                  <span>Tenant email (optional)</span>
+                  <input
+                    type="email"
+                    placeholder="Send a copy of the confirmation to this address"
+                    value={onBehalfTenantEmail}
+                    onChange={(e) => setOnBehalfTenantEmail(e.target.value)}
+                    style={{ padding: 10, borderRadius: 8, border: "1px solid #ddd" }}
+                  />
+                  <span style={{ fontSize: 12, color: "#666" }}>
+                    The visitor or selected member always receives a confirmation. Use this for an extra copy (e.g.
+                    internal tenant contact).
+                  </span>
+                </label>
               ) : null}
             </fieldset>
           ) : null}

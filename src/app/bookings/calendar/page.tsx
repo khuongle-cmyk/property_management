@@ -1,7 +1,7 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { bookingStatusStyle, spaceTypeLabel } from "@/lib/bookings/status-style";
@@ -45,8 +45,9 @@ function overlapsDay(booking: BookingRow, day: Date): boolean {
   return bs < end && be > start;
 }
 
-export default function BookingsCalendarPage() {
+function BookingsCalendarContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [properties, setProperties] = useState<PropertyRow[]>([]);
@@ -158,6 +159,14 @@ export default function BookingsCalendarPage() {
     };
   }, [loadBookings, propertyId]);
 
+  useEffect(() => {
+    const qp = searchParams.get("propertyId")?.trim();
+    if (!qp || properties.length === 0) return;
+    if (properties.some((p) => p.id === qp)) {
+      setPropertyId(qp);
+    }
+  }, [searchParams, properties]);
+
   if (loading && properties.length === 0) {
     return <p>Loading...</p>;
   }
@@ -264,5 +273,13 @@ export default function BookingsCalendarPage() {
         <Link href="/bookings/new">Create a booking</Link>
       </p>
     </div>
+  );
+}
+
+export default function BookingsCalendarPage() {
+  return (
+    <Suspense fallback={<p>Loading…</p>}>
+      <BookingsCalendarContent />
+    </Suspense>
   );
 }

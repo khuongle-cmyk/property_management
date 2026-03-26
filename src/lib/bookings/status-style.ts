@@ -17,17 +17,4 @@ export function bookingStatusStyle(status: string): {
   }
 }
 
-export function spaceTypeLabel(t: string): string {
-  switch (t) {
-    case "meeting_room":
-      return "Meeting room";
-    case "office":
-      return "Office";
-    case "desk":
-      return "Desk";
-    case "hot_desk":
-      return "Hot desk";
-    default:
-      return t;
-  }
-}
+export { spaceTypeLabel } from "@/lib/rooms/labels";

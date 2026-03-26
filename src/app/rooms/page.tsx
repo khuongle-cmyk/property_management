@@ -1,0 +1,1542 @@
+"use client";
+
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ChangeEvent,
+  type CSSProperties,
+  type FormEvent,
+} from "react";
+import { getSupabaseClient } from "@/lib/supabase/browser";
+import {
+  AMENITY_KEYS,
+  SPACE_TYPES,
+  type SpaceType,
+  roomStatusBadgeStyle,
+  spaceTypeBadgeStyle,
+  spaceTypeLabel,
+} from "@/lib/rooms/labels";
+
+type RoomPhoto = { id: string; storage_path: string; sort_order: number };
+
+type RoomRow = {
+  id: string;
+  property_id: string;
+  name: string;
+  room_number: string | null;
+  floor: string | null;
+  space_type: string;
+  capacity: number;
+  size_m2: number | null;
+  space_status: string;
+  hourly_price: number;
+  requires_approval: boolean;
+  combination_id: string | null;
+  is_combination_parent: boolean;
+  hide_tenant_in_ui: boolean | null;
+  monthly_rent_eur: number | null;
+  tenant_company_name: string | null;
+  tenant_contact_name: string | null;
+  tenant_contact_email: string | null;
+  tenant_contact_phone: string | null;
+  contract_start: string | null;
+  contract_end: string | null;
+  security_deposit_eur: number | null;
+  half_day_price_eur: number | null;
+  full_day_price_eur: number | null;
+  min_booking_hours: number | null;
+  daily_price_eur: number | null;
+  amenity_projector: boolean | null;
+  amenity_whiteboard: boolean | null;
+  amenity_video_conferencing: boolean | null;
+  amenity_kitchen_access: boolean | null;
+  amenity_parking: boolean | null;
+  amenity_natural_light: boolean | null;
+  amenity_air_conditioning: boolean | null;
+  amenity_standing_desk: boolean | null;
+  amenity_phone_booth: boolean | null;
+  amenity_reception_service: boolean | null;
+  room_photos: RoomPhoto[] | null;
+};
+
+type PropertyRow = { id: string; name: string; city: string | null; tenant_id: string };
+type MembershipRow = { tenant_id: string | null; role: string | null };
+
+function photoPublicUrl(storagePath: string): string {
+  const base = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  const encoded = storagePath.split("/").map(encodeURIComponent).join("/");
+  return `${base}/storage/v1/object/public/room-photos/${encoded}`;
+}
+
+function priceForFilter(r: RoomRow): number {
+  if (r.space_type === "office") return Number(r.monthly_rent_eur) || 0;
+  if (r.space_type === "hot_desk") {
+    return Math.max(Number(r.hourly_price) || 0, Number(r.daily_price_eur) || 0);
+  }
+  return Math.max(
+    Number(r.hourly_price) || 0,
+    Number(r.half_day_price_eur) || 0,
+    Number(r.full_day_price_eur) || 0
+  );
+}
+
+function isVisibleRoom(r: RoomRow): boolean {
+  return r.space_status !== "merged" || r.is_combination_parent;
+}
+
+function tenantIdForProperty(properties: PropertyRow[], propertyId: string): string | null {
+  return properties.find((p) => p.id === propertyId)?.tenant_id ?? null;
+}
+
+function canManageRoom(
+  room: RoomRow,
+  properties: PropertyRow[],
+  memberships: MembershipRow[],
+  isSuper: boolean
+): boolean {
+  if (isSuper) return true;
+  const tid = tenantIdForProperty(properties, room.property_id);
+  if (!tid) return false;
+  return memberships.some(
+    (m) =>
+      m.tenant_id === tid && ["owner", "manager"].includes((m.role ?? "").toLowerCase())
+  );
+}
+
+function isPropertyOwner(
+  propertyId: string,
+  properties: PropertyRow[],
+  memberships: MembershipRow[],
+  isSuper: boolean
+): boolean {
+  if (isSuper) return true;
+  const tid = tenantIdForProperty(properties, propertyId);
+  if (!tid) return false;
+  return memberships.some((m) => m.tenant_id === tid && (m.role ?? "").toLowerCase() === "owner");
+}
+
+function canSeeTenantDetails(
+  room: RoomRow,
+  properties: PropertyRow[],
+  memberships: MembershipRow[],
+  isSuper: boolean
+): boolean {
+  if (room.space_type !== "office") return false;
+  if (isSuper) return true;
+  const tid = tenantIdForProperty(properties, room.property_id);
+  if (!tid) return false;
+  if (memberships.some((m) => m.tenant_id === tid && (m.role ?? "").toLowerCase() === "owner")) {
+    return true;
+  }
+  const isManager = memberships.some(
+    (m) => m.tenant_id === tid && (m.role ?? "").toLowerCase() === "manager"
+  );
+  if (isManager && !room.hide_tenant_in_ui) return true;
+  return false;
+}
+
+function occupancyForRooms(rooms: RoomRow[]): { pct: number; occ: number; total: number } {
+  const list = rooms.filter(isVisibleRoom);
+  if (list.length === 0) return { pct: 0, occ: 0, total: 0 };
+  const occ = list.filter((r) => r.space_status === "occupied").length;
+  return { occ, total: list.length, pct: Math.round((occ / list.length) * 1000) / 10 };
+}
+
+const btn: CSSProperties = {
+  padding: "6px 10px",
+  borderRadius: 8,
+  border: "1px solid #ccc",
+  background: "#fff",
+  cursor: "pointer",
+  fontSize: 13,
+};
+
+const btnPrimary: CSSProperties = { ...btn, background: "#111", color: "#fff", borderColor: "#111" };
+
+export default function RoomsDashboardPage() {
+  const router = useRouter();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [rooms, setRooms] = useState<RoomRow[]>([]);
+  const [properties, setProperties] = useState<PropertyRow[]>([]);
+  const [memberships, setMemberships] = useState<MembershipRow[]>([]);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [propertyScope, setPropertyScope] = useState<string>("");
+
+  const [filterType, setFilterType] = useState<string>("");
+  const [filterFloor, setFilterFloor] = useState<string>("");
+  const [filterStatus, setFilterStatus] = useState<string>("");
+  const [filterSizeMin, setFilterSizeMin] = useState<string>("");
+  const [filterSizeMax, setFilterSizeMax] = useState<string>("");
+  const [filterPriceMin, setFilterPriceMin] = useState<string>("");
+  const [filterPriceMax, setFilterPriceMax] = useState<string>("");
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [mergeName, setMergeName] = useState("");
+  const [mergeType, setMergeType] = useState<SpaceType>("venue");
+  const [mergeBusy, setMergeBusy] = useState(false);
+
+  const [editing, setEditing] = useState<RoomRow | null>(null);
+  const [editBusy, setEditBusy] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
+
+  const loadAll = useCallback(async () => {
+    const supabase = getSupabaseClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      router.replace("/login");
+      return;
+    }
+
+    const { data: mem, error: mErr } = await supabase.from("memberships").select("tenant_id, role");
+    if (mErr) throw new Error(mErr.message);
+    const mrows = (mem ?? []) as MembershipRow[];
+    setMemberships(mrows);
+    const roles = mrows.map((x) => (x.role ?? "").toLowerCase());
+    const superA = roles.includes("super_admin");
+    setIsSuperAdmin(superA);
+    const tenantIds = [...new Set(mrows.map((x) => x.tenant_id).filter(Boolean))] as string[];
+
+    let pq = supabase.from("properties").select("id, name, city, tenant_id").order("name");
+    if (!superA) {
+      if (tenantIds.length === 0) {
+        setProperties([]);
+        setRooms([]);
+        return;
+      }
+      pq = pq.in("tenant_id", tenantIds);
+    }
+    const { data: props, error: pErr } = await pq;
+    if (pErr) throw new Error(pErr.message);
+    const plist = (props as PropertyRow[]) ?? [];
+    setProperties(plist);
+    const pids = plist.map((p) => p.id);
+    if (pids.length === 0) {
+      setRooms([]);
+      return;
+    }
+
+    const { data: spaces, error: sErr } = await supabase
+      .from("bookable_spaces")
+      .select(
+        `
+        *,
+        room_photos ( id, storage_path, sort_order )
+      `
+      )
+      .in("property_id", pids)
+      .order("name", { ascending: true });
+
+    if (sErr) throw new Error(sErr.message);
+    setRooms((spaces as RoomRow[]) ?? []);
+  }, [router]);
+
+  useEffect(() => {
+    let c = false;
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        await loadAll();
+      } catch (e) {
+        if (!c) setError(e instanceof Error ? e.message : "Failed to load");
+      }
+      if (!c) setLoading(false);
+    })();
+    return () => {
+      c = true;
+    };
+  }, [loadAll]);
+
+  const scopedRooms = useMemo(() => {
+    if (!propertyScope) return rooms;
+    return rooms.filter((r) => r.property_id === propertyScope);
+  }, [rooms, propertyScope]);
+
+  const floors = useMemo(() => {
+    const s = new Set<string>();
+    scopedRooms.forEach((r) => {
+      if (r.floor) s.add(r.floor);
+    });
+    return [...s].sort();
+  }, [scopedRooms]);
+
+  const filteredRooms = useMemo(() => {
+    return scopedRooms.filter((r) => {
+      if (!isVisibleRoom(r)) return false;
+      if (filterType && r.space_type !== filterType) return false;
+      if (filterFloor && (r.floor ?? "") !== filterFloor) return false;
+      if (filterStatus && r.space_status !== filterStatus) return false;
+      const sz = Number(r.size_m2) || 0;
+      if (filterSizeMin && sz < Number(filterSizeMin)) return false;
+      if (filterSizeMax && sz > Number(filterSizeMax)) return false;
+      const pr = priceForFilter(r);
+      if (filterPriceMin && pr < Number(filterPriceMin)) return false;
+      if (filterPriceMax && pr > Number(filterPriceMax)) return false;
+      return true;
+    });
+  }, [scopedRooms, filterType, filterFloor, filterStatus, filterSizeMin, filterSizeMax, filterPriceMin, filterPriceMax]);
+
+  const summaryRooms = useMemo(
+    () => scopedRooms.filter(isVisibleRoom),
+    [scopedRooms]
+  );
+
+  const countsByType = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const t of SPACE_TYPES) m[t] = 0;
+    for (const r of summaryRooms) {
+      m[r.space_type] = (m[r.space_type] ?? 0) + 1;
+    }
+    return m;
+  }, [summaryRooms]);
+
+  const occupancyByType = useMemo(() => {
+    const m: Record<string, ReturnType<typeof occupancyForRooms>> = {};
+    for (const t of SPACE_TYPES) {
+      m[t] = occupancyForRooms(summaryRooms.filter((r) => r.space_type === t));
+    }
+    return m;
+  }, [summaryRooms]);
+
+  const overallOcc = useMemo(() => occupancyForRooms(summaryRooms), [summaryRooms]);
+
+  const monthlyOfficeRevenue = useMemo(() => {
+    return summaryRooms
+      .filter((r) => r.space_type === "office" && r.space_status === "occupied")
+      .reduce((s, r) => s + (Number(r.monthly_rent_eur) || 0), 0);
+  }, [summaryRooms]);
+
+  const occupancyByFloor = useMemo(() => {
+    const floors = [...new Set(summaryRooms.map((r) => r.floor ?? "—"))].sort();
+    return floors.map((f) => ({
+      floor: f,
+      ...occupancyForRooms(summaryRooms.filter((r) => (r.floor ?? "—") === f)),
+    }));
+  }, [summaryRooms]);
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const runMerge = async () => {
+    const ids = [...selectedIds];
+    if (ids.length < 2 || !mergeName.trim()) return;
+    setMergeBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/rooms/merge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          memberSpaceIds: ids,
+          displayName: mergeName.trim(),
+          spaceType: mergeType,
+        }),
+      });
+      const j = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(j.error ?? "Merge failed");
+      setSelectedIds(new Set());
+      setMergeName("");
+      await loadAll();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Merge failed");
+    } finally {
+      setMergeBusy(false);
+    }
+  };
+
+  const runSeparate = async (combinedSpaceId: string) => {
+    if (!confirm("Separate this combined room and restore the original spaces?")) return;
+    setError(null);
+    try {
+      const res = await fetch("/api/rooms/separate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ combinedSpaceId }),
+      });
+      const j = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(j.error ?? "Separate failed");
+      await loadAll();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Separate failed");
+    }
+  };
+
+  const toggleRoomStatus = async (r: RoomRow) => {
+    if (!canManageRoom(r, properties, memberships, isSuperAdmin)) return;
+    let next: string;
+    if (r.space_status === "vacant") next = "occupied";
+    else if (r.space_status === "occupied") next = "vacant";
+    else next = "vacant";
+    const supabase = getSupabaseClient();
+    const { error: uErr } = await supabase.from("bookable_spaces").update({ space_status: next }).eq("id", r.id);
+    if (uErr) {
+      setError(uErr.message);
+      return;
+    }
+    await loadAll();
+  };
+
+  const openEdit = (r: RoomRow) => setEditing({ ...r, room_photos: r.room_photos ?? [] });
+
+  const saveEdit = async (ev: FormEvent<HTMLFormElement>) => {
+    ev.preventDefault();
+    if (!editing) return;
+    setEditBusy(true);
+    setError(null);
+    const supabase = getSupabaseClient();
+    const e = editing;
+    const patch: Record<string, unknown> = {
+      name: e.name,
+      room_number: e.room_number || null,
+      floor: e.floor || null,
+      space_type: e.space_type,
+      capacity: e.capacity,
+      size_m2: e.size_m2 === null || e.size_m2 === ("" as unknown as null) ? null : Number(e.size_m2),
+      space_status: e.space_status,
+      hourly_price: Number(e.hourly_price) || 0,
+      requires_approval: e.requires_approval,
+      hide_tenant_in_ui: !!e.hide_tenant_in_ui,
+      monthly_rent_eur: e.monthly_rent_eur === null ? null : Number(e.monthly_rent_eur) || null,
+      tenant_company_name: e.tenant_company_name || null,
+      tenant_contact_name: e.tenant_contact_name || null,
+      tenant_contact_email: e.tenant_contact_email || null,
+      tenant_contact_phone: e.tenant_contact_phone || null,
+      contract_start: e.contract_start || null,
+      contract_end: e.contract_end || null,
+      security_deposit_eur:
+        e.security_deposit_eur === null ? null : Number(e.security_deposit_eur) || null,
+      half_day_price_eur: e.half_day_price_eur === null ? null : Number(e.half_day_price_eur) || null,
+      full_day_price_eur: e.full_day_price_eur === null ? null : Number(e.full_day_price_eur) || null,
+      min_booking_hours: e.min_booking_hours === null ? null : Number(e.min_booking_hours) || null,
+      daily_price_eur: e.daily_price_eur === null ? null : Number(e.daily_price_eur) || null,
+    };
+    for (const a of AMENITY_KEYS) {
+      patch[a.key] = !!(e as unknown as Record<string, boolean>)[a.key];
+    }
+    const { error: uErr } = await supabase.from("bookable_spaces").update(patch).eq("id", e.id);
+    setEditBusy(false);
+    if (uErr) {
+      setError(uErr.message);
+      return;
+    }
+    setEditing(null);
+    await loadAll();
+  };
+
+  const onPhotoPick = async (ev: ChangeEvent<HTMLInputElement>) => {
+    if (!editing) return;
+    const files = ev.target.files;
+    if (!files?.length) return;
+    setPhotoBusy(true);
+    setError(null);
+    try {
+      const supabase = getSupabaseClient();
+      const existing = editing.room_photos ?? [];
+      let order = existing.reduce((m, p) => Math.max(m, p.sort_order), -1) + 1;
+      for (const file of Array.from(files)) {
+        const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+        const path = `${editing.property_id}/${editing.id}/${Date.now()}_${safe}`;
+        const { error: upErr } = await supabase.storage.from("room-photos").upload(path, file);
+        if (upErr) throw new Error(upErr.message);
+        const { error: insErr } = await supabase
+          .from("room_photos")
+          .insert({ space_id: editing.id, storage_path: path, sort_order: order++ });
+        if (insErr) throw new Error(insErr.message);
+      }
+      const { data: fresh } = await supabase
+        .from("room_photos")
+        .select("id, storage_path, sort_order")
+        .eq("space_id", editing.id)
+        .order("sort_order");
+      setEditing({ ...editing, room_photos: (fresh as RoomPhoto[]) ?? [] });
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setPhotoBusy(false);
+      ev.target.value = "";
+    }
+  };
+
+  const deletePhoto = async (photo: RoomPhoto) => {
+    if (!editing) return;
+    const supabase = getSupabaseClient();
+    await supabase.storage.from("room-photos").remove([photo.storage_path]);
+    await supabase.from("room_photos").delete().eq("id", photo.id);
+    setEditing({
+      ...editing,
+      room_photos: (editing.room_photos ?? []).filter((p) => p.id !== photo.id),
+    });
+    await loadAll();
+  };
+
+  if (loading) return <p>Loading rooms…</p>;
+
+  const mergeCandidates = filteredRooms.filter(
+    (r) =>
+      r.space_status === "vacant" &&
+      !r.is_combination_parent &&
+      selectedIds.has(r.id) &&
+      canManageRoom(r, properties, memberships, isSuperAdmin)
+  );
+  const mergeSameProperty =
+    mergeCandidates.length === selectedIds.size &&
+    mergeCandidates.length >= 2 &&
+    new Set(mergeCandidates.map((r) => r.property_id)).size === 1;
+
+  return (
+    <div style={{ paddingBottom: 48 }}>
+      <h1 style={{ margin: "0 0 8px" }}>Rooms management</h1>
+      <p style={{ marginTop: 0, color: "#555", maxWidth: 720 }}>
+        Filter and manage spaces, pricing, amenities, tenant lease details for offices, and combined rooms.
+        Occupancy metrics below feed the same status fields used across bookings.
+      </p>
+
+      {error ? (
+        <p style={{ color: "#b00020", padding: "8px 12px", background: "#fff5f5", borderRadius: 8 }}>{error}</p>
+      ) : null}
+
+      <section
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 10,
+          marginTop: 20,
+          padding: 14,
+          background: "#f8f9fa",
+          borderRadius: 12,
+          border: "1px solid #e9ecef",
+        }}
+      >
+        <strong style={{ width: "100%", marginBottom: 4 }}>Summary</strong>
+        {SPACE_TYPES.map((t) => (
+          <div key={t} style={{ padding: "8px 12px", background: "#fff", borderRadius: 8, border: "1px solid #dee2e6" }}>
+            <div style={{ fontSize: 12, color: "#666" }}>{spaceTypeLabel(t)}</div>
+            <div style={{ fontWeight: 600 }}>
+              {countsByType[t] ?? 0} rooms · {occupancyByType[t]?.pct ?? 0}% occ.
+            </div>
+          </div>
+        ))}
+        <div style={{ padding: "8px 12px", background: "#fff", borderRadius: 8, border: "1px solid #dee2e6" }}>
+          <div style={{ fontSize: 12, color: "#666" }}>Overall</div>
+          <div style={{ fontWeight: 600 }}>
+            {overallOcc.occ}/{overallOcc.total} occupied ({overallOcc.pct}%)
+          </div>
+        </div>
+        <div style={{ padding: "8px 12px", background: "#fff", borderRadius: 8, border: "1px solid #dee2e6" }}>
+          <div style={{ fontSize: 12, color: "#666" }}>Monthly office rent (occupied)</div>
+          <div style={{ fontWeight: 600 }}>€{monthlyOfficeRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+        </div>
+      </section>
+
+      <section style={{ marginTop: 24 }}>
+        <h2 style={{ fontSize: 16, margin: "0 0 8px" }}>Occupancy reporting</h2>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 }}>
+          <div>
+            <div style={{ fontSize: 13, color: "#555", marginBottom: 6 }}>By room type</div>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd" }}>
+                  <th style={{ padding: "6px 4px" }}>Type</th>
+                  <th style={{ padding: "6px 4px" }}>Occ %</th>
+                  <th style={{ padding: "6px 4px" }}>Count</th>
+                </tr>
+              </thead>
+              <tbody>
+                {SPACE_TYPES.map((t) => (
+                  <tr key={t} style={{ borderBottom: "1px solid #eee" }}>
+                    <td style={{ padding: "6px 4px" }}>{spaceTypeLabel(t)}</td>
+                    <td style={{ padding: "6px 4px" }}>{occupancyByType[t]?.pct ?? 0}%</td>
+                    <td style={{ padding: "6px 4px" }}>
+                      {occupancyByType[t]?.occ ?? 0}/{occupancyByType[t]?.total ?? 0}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div>
+            <div style={{ fontSize: 13, color: "#555", marginBottom: 6 }}>By floor</div>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd" }}>
+                  <th style={{ padding: "6px 4px" }}>Floor</th>
+                  <th style={{ padding: "6px 4px" }}>Occ %</th>
+                  <th style={{ padding: "6px 4px" }}>Count</th>
+                </tr>
+              </thead>
+              <tbody>
+                {occupancyByFloor.map((row) => (
+                  <tr key={row.floor} style={{ borderBottom: "1px solid #eee" }}>
+                    <td style={{ padding: "6px 4px" }}>{row.floor}</td>
+                    <td style={{ padding: "6px 4px" }}>{row.pct}%</td>
+                    <td style={{ padding: "6px 4px" }}>
+                      {row.occ}/{row.total}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section style={{ marginTop: 24, display: "grid", gap: 12 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end" }}>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 12, color: "#555" }}>Property</span>
+            <select
+              value={propertyScope}
+              onChange={(e) => setPropertyScope(e.target.value)}
+              style={{ padding: 8, minWidth: 180 }}
+            >
+              <option value="">All accessible</option>
+              {properties.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                  {p.city ? ` · ${p.city}` : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 12, color: "#555" }}>Type</span>
+            <select
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value)}
+              style={{ padding: 8, minWidth: 140 }}
+            >
+              <option value="">Any</option>
+              {SPACE_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {spaceTypeLabel(t)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 12, color: "#555" }}>Floor</span>
+            <select
+              value={filterFloor}
+              onChange={(e) => setFilterFloor(e.target.value)}
+              style={{ padding: 8, minWidth: 120 }}
+            >
+              <option value="">Any</option>
+              {floors.map((f) => (
+                <option key={f} value={f}>
+                  {f}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 12, color: "#555" }}>Status</span>
+            <select
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value)}
+              style={{ padding: 8, minWidth: 140 }}
+            >
+              <option value="">Any</option>
+              <option value="vacant">Vacant</option>
+              <option value="occupied">Occupied</option>
+              <option value="under_maintenance">Under maintenance</option>
+            </select>
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 12, color: "#555" }}>Size min (m²)</span>
+            <input
+              value={filterSizeMin}
+              onChange={(e) => setFilterSizeMin(e.target.value)}
+              type="number"
+              min={0}
+              style={{ padding: 8, width: 100 }}
+            />
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 12, color: "#555" }}>Size max</span>
+            <input
+              value={filterSizeMax}
+              onChange={(e) => setFilterSizeMax(e.target.value)}
+              type="number"
+              min={0}
+              style={{ padding: 8, width: 100 }}
+            />
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 12, color: "#555" }}>Price min (€)</span>
+            <input
+              value={filterPriceMin}
+              onChange={(e) => setFilterPriceMin(e.target.value)}
+              type="number"
+              min={0}
+              style={{ padding: 8, width: 100 }}
+            />
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 12, color: "#555" }}>Price max</span>
+            <input
+              value={filterPriceMax}
+              onChange={(e) => setFilterPriceMax(e.target.value)}
+              type="number"
+              min={0}
+              style={{ padding: 8, width: 100 }}
+            />
+          </label>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              type="button"
+              style={viewMode === "grid" ? btnPrimary : btn}
+              onClick={() => setViewMode("grid")}
+            >
+              Grid
+            </button>
+            <button
+              type="button"
+              style={viewMode === "list" ? btnPrimary : btn}
+              onClick={() => setViewMode("list")}
+            >
+              List
+            </button>
+          </div>
+        </div>
+
+        {selectedIds.size > 0 ? (
+          <div
+            style={{
+              padding: 12,
+              border: "1px dashed #999",
+              borderRadius: 10,
+              background: "#fffef7",
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 10,
+              alignItems: "center",
+            }}
+          >
+            <span style={{ fontSize: 14 }}>{selectedIds.size} selected</span>
+            <input
+              placeholder="Combined space name"
+              value={mergeName}
+              onChange={(e) => setMergeName(e.target.value)}
+              style={{ padding: 8, minWidth: 200 }}
+            />
+            <select value={mergeType} onChange={(e) => setMergeType(e.target.value as SpaceType)} style={{ padding: 8 }}>
+              {SPACE_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {spaceTypeLabel(t)}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              style={btnPrimary}
+              disabled={mergeBusy || !mergeSameProperty || !mergeName.trim()}
+              onClick={() => void runMerge()}
+            >
+              {mergeBusy ? "Merging…" : "Merge rooms"}
+            </button>
+            {!mergeSameProperty && selectedIds.size >= 2 ? (
+              <span style={{ fontSize: 12, color: "#a00" }}>
+                Select only vacant, non-combined rooms from one property.
+              </span>
+            ) : null}
+            <button type="button" style={btn} onClick={() => setSelectedIds(new Set())}>
+              Clear selection
+            </button>
+          </div>
+        ) : null}
+      </section>
+
+      {viewMode === "grid" ? (
+        <div
+          style={{
+            marginTop: 20,
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+            gap: 16,
+          }}
+        >
+          {filteredRooms.map((r) => (
+            <RoomCard
+              key={r.id}
+              room={r}
+              properties={properties}
+              memberships={memberships}
+              isSuperAdmin={isSuperAdmin}
+              selected={selectedIds.has(r.id)}
+              onToggleSelect={() => toggleSelect(r.id)}
+              onEdit={() => openEdit(r)}
+              onToggleStatus={() => void toggleRoomStatus(r)}
+              onSeparate={() => void runSeparate(r.id)}
+            />
+          ))}
+        </div>
+      ) : (
+        <RoomListTable
+          rooms={filteredRooms}
+          properties={properties}
+          memberships={memberships}
+          isSuperAdmin={isSuperAdmin}
+          selectedIds={selectedIds}
+          onToggleSelect={toggleSelect}
+          onEdit={openEdit}
+          onToggleStatus={(room) => void toggleRoomStatus(room)}
+          onSeparate={(id) => void runSeparate(id)}
+        />
+      )}
+
+      {filteredRooms.length === 0 ? <p style={{ color: "#888", marginTop: 24 }}>No rooms match filters.</p> : null}
+
+      {editing ? (
+        <EditModal
+          room={editing}
+          properties={properties}
+          memberships={memberships}
+          isSuperAdmin={isSuperAdmin}
+          editBusy={editBusy}
+          photoBusy={photoBusy}
+          onClose={() => setEditing(null)}
+          onSave={(ev) => void saveEdit(ev)}
+          onChange={setEditing}
+          onPhotoPick={onPhotoPick}
+          onDeletePhoto={(ph) => void deletePhoto(ph)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function RoomCard({
+  room: r,
+  properties,
+  memberships,
+  isSuperAdmin,
+  selected,
+  onToggleSelect,
+  onEdit,
+  onToggleStatus,
+  onSeparate,
+}: {
+  room: RoomRow;
+  properties: PropertyRow[];
+  memberships: MembershipRow[];
+  isSuperAdmin: boolean;
+  selected: boolean;
+  onToggleSelect: () => void;
+  onEdit: () => void;
+  onToggleStatus: () => void;
+  onSeparate: () => void;
+}) {
+  const tStyle = spaceTypeBadgeStyle(r.space_type);
+  const sStyle = roomStatusBadgeStyle(r.space_status);
+  const canWrite = canManageRoom(r, properties, memberships, isSuperAdmin);
+  const showTenant = canSeeTenantDetails(r, properties, memberships, isSuperAdmin);
+  const thumb = r.room_photos?.[0]?.storage_path;
+  return (
+    <article
+      style={{
+        border: `1px solid ${selected ? "#111" : "#e0e0e0"}`,
+        borderRadius: 12,
+        padding: 12,
+        display: "grid",
+        gap: 8,
+        background: "#fff",
+        boxShadow: selected ? "0 0 0 2px #111" : "none",
+      }}
+    >
+      {thumb ? (
+        <img
+          src={photoPublicUrl(thumb)}
+          alt=""
+          style={{ width: "100%", height: 120, objectFit: "cover", borderRadius: 8 }}
+        />
+      ) : (
+        <div style={{ height: 120, background: "#f1f3f5", borderRadius: 8 }} />
+      )}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+        <span style={{ fontWeight: 700, fontSize: 16 }}>{r.name}</span>
+        {r.room_number ? <span style={{ color: "#666", fontSize: 13 }}>#{r.room_number}</span> : null}
+        {r.is_combination_parent ? (
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              padding: "2px 6px",
+              borderRadius: 4,
+              background: "#ede7f6",
+              color: "#4527a0",
+            }}
+          >
+            Combined
+          </span>
+        ) : null}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 600,
+            padding: "3px 8px",
+            borderRadius: 6,
+            background: tStyle.bg,
+            color: tStyle.fg,
+            border: `1px solid ${tStyle.bd}`,
+          }}
+        >
+          {spaceTypeLabel(r.space_type)}
+        </span>
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 600,
+            padding: "3px 8px",
+            borderRadius: 6,
+            background: sStyle.bg,
+            color: sStyle.fg,
+            border: `1px solid ${sStyle.bd}`,
+          }}
+        >
+          {r.space_status.replace(/_/g, " ")}
+        </span>
+      </div>
+      <div style={{ fontSize: 13, color: "#444" }}>
+        Floor {r.floor ?? "—"} · {r.size_m2 != null ? `${r.size_m2} m²` : "—"} · Cap. {r.capacity}
+      </div>
+      {r.space_type === "office" && showTenant && r.tenant_company_name ? (
+        <div style={{ fontSize: 12, color: "#555" }}>Tenant: {r.tenant_company_name}</div>
+      ) : null}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+        {canWrite && !r.is_combination_parent && r.space_status === "vacant" ? (
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+            <input type="checkbox" checked={selected} onChange={onToggleSelect} />
+            Merge
+          </label>
+        ) : null}
+        {canWrite ? (
+          <button type="button" style={btn} onClick={onEdit}>
+            Edit
+          </button>
+        ) : null}
+        <Link
+          href={`/bookings/calendar?propertyId=${encodeURIComponent(r.property_id)}`}
+          style={{ ...btn, display: "inline-block", textDecoration: "none", color: "#111" }}
+        >
+          Bookings
+        </Link>
+        {canWrite ? (
+          <button type="button" style={btn} onClick={onToggleStatus}>
+            Toggle status
+          </button>
+        ) : null}
+        {canWrite && r.is_combination_parent ? (
+          <button type="button" style={{ ...btn, borderColor: "#b00020", color: "#b00020" }} onClick={onSeparate}>
+            Separate rooms
+          </button>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
+function RoomListTable({
+  rooms,
+  properties,
+  memberships,
+  isSuperAdmin,
+  selectedIds,
+  onToggleSelect,
+  onEdit,
+  onToggleStatus,
+  onSeparate,
+}: {
+  rooms: RoomRow[];
+  properties: PropertyRow[];
+  memberships: MembershipRow[];
+  isSuperAdmin: boolean;
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string) => void;
+  onEdit: (r: RoomRow) => void;
+  onToggleStatus: (r: RoomRow) => void;
+  onSeparate: (id: string) => void;
+}) {
+  return (
+    <div style={{ marginTop: 20, overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <thead>
+          <tr style={{ textAlign: "left", borderBottom: "2px solid #ccc" }}>
+            <th style={{ padding: 8 }} />
+            <th style={{ padding: 8 }}>Room</th>
+            <th style={{ padding: 8 }}>Type</th>
+            <th style={{ padding: 8 }}>Status</th>
+            <th style={{ padding: 8 }}>Floor</th>
+            <th style={{ padding: 8 }}>m²</th>
+            <th style={{ padding: 8 }}>Cap</th>
+            <th style={{ padding: 8 }}>Price</th>
+            <th style={{ padding: 8 }}>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rooms.map((r) => {
+            const canWrite = canManageRoom(r, properties, memberships, isSuperAdmin);
+            const tSt = spaceTypeBadgeStyle(r.space_type);
+            const sSt = roomStatusBadgeStyle(r.space_status);
+            return (
+              <tr key={r.id} style={{ borderBottom: "1px solid #eee" }}>
+                <td style={{ padding: 8 }}>
+                  {canWrite && !r.is_combination_parent && r.space_status === "vacant" ? (
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(r.id)}
+                      onChange={() => onToggleSelect(r.id)}
+                    />
+                  ) : null}
+                </td>
+                <td style={{ padding: 8 }}>
+                  {r.name}
+                  {r.room_number ? ` · #${r.room_number}` : ""}
+                  {r.is_combination_parent ? " · ⧉" : ""}
+                </td>
+                <td style={{ padding: 8 }}>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      padding: "2px 6px",
+                      borderRadius: 4,
+                      background: tSt.bg,
+                      color: tSt.fg,
+                    }}
+                  >
+                    {spaceTypeLabel(r.space_type)}
+                  </span>
+                </td>
+                <td style={{ padding: 8 }}>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      padding: "2px 6px",
+                      borderRadius: 4,
+                      background: sSt.bg,
+                      color: sSt.fg,
+                    }}
+                  >
+                    {r.space_status}
+                  </span>
+                </td>
+                <td style={{ padding: 8 }}>{r.floor ?? "—"}</td>
+                <td style={{ padding: 8 }}>{r.size_m2 ?? "—"}</td>
+                <td style={{ padding: 8 }}>{r.capacity}</td>
+                <td style={{ padding: 8 }}>
+                  {r.space_type === "office"
+                    ? r.monthly_rent_eur != null
+                      ? `€${r.monthly_rent_eur}/mo`
+                      : "—"
+                    : `€${r.hourly_price}/h`}
+                </td>
+                <td style={{ padding: 8 }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {canWrite ? (
+                      <button type="button" style={btn} onClick={() => onEdit(r)}>
+                        Edit
+                      </button>
+                    ) : null}
+                    <Link
+                      href={`/bookings/calendar?propertyId=${encodeURIComponent(r.property_id)}`}
+                      style={{ ...btn, display: "inline-block", textDecoration: "none", color: "#111" }}
+                    >
+                      Bookings
+                    </Link>
+                    {canWrite ? (
+                      <button type="button" style={btn} onClick={() => onToggleStatus(r)}>
+                        Status
+                      </button>
+                    ) : null}
+                    {canWrite && r.is_combination_parent ? (
+                      <button type="button" style={btn} onClick={() => onSeparate(r.id)}>
+                        Separate
+                      </button>
+                    ) : null}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function EditModal({
+  room,
+  properties,
+  memberships,
+  isSuperAdmin,
+  editBusy,
+  photoBusy,
+  onClose,
+  onSave,
+  onChange,
+  onPhotoPick,
+  onDeletePhoto,
+}: {
+  room: RoomRow;
+  properties: PropertyRow[];
+  memberships: MembershipRow[];
+  isSuperAdmin: boolean;
+  editBusy: boolean;
+  photoBusy: boolean;
+  onClose: () => void;
+  onSave: (ev: FormEvent<HTMLFormElement>) => void;
+  onChange: (r: RoomRow) => void;
+  onPhotoPick: (ev: ChangeEvent<HTMLInputElement>) => void;
+  onDeletePhoto: (p: RoomPhoto) => void;
+}) {
+  const canWrite = canManageRoom(room, properties, memberships, isSuperAdmin);
+  const showTenant = canSeeTenantDetails(room, properties, memberships, isSuperAdmin);
+  const canToggleHideTenant = isPropertyOwner(room.property_id, properties, memberships, isSuperAdmin);
+  if (!canWrite) {
+    return (
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(0,0,0,0.4)",
+          display: "grid",
+          placeItems: "center",
+          zIndex: 50,
+          padding: 16,
+        }}
+      >
+        <div style={{ background: "#fff", padding: 24, borderRadius: 12, maxWidth: 400 }}>
+          <p>You do not have permission to edit rooms.</p>
+          <button type="button" style={btnPrimary} onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const propName = properties.find((p) => p.id === room.property_id)?.name ?? "";
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.45)",
+        zIndex: 50,
+        overflow: "auto",
+        padding: 24,
+      }}
+    >
+      <form
+        onSubmit={onSave}
+        style={{
+          maxWidth: 560,
+          margin: "0 auto",
+          background: "#fff",
+          borderRadius: 12,
+          padding: 20,
+          display: "grid",
+          gap: 12,
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <h2 style={{ margin: 0, fontSize: 18 }}>Edit room</h2>
+          <button type="button" style={btn} onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <p style={{ margin: 0, fontSize: 13, color: "#666" }}>
+          Property: <strong>{propName}</strong>
+        </p>
+
+        <label style={{ display: "grid", gap: 4 }}>
+          Name
+          <input
+            value={room.name}
+            onChange={(e) => onChange({ ...room, name: e.target.value })}
+            required
+            style={{ padding: 8 }}
+          />
+        </label>
+        <label style={{ display: "grid", gap: 4 }}>
+          Room number
+          <input
+            value={room.room_number ?? ""}
+            onChange={(e) => onChange({ ...room, room_number: e.target.value || null })}
+            style={{ padding: 8 }}
+          />
+        </label>
+        <label style={{ display: "grid", gap: 4 }}>
+          Floor
+          <input
+            value={room.floor ?? ""}
+            onChange={(e) => onChange({ ...room, floor: e.target.value || null })}
+            style={{ padding: 8 }}
+          />
+        </label>
+        <label style={{ display: "grid", gap: 4 }}>
+          Size (m²)
+          <input
+            type="number"
+            min={0}
+            step="0.01"
+            value={room.size_m2 ?? ""}
+            onChange={(e) =>
+              onChange({
+                ...room,
+                size_m2: e.target.value === "" ? null : Number(e.target.value),
+              })
+            }
+            style={{ padding: 8 }}
+          />
+        </label>
+        <label style={{ display: "grid", gap: 4 }}>
+          Capacity
+          <input
+            type="number"
+            min={1}
+            value={room.capacity}
+            onChange={(e) => onChange({ ...room, capacity: Math.max(1, Number(e.target.value) || 1) })}
+            style={{ padding: 8 }}
+          />
+        </label>
+        <label style={{ display: "grid", gap: 4 }}>
+          Type
+          <select
+            value={room.space_type}
+            onChange={(e) => onChange({ ...room, space_type: e.target.value })}
+            style={{ padding: 8 }}
+          >
+            {SPACE_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {spaceTypeLabel(t)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label style={{ display: "grid", gap: 4 }}>
+          Status
+          <select
+            value={room.space_status}
+            onChange={(e) => onChange({ ...room, space_status: e.target.value })}
+            style={{ padding: 8 }}
+          >
+            <option value="vacant">Vacant</option>
+            <option value="occupied">Occupied</option>
+            <option value="under_maintenance">Under maintenance</option>
+            <option value="merged" disabled>
+              Merged (read-only)
+            </option>
+          </select>
+        </label>
+        {room.is_combination_parent ? (
+          <p style={{ fontSize: 12, color: "#666" }}>
+            Combined space: use “Separate rooms” on the card to restore members.
+          </p>
+        ) : null}
+
+        <label style={{ display: "grid", gap: 4 }}>
+          Hourly price (€)
+          <input
+            type="number"
+            min={0}
+            step="0.01"
+            value={room.hourly_price}
+            onChange={(e) => onChange({ ...room, hourly_price: Number(e.target.value) || 0 })}
+            style={{ padding: 8 }}
+          />
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
+          <input
+            type="checkbox"
+            checked={room.requires_approval}
+            onChange={(e) => onChange({ ...room, requires_approval: e.target.checked })}
+          />
+          Requires approval for bookings
+        </label>
+
+        {room.space_type === "office" ? (
+          <fieldset style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12 }}>
+            <legend>Office lease</legend>
+            <label style={{ display: "grid", gap: 4, marginBottom: 8 }}>
+              Monthly rent (€)
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={room.monthly_rent_eur ?? ""}
+                onChange={(e) =>
+                  onChange({
+                    ...room,
+                    monthly_rent_eur: e.target.value === "" ? null : Number(e.target.value),
+                  })
+                }
+                style={{ padding: 8 }}
+              />
+            </label>
+            {showTenant ? (
+              <>
+                <label style={{ display: "grid", gap: 4, marginBottom: 8 }}>
+                  Tenant company
+                  <input
+                    value={room.tenant_company_name ?? ""}
+                    onChange={(e) => onChange({ ...room, tenant_company_name: e.target.value || null })}
+                    style={{ padding: 8 }}
+                  />
+                </label>
+                <label style={{ display: "grid", gap: 4, marginBottom: 8 }}>
+                  Contact name
+                  <input
+                    value={room.tenant_contact_name ?? ""}
+                    onChange={(e) => onChange({ ...room, tenant_contact_name: e.target.value || null })}
+                    style={{ padding: 8 }}
+                  />
+                </label>
+                <label style={{ display: "grid", gap: 4, marginBottom: 8 }}>
+                  Contact email
+                  <input
+                    type="email"
+                    value={room.tenant_contact_email ?? ""}
+                    onChange={(e) => onChange({ ...room, tenant_contact_email: e.target.value || null })}
+                    style={{ padding: 8 }}
+                  />
+                </label>
+                <label style={{ display: "grid", gap: 4, marginBottom: 8 }}>
+                  Contact phone
+                  <input
+                    value={room.tenant_contact_phone ?? ""}
+                    onChange={(e) => onChange({ ...room, tenant_contact_phone: e.target.value || null })}
+                    style={{ padding: 8 }}
+                  />
+                </label>
+                <label style={{ display: "grid", gap: 4, marginBottom: 8 }}>
+                  Contract start
+                  <input
+                    type="date"
+                    value={(room.contract_start ?? "").slice(0, 10)}
+                    onChange={(e) => onChange({ ...room, contract_start: e.target.value || null })}
+                    style={{ padding: 8 }}
+                  />
+                </label>
+                <label style={{ display: "grid", gap: 4, marginBottom: 8 }}>
+                  Contract end
+                  <input
+                    type="date"
+                    value={(room.contract_end ?? "").slice(0, 10)}
+                    onChange={(e) => onChange({ ...room, contract_end: e.target.value || null })}
+                    style={{ padding: 8 }}
+                  />
+                </label>
+                <label style={{ display: "grid", gap: 4, marginBottom: 8 }}>
+                  Security deposit (€)
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={room.security_deposit_eur ?? ""}
+                    onChange={(e) =>
+                      onChange({
+                        ...room,
+                        security_deposit_eur: e.target.value === "" ? null : Number(e.target.value),
+                      })
+                    }
+                    style={{ padding: 8 }}
+                  />
+                </label>
+              </>
+            ) : (
+              <p style={{ fontSize: 13, color: "#777", margin: 0 }}>
+                Tenant details are hidden for your role (or by office privacy settings). An owner can disable
+                &quot;Hide tenant in UI&quot; for managers to see this block.
+              </p>
+            )}
+            {canToggleHideTenant ? (
+              <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 14 }}>
+                <input
+                  type="checkbox"
+                  checked={!!room.hide_tenant_in_ui}
+                  onChange={(e) => onChange({ ...room, hide_tenant_in_ui: e.target.checked })}
+                />
+                Hide tenant details from managers (presentations / screen share)
+              </label>
+            ) : null}
+          </fieldset>
+        ) : null}
+
+        {(room.space_type === "conference_room" || room.space_type === "venue") && (
+          <fieldset style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12 }}>
+            <legend>Booking pricing</legend>
+            <label style={{ display: "grid", gap: 4, marginBottom: 8 }}>
+              Half day (€)
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={room.half_day_price_eur ?? ""}
+                onChange={(e) =>
+                  onChange({
+                    ...room,
+                    half_day_price_eur: e.target.value === "" ? null : Number(e.target.value),
+                  })
+                }
+                style={{ padding: 8 }}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 4, marginBottom: 8 }}>
+              Full day (€)
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={room.full_day_price_eur ?? ""}
+                onChange={(e) =>
+                  onChange({
+                    ...room,
+                    full_day_price_eur: e.target.value === "" ? null : Number(e.target.value),
+                  })
+                }
+                style={{ padding: 8 }}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 4 }}>
+              Minimum booking (hours)
+              <input
+                type="number"
+                min={0}
+                step="0.25"
+                value={room.min_booking_hours ?? ""}
+                onChange={(e) =>
+                  onChange({
+                    ...room,
+                    min_booking_hours: e.target.value === "" ? null : Number(e.target.value),
+                  })
+                }
+                style={{ padding: 8 }}
+              />
+            </label>
+          </fieldset>
+        )}
+
+        {room.space_type === "hot_desk" && (
+          <fieldset style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12 }}>
+            <legend>Hot desk pricing</legend>
+            <label style={{ display: "grid", gap: 4 }}>
+              Daily price (€)
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={room.daily_price_eur ?? ""}
+                onChange={(e) =>
+                  onChange({
+                    ...room,
+                    daily_price_eur: e.target.value === "" ? null : Number(e.target.value),
+                  })
+                }
+                style={{ padding: 8 }}
+              />
+            </label>
+          </fieldset>
+        )}
+
+        <fieldset style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12 }}>
+          <legend>Amenities</legend>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            {AMENITY_KEYS.map((a) => (
+              <label key={a.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={!!(room as unknown as Record<string, boolean>)[a.key]}
+                  onChange={(e) =>
+                    onChange({ ...room, [a.key]: e.target.checked } as RoomRow)
+                  }
+                />
+                {a.label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+
+        <fieldset style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12 }}>
+          <legend>Photos</legend>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {(room.room_photos ?? []).map((ph) => (
+              <div key={ph.id} style={{ position: "relative" }}>
+                <img
+                  src={photoPublicUrl(ph.storage_path)}
+                  alt=""
+                  style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 8 }}
+                />
+                <button
+                  type="button"
+                  onClick={() => onDeletePhoto(ph)}
+                  style={{
+                    position: "absolute",
+                    top: 2,
+                    right: 2,
+                    padding: "2px 6px",
+                    fontSize: 11,
+                    borderRadius: 4,
+                    border: "none",
+                    background: "#b00020",
+                    color: "#fff",
+                    cursor: "pointer",
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+          <label
+            style={{
+              marginTop: 8,
+              display: "inline-block",
+              cursor: photoBusy ? "wait" : "pointer",
+            }}
+          >
+            <span
+              style={{
+                ...btnPrimary,
+                display: "inline-block",
+                padding: "8px 12px",
+                borderRadius: 8,
+              }}
+            >
+              {photoBusy ? "Uploading…" : "Add photos"}
+            </span>
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              style={{ display: "none" }}
+              onChange={onPhotoPick}
+              disabled={photoBusy}
+            />
+          </label>
+        </fieldset>
+
+        <button type="submit" style={btnPrimary} disabled={editBusy}>
+          {editBusy ? "Saving…" : "Save"}
+        </button>
+      </form>
+    </div>
+  );
+}

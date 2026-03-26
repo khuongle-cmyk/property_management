@@ -25,6 +25,7 @@ export default function AppNav() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [showManageBookings, setShowManageBookings] = useState(false);
   const [showOwnerDashboard, setShowOwnerDashboard] = useState(false);
+  const [showRoomsNav, setShowRoomsNav] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -39,6 +40,7 @@ export default function AppNav() {
         setLoggedIn(false);
         setShowManageBookings(false);
         setShowOwnerDashboard(false);
+        setShowRoomsNav(false);
         setReady(true);
         return;
       }
@@ -50,6 +52,20 @@ export default function AppNav() {
 
       setShowManageBookings(roles.some(canSeeManageBookingsNav));
       setShowOwnerDashboard(roles.some((r) => ["owner", "super_admin"].includes(r)));
+      setShowRoomsNav(
+        roles.some((r) =>
+          [
+            "super_admin",
+            "owner",
+            "manager",
+            "viewer",
+            "customer_service",
+            "accounting",
+            "maintenance",
+            "tenant",
+          ].includes(r)
+        )
+      );
       setReady(true);
     })();
     return () => {
@@ -99,6 +115,11 @@ export default function AppNav() {
             <Link href="/bookings/my" style={linkStyle(pathname === "/bookings/my")}>
               My Bookings
             </Link>
+            {showRoomsNav ? (
+              <Link href="/rooms" style={linkStyle(pathname === "/rooms" || pathname.startsWith("/rooms/"))}>
+                Rooms
+              </Link>
+            ) : null}
             {showManageBookings ? (
               <Link href="/bookings/manage" style={linkStyle(pathname === "/bookings/manage")}>
                 Manage Bookings

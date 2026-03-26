@@ -56,7 +56,7 @@ export async function POST(req: Request) {
 
   const { data: space, error: spaceErr } = await admin
     .from("bookable_spaces")
-    .select("id, property_id, space_status")
+    .select("id, property_id, space_status, space_type")
     .eq("id", spaceId)
     .maybeSingle();
 
@@ -66,7 +66,10 @@ export async function POST(req: Request) {
   if (space.property_id !== propertyId) {
     return NextResponse.json({ error: "Space does not belong to this property" }, { status: 400 });
   }
-  if (space.space_status !== "available") {
+  if ((space as { space_type?: string }).space_type === "office") {
+    return NextResponse.json({ error: "Offices are not bookable by the hour here" }, { status: 409 });
+  }
+  if (space.space_status !== "vacant") {
     return NextResponse.json({ error: "Space is not available" }, { status: 409 });
   }
 
