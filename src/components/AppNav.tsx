@@ -26,6 +26,7 @@ export default function AppNav() {
   const [showManageBookings, setShowManageBookings] = useState(false);
   const [showOwnerDashboard, setShowOwnerDashboard] = useState(false);
   const [showRoomsNav, setShowRoomsNav] = useState(false);
+  const [showCrmNav, setShowCrmNav] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,6 +42,7 @@ export default function AppNav() {
         setShowManageBookings(false);
         setShowOwnerDashboard(false);
         setShowRoomsNav(false);
+        setShowCrmNav(false);
         setReady(true);
         return;
       }
@@ -63,6 +65,18 @@ export default function AppNav() {
             "accounting",
             "maintenance",
             "tenant",
+          ].includes(r)
+        )
+      );
+      setShowCrmNav(
+        roles.some((r) =>
+          [
+            "super_admin",
+            "owner",
+            "manager",
+            "customer_service",
+            "agent",
+            "viewer",
           ].includes(r)
         )
       );
@@ -120,6 +134,11 @@ export default function AppNav() {
                 Rooms
               </Link>
             ) : null}
+            {showCrmNav ? (
+              <Link href="/crm" style={linkStyle(pathname === "/crm" || pathname.startsWith("/crm/"))}>
+                CRM
+              </Link>
+            ) : null}
             {showManageBookings ? (
               <Link href="/bookings/manage" style={linkStyle(pathname === "/bookings/manage")}>
                 Manage Bookings
@@ -137,11 +156,19 @@ export default function AppNav() {
         <span style={{ flex: 1, minWidth: 8 }} />
 
         {loggedIn ? (
-          <Link href="/book/public" style={linkStyle(pathname === "/book/public")}>
-            Visitor booking
-          </Link>
+          <>
+            <Link href="/contact" style={linkStyle(pathname === "/contact")}>
+              Contact
+            </Link>
+            <Link href="/book/public" style={linkStyle(pathname === "/book/public")}>
+              Visitor booking
+            </Link>
+          </>
         ) : (
           <>
+            <Link href="/contact" style={linkStyle(pathname === "/contact")}>
+              Contact
+            </Link>
             <Link href="/login" style={linkStyle(pathname === "/login")}>
               Sign in
             </Link>

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import AppNav from "@/components/AppNav";
+import LeadChatbotWidget from "@/components/LeadChatbotWidget";
 
 export const metadata: Metadata = {
   title: "Property Management",
@@ -22,6 +23,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <AppNav />
           {children}
         </div>
+        <LeadChatbotWidget />
       </body>
     </html>
   );

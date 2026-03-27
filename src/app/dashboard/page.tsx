@@ -23,6 +23,14 @@ type MembershipRow = {
 };
 
 type TenantRow = { id: string; name: string };
+type PipelineSettingsRow = {
+  tenant_id: string;
+  enabled: boolean;
+  contact_slug: string | null;
+  inbound_email: string | null;
+  custom_stages: string[] | null;
+  auto_assign_rules: Record<string, unknown> | null;
+};
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -37,6 +45,14 @@ export default function DashboardPage() {
   const [inviteTenantId, setInviteTenantId] = useState("");
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteMessage, setInviteMessage] = useState<string | null>(null);
+  const [pipelineTenantId, setPipelineTenantId] = useState("");
+  const [pipelineEnabled, setPipelineEnabled] = useState(false);
+  const [pipelineSlug, setPipelineSlug] = useState("");
+  const [pipelineInboundEmail, setPipelineInboundEmail] = useState("");
+  const [pipelineStagesText, setPipelineStagesText] = useState("");
+  const [pipelineAutoAssignText, setPipelineAutoAssignText] = useState("{}");
+  const [pipelineSaving, setPipelineSaving] = useState(false);
+  const [pipelineMessage, setPipelineMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -123,6 +139,8 @@ export default function DashboardPage() {
           .order("name", { ascending: true });
         setOwnerTenants((tRows as TenantRow[]) ?? []);
         setInviteTenantId((prev) => prev || (tRows as TenantRow[])?.[0]?.id || "");
+        const initialTenant = (tRows as TenantRow[])?.[0]?.id || "";
+        setPipelineTenantId((prev) => prev || initialTenant);
       }
       if (!cancelled) setLoading(false);
     }
@@ -173,6 +191,68 @@ export default function DashboardPage() {
       setInviteLoading(false);
     }
   }
+
+  async function loadPipelineSettings(tenantId: string) {
+    if (!tenantId) return;
+    const res = await fetch(`/api/leads/pipeline-settings?tenantId=${encodeURIComponent(tenantId)}`);
+    const json = (await res.json()) as { settings?: PipelineSettingsRow | null; error?: string };
+    if (!res.ok) {
+      setError(json.error ?? "Failed to load pipeline settings");
+      return;
+    }
+    const s = json.settings;
+    setPipelineEnabled(!!s?.enabled);
+    setPipelineSlug(s?.contact_slug ?? "");
+    setPipelineInboundEmail(s?.inbound_email ?? "");
+    setPipelineStagesText((s?.custom_stages ?? []).join(", "));
+    setPipelineAutoAssignText(JSON.stringify(s?.auto_assign_rules ?? {}, null, 2));
+  }
+
+  async function onSavePipelineSettings(e: FormEvent) {
+    e.preventDefault();
+    if (!pipelineTenantId) return;
+    setPipelineSaving(true);
+    setPipelineMessage(null);
+    setError(null);
+    try {
+      let parsedRules: Record<string, unknown> = {};
+      try {
+        parsedRules = JSON.parse(pipelineAutoAssignText || "{}") as Record<string, unknown>;
+      } catch {
+        setError("Auto-assign rules must be valid JSON.");
+        return;
+      }
+      const customStages = pipelineStagesText
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const res = await fetch("/api/leads/pipeline-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenantId: pipelineTenantId,
+          enabled: pipelineEnabled,
+          contactSlug: pipelineSlug || null,
+          inboundEmail: pipelineInboundEmail || null,
+          customStages: customStages.length ? customStages : null,
+          autoAssignRules: parsedRules,
+        }),
+      });
+      const json = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !json.ok) {
+        setError(json.error ?? "Failed to save pipeline settings");
+        return;
+      }
+      setPipelineMessage("Pipeline settings saved.");
+    } finally {
+      setPipelineSaving(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!pipelineTenantId) return;
+    void loadPipelineSettings(pipelineTenantId);
+  }, [pipelineTenantId]);
 
   return (
     <main>
@@ -275,6 +355,94 @@ export default function DashboardPage() {
                 {inviteLoading ? "Sending..." : "Send invite"}
               </button>
               {inviteMessage ? <p style={{ margin: 0, color: "#1b5e20", fontSize: 13 }}>{inviteMessage}</p> : null}
+            </form>
+          </div>
+        ) : null}
+
+        {ownerTenantIds.length > 0 ? (
+          <div style={{ marginBottom: 18, border: "1px solid #eee", borderRadius: 12, padding: 14 }}>
+            <h2 style={{ margin: "0 0 10px", fontSize: 16 }}>Owner pipeline settings</h2>
+            <form onSubmit={onSavePipelineSettings} style={{ display: "grid", gap: 10, maxWidth: 640 }}>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span>Tenant</span>
+                <select
+                  value={pipelineTenantId}
+                  onChange={(e) => setPipelineTenantId(e.target.value)}
+                  style={{ padding: 10, borderRadius: 8, border: "1px solid #ddd" }}
+                >
+                  {ownerTenants.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={pipelineEnabled}
+                  onChange={(e) => setPipelineEnabled(e.target.checked)}
+                />
+                <span>Enable owner pipeline (off by default)</span>
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span>Contact form slug</span>
+                <input
+                  value={pipelineSlug}
+                  onChange={(e) => setPipelineSlug(e.target.value)}
+                  placeholder="their-property-slug"
+                  style={{ padding: 10, borderRadius: 8, border: "1px solid #ddd" }}
+                />
+              </label>
+              {pipelineSlug ? (
+                <p style={{ margin: 0, fontSize: 13, color: "#555" }}>
+                  Public URL: /contact/{pipelineSlug}
+                </p>
+              ) : null}
+              <label style={{ display: "grid", gap: 6 }}>
+                <span>Inbound lead email (optional)</span>
+                <input
+                  type="email"
+                  value={pipelineInboundEmail}
+                  onChange={(e) => setPipelineInboundEmail(e.target.value)}
+                  placeholder="leads@their-domain.com"
+                  style={{ padding: 10, borderRadius: 8, border: "1px solid #ddd" }}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span>Custom pipeline stages (comma separated)</span>
+                <input
+                  value={pipelineStagesText}
+                  onChange={(e) => setPipelineStagesText(e.target.value)}
+                  placeholder="new, contacted, viewing, offer_sent, negotiation, won, lost"
+                  style={{ padding: 10, borderRadius: 8, border: "1px solid #ddd" }}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span>Auto-assign rules (JSON)</span>
+                <textarea
+                  rows={4}
+                  value={pipelineAutoAssignText}
+                  onChange={(e) => setPipelineAutoAssignText(e.target.value)}
+                  style={{ padding: 10, borderRadius: 8, border: "1px solid #ddd", fontFamily: "monospace" }}
+                />
+              </label>
+              <button
+                disabled={pipelineSaving}
+                type="submit"
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: 10,
+                  border: "1px solid #ddd",
+                  background: "#111",
+                  color: "#fff",
+                  cursor: pipelineSaving ? "not-allowed" : "pointer",
+                  width: 180,
+                }}
+              >
+                {pipelineSaving ? "Saving..." : "Save settings"}
+              </button>
+              {pipelineMessage ? <p style={{ margin: 0, color: "#1b5e20", fontSize: 13 }}>{pipelineMessage}</p> : null}
             </form>
           </div>
         ) : null}
