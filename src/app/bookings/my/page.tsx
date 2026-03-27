@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { bookingStatusStyle, spaceTypeLabel } from "@/lib/bookings/status-style";
+import { formatDateTime } from "@/lib/date/format";
 
 type BookingRow = {
   id: string;
@@ -127,7 +128,7 @@ export default function MyBookingsPage() {
                     </div>
                     <div style={{ color: "#666", fontSize: 14 }}>
                       {space ? spaceTypeLabel(space.space_type) : ""} ·{" "}
-                      {new Date(b.start_at).toLocaleString()} → {new Date(b.end_at).toLocaleString()}
+                      {formatDateTime(b.start_at)} → {formatDateTime(b.end_at)}
                     </div>
                     {b.purpose ? <div style={{ marginTop: 6 }}>{b.purpose}</div> : null}
                     <div style={{ marginTop: 8, fontSize: 14, color: "#555" }}>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { formatDate } from "@/lib/date/format";
 
 type SummaryResp = {
   tenant?: { id: string; name: string; plan: string; trial_status?: string; trial_ends_at?: string | null };
@@ -60,7 +61,7 @@ export default function BillingSettingsPage() {
 
   return (
     <main style={{ display: "grid", gap: 12 }}>
-      <h1 style={{ margin: 0 }}>Tenant billing</h1>
+      <h1 style={{ margin: 0 }}>Organization billing</h1>
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, background: "#fff", padding: 12, display: "grid", gap: 8 }}>
         <h2 style={{ margin: 0, fontSize: 18 }}>What you owe and why</h2>
         <p style={{ margin: 0, color: "#64748b", fontSize: 13 }}>
@@ -68,7 +69,7 @@ export default function BillingSettingsPage() {
         </p>
         {data.tenant?.trial_status === "active" ? (
           <p style={{ margin: 0, color: "#065f46", fontSize: 13 }}>
-            Trial active until {data.tenant?.trial_ends_at ? new Date(data.tenant.trial_ends_at).toLocaleDateString() : "—"}
+            Trial active until {data.tenant?.trial_ends_at ? formatDate(data.tenant.trial_ends_at) : "—"}
           </p>
         ) : null}
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>

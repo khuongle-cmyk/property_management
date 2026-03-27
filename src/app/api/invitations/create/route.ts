@@ -93,7 +93,7 @@ export async function POST(req: Request) {
     .eq("id", tenantId)
     .maybeSingle();
   if (tErr) return NextResponse.json({ error: tErr.message }, { status: 500 });
-  if (!tenant) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
+  if (!tenant) return NextResponse.json({ error: "Organization not found" }, { status: 404 });
 
   const appUrl =
     process.env.NEXT_PUBLIC_APP_URL?.trim() ||

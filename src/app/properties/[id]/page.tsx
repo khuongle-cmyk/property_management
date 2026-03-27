@@ -45,6 +45,16 @@ type TemplateRow = {
   active: boolean;
 };
 
+type FurnitureRow = {
+  id: string;
+  room_id: string | null;
+  name: string;
+  category: string;
+  quantity: number;
+  condition: string;
+  status: string;
+};
+
 export default function PropertyCostsPage() {
   const router = useRouter();
   const params = useParams();
@@ -56,6 +66,7 @@ export default function PropertyCostsPage() {
   const [canWrite, setCanWrite] = useState(false);
   const [entries, setEntries] = useState<CostEntry[]>([]);
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
+  const [furniture, setFurniture] = useState<FurnitureRow[]>([]);
 
   const [costType, setCostType] = useState<string>("cleaning");
   const [description, setDescription] = useState("");
@@ -128,6 +139,13 @@ export default function PropertyCostsPage() {
     }
     setEntries(json.entries ?? []);
     setTemplates(json.templates ?? []);
+
+    const { data: furnitureRows } = await supabase
+      .from("furniture_items")
+      .select("id,room_id,name,category,quantity,condition,status")
+      .eq("property_id", propertyId)
+      .order("name", { ascending: true });
+    setFurniture((furnitureRows ?? []) as FurnitureRow[]);
     setLoading(false);
   }, [propertyId, router]);
 
@@ -199,6 +217,17 @@ export default function PropertyCostsPage() {
     const res = await fetch(`/api/property-costs/recurring/${encodeURIComponent(id)}`, { method: "DELETE" });
     const json = (await res.json()) as { ok?: boolean; error?: string };
     if (!res.ok) setError(json.error ?? "Delete failed");
+    else await load();
+  }
+
+  async function onRemoveFromRoom(id: string) {
+    if (!canWrite) return;
+    const supabase = getSupabaseClient();
+    const { error: uErr } = await supabase
+      .from("furniture_items")
+      .update({ room_id: null })
+      .eq("id", id);
+    if (uErr) setError(uErr.message);
     else await load();
   }
 
@@ -423,6 +452,46 @@ export default function PropertyCostsPage() {
           ) : (
             <p style={{ marginTop: 20, color: "#666" }}>You have read-only access; costs can be managed by owners, managers, or accounting.</p>
           )}
+
+          <section style={{ marginTop: 28 }}>
+            <h2 style={{ fontSize: 16 }}>Furniture per room</h2>
+            {furniture.length === 0 ? (
+              <p style={{ color: "#666", fontSize: 14 }}>No furniture items for this property yet.</p>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, marginTop: 8 }}>
+                <thead>
+                  <tr>
+                    <th style={th}>Room</th>
+                    <th style={th}>Item</th>
+                    <th style={th}>Category</th>
+                    <th style={th}>Condition</th>
+                    <th style={th}>Status</th>
+                    <th style={thR}>Qty</th>
+                    <th style={th} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {furniture.map((f) => (
+                    <tr key={f.id}>
+                      <td style={td}>{f.room_id ? f.room_id.slice(0, 8) : "Unassigned"}</td>
+                      <td style={td}>{f.name}</td>
+                      <td style={td}>{f.category}</td>
+                      <td style={td}>{f.condition}</td>
+                      <td style={td}>{f.status}</td>
+                      <td style={tdR}>{f.quantity}</td>
+                      <td style={td}>
+                        {f.room_id && canWrite ? (
+                          <button type="button" onClick={() => void onRemoveFromRoom(f.id)} style={{ fontSize: 12 }}>
+                            Remove from room
+                          </button>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </section>
 
           <section style={{ marginTop: 28 }}>
             <h2 style={{ fontSize: 16 }}>Recurring templates</h2>

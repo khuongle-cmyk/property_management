@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import BrandLivePreview from "@/components/BrandLivePreview";
 import { DEFAULT_BRAND } from "@/lib/brand/default";
 import type { BrandSettings } from "@/lib/brand/types";
+import { formatDate } from "@/lib/date/format";
 
 type BrandRow = BrandSettings & { id?: string; tenant_id?: string; tenants?: { name?: string } | null; created_at?: string };
 type TenantRow = { id: string; name: string };
@@ -70,7 +71,7 @@ export default function SuperAdminBrandsPage() {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr>
-              {["Brand", "Domain", "Status", "Tenant", "Created"].map((h) => (
+              {["Brand", "Domain", "Status", "Organization", "Created"].map((h) => (
                 <th key={h} style={{ textAlign: "left", padding: 6, borderBottom: "1px solid #e8efef" }}>{h}</th>
               ))}
             </tr>
@@ -82,7 +83,7 @@ export default function SuperAdminBrandsPage() {
                 <td style={{ padding: 6, borderBottom: "1px solid #f0f5f5" }}>{b.custom_domain ?? "—"}</td>
                 <td style={{ padding: 6, borderBottom: "1px solid #f0f5f5" }}>{b.is_active ? "active" : "inactive"}</td>
                 <td style={{ padding: 6, borderBottom: "1px solid #f0f5f5" }}>{b.tenants?.name ?? b.tenant_id ?? "—"}</td>
-                <td style={{ padding: 6, borderBottom: "1px solid #f0f5f5" }}>{b.created_at ? new Date(b.created_at).toLocaleDateString() : "—"}</td>
+                <td style={{ padding: 6, borderBottom: "1px solid #f0f5f5" }}>{b.created_at ? formatDate(b.created_at) : "—"}</td>
               </tr>
             ))}
           </tbody>
@@ -93,9 +94,9 @@ export default function SuperAdminBrandsPage() {
         <div style={{ border: "1px solid #dce8e8", borderRadius: 12, background: "#fff", padding: 12, display: "grid", gap: 8 }}>
           <h2 style={{ marginTop: 0, fontSize: 18 }}>Add / edit brand</h2>
           <label>
-            Tenant
+            Organization
             <select value={form.tenant_id ?? ""} onChange={(e) => setForm((s) => ({ ...s, tenant_id: e.target.value }))} style={{ width: "100%" }}>
-              <option value="">Select tenant…</option>
+              <option value="">Select organization…</option>
               {tenants.map((t) => (
                 <option key={t.id} value={t.id}>{t.name}</option>
               ))}

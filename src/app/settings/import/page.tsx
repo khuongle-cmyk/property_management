@@ -5,16 +5,21 @@ import { useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import type { ImportType } from "@/lib/historical-import/types";
 import { getSupabaseClient } from "@/lib/supabase/browser";
+import { loadScopedPropertiesForUser } from "@/lib/properties/scoped";
+import { formatPropertyLabel } from "@/lib/properties/label";
+import { formatDateTime } from "@/lib/date/format";
 
 type Software = "generic" | "procountor" | "netvisor" | "visma";
 type PreviewRow = Record<string, string | number | null>;
-type ProcountorExportType = "sales_invoices" | "purchase_invoices" | "general_ledger";
+type ProcountorExportType = "sales_invoices" | "purchase_invoices" | "income_statement";
 type MappingDataType = "revenue" | "cost";
 type RevenueCategory =
   | "office_rent"
   | "meeting_room_revenue"
   | "hot_desk_revenue"
   | "venue_revenue"
+  | "virtual_office_revenue"
+  | "furniture_revenue"
   | "additional_services"
   | "other_revenue";
 type CostCategory =
@@ -34,6 +39,23 @@ type ProcountorCostCenterMapping = {
   category: RevenueCategory | CostCategory;
   active: boolean;
   name: string;
+};
+type ProcountorTuloslaskelmaPreview = {
+  companyBusinessId: string | null;
+  propertyRaw: string | null;
+  detectedPropertyId: string | null;
+  detectedPropertyName: string | null;
+  year: number | null;
+  revenueRows: number;
+  costRows: number;
+  totalRevenue: number;
+  totalCosts: number;
+  netProfit: number;
+};
+type TenantOption = {
+  id: string;
+  name: string | null;
+  y_tunnus: string | null;
 };
 type Batch = {
   id: string;
@@ -58,6 +80,8 @@ const REVENUE_CATEGORIES: RevenueCategory[] = [
   "meeting_room_revenue",
   "hot_desk_revenue",
   "venue_revenue",
+  "virtual_office_revenue",
+  "furniture_revenue",
   "additional_services",
   "other_revenue",
 ];
@@ -127,6 +151,232 @@ function mapRow(row: Record<string, unknown>, software: Software): PreviewRow {
   return out;
 }
 
+const FI_MONTH_PREFIX_TO_NUMBER: Record<string, number> = {
+  tammi: 1,
+  helmi: 2,
+  maalis: 3,
+  huhti: 4,
+  touko: 5,
+  "kesä": 6,
+  kesa: 6,
+  heinä: 7,
+  heina: 7,
+  elo: 8,
+  syys: 9,
+  loka: 10,
+  marras: 11,
+  joulu: 12,
+};
+
+const PROCOUNTOR_REVENUE_ACCOUNT_MAP: Record<string, RevenueCategory> = {
+  "3010": "office_rent",
+  "3020": "hot_desk_revenue",
+  "3030": "virtual_office_revenue",
+  "3040": "meeting_room_revenue",
+  "3050": "venue_revenue",
+  "3060": "furniture_revenue",
+  "3100": "additional_services",
+  // 3101 Komissiomyynti (commission revenue) is temporarily grouped under
+  // additional services until a dedicated commission revenue field exists.
+  "3101": "additional_services",
+  "3590": "other_revenue",
+};
+
+const PROCOUNTOR_COST_ACCOUNT_MAP: Record<string, string> = {
+  "4000": "purchases",
+  "4001": "cleaning_supplies",
+  "4002": "cleaning_equipment",
+  "4003": "catering",
+  "40031": "catering_billable",
+  "4450": "subcontracting",
+  "4451": "subcontracting_admin",
+  "4480": "hired_labor",
+  "4491": "premises_cleaning",
+  "4492": "premises_mats",
+  "4493": "premises_it",
+  "44933": "data_transfer",
+  "4494": "premises_maintenance",
+  "44941": "premises_maintenance_billable",
+  "4495": "postal",
+  "44951": "postal_billable",
+  "4496": "event_costs",
+  "4500": "rent",
+  "4501": "electricity",
+  "4600": "premises_costs",
+  "4601": "printing",
+  "4602": "equipment_costs",
+  "4603": "equipment_rental",
+  "4605": "coffee_machine",
+  "4610": "client_entertainment",
+  "5000": "salaries",
+  "5100": "salary_additions",
+  "5300": "holiday_pay",
+  "5400": "benefits_in_kind",
+  "5990": "benefits_contra",
+  "6130": "pension",
+  "6300": "social_security",
+  "6400": "accident_insurance",
+  "6410": "unemployment_insurance",
+  "7010": "staff_meetings",
+  "7030": "occupational_health",
+  "7070": "meal_benefits",
+  "7160": "staff_gifts",
+  "7170": "other_staff_costs",
+  "7610": "vehicle_costs",
+  "7700": "it_software",
+  "7710": "equipment_leasing",
+  "7770": "other_equipment",
+  "7800": "travel",
+  "8000": "sales_costs",
+  "8050": "marketing",
+  "8380": "accounting",
+  "8451": "unallocated_invoices",
+  "8500": "telecom",
+  "8560": "banking_costs",
+  "8600": "insurance",
+  "8680": "other_admin",
+  "8890": "reconciliation",
+  "9160": "financial_income",
+  "9440": "interest_costs",
+};
+
+function parseFinnishAmount(value: unknown): number {
+  if (value == null) return 0;
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const raw = String(value).trim();
+  if (!raw) return 0;
+  const normalized = raw.replace(/\s+/g, "").replace(/\./g, "").replace(",", ".");
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function parseTuloslaskelmaMonthHeader(h: unknown): { year: number; month: number } | null {
+  const text = String(h ?? "").trim().toLowerCase();
+  if (!text) return null;
+  if (/^\d{1,2}\/\d{4}\s*-\s*\d{1,2}\/\d{4}$/.test(text)) return null;
+  const m = text.match(/^([a-zåäö]+)\.?(\d{2})$/i);
+  if (!m) return null;
+  const month = FI_MONTH_PREFIX_TO_NUMBER[m[1]];
+  if (!month) return null;
+  const yy = Number(m[2]);
+  if (!Number.isInteger(yy)) return null;
+  return { year: yy >= 70 ? 1900 + yy : 2000 + yy, month };
+}
+
+async function fileToRowsProcountorIncomeStatement(file: File, propertyId: string | null): Promise<PreviewRow[]> {
+  const bytes = await file.arrayBuffer();
+  const text = new TextDecoder("iso-8859-1").decode(bytes);
+  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+
+  const monthByCol: Array<{ colIdx: number; month: number; year: number }> = [];
+  let businessId: string | null = null;
+  let propertyRaw: string | null = null;
+  let year: number | null = null;
+  let rangeFrom: string | null = null;
+  let rangeTo: string | null = null;
+  let foundMonthHeader = false;
+  const out: PreviewRow[] = [];
+
+  for (const line of lines) {
+    const cols = line.split(";").map((c) => c.trim());
+    const first = cols[0] ?? "";
+    const lowerFirst = first.toLowerCase();
+    const second = cols[1] ?? "";
+
+    if (lowerFirst === "y-tunnus") businessId = second || null;
+    if (lowerFirst === "nimikkeet") propertyRaw = second || null;
+    if (lowerFirst === "tositepvm") {
+      const range = second.match(/(\d{2})\.(\d{2})\.(\d{4})\s*-\s*(\d{2})\.(\d{2})\.(\d{4})/);
+      if (range) {
+        rangeFrom = `${range[3]}-${range[2]}-${range[1]}`;
+        rangeTo = `${range[6]}-${range[5]}-${range[4]}`;
+      }
+      const m = second.match(/(\d{4})\s*$/);
+      if (m) year = Number(m[1]);
+    }
+
+    if (!foundMonthHeader) {
+      const candidates: Array<{ colIdx: number; month: number; year: number }> = [];
+      for (let i = 1; i < cols.length; i++) {
+        const c = cols[i];
+        const m = c.match(/^(\d{1,2})\/(\d{4})$/);
+        if (!m) continue;
+        candidates.push({ colIdx: i, month: Number(m[1]), year: Number(m[2]) });
+      }
+      if (candidates.length >= 12) {
+        monthByCol.splice(0, monthByCol.length, ...candidates.slice(0, 12));
+        foundMonthHeader = true;
+      }
+      continue;
+    }
+
+    const accountMatch = first.match(/(\d{4,5})\s*,\s*(.+)$/);
+    if (!accountMatch) continue;
+    const accountCode = accountMatch[1];
+    const accountName = accountMatch[2]?.trim() ?? "";
+
+    for (const mc of monthByCol) {
+      const value = parseFinnishAmount(cols[mc.colIdx] ?? "");
+      if (!value) continue;
+      const revenueCategory = PROCOUNTOR_REVENUE_ACCOUNT_MAP[accountCode];
+      const costType = PROCOUNTOR_COST_ACCOUNT_MAP[accountCode];
+      if (!revenueCategory && !costType) continue;
+      if (revenueCategory) {
+        const amount = Math.abs(value);
+        const row: PreviewRow = {
+          property_id: propertyId ?? null,
+          property: propertyRaw,
+          company_business_id: businessId,
+          account_code: accountCode,
+          account_name: accountName,
+          category: revenueCategory,
+          year: mc.year,
+          month: mc.month,
+          office_rent_revenue: 0,
+          meeting_room_revenue: 0,
+          hot_desk_revenue: 0,
+          venue_revenue: 0,
+          virtual_office_revenue: 0,
+          furniture_revenue: 0,
+          additional_services_revenue: 0,
+          total_revenue: amount,
+        };
+        if (revenueCategory === "office_rent") row.office_rent_revenue = amount;
+        else if (revenueCategory === "meeting_room_revenue") row.meeting_room_revenue = amount;
+        else if (revenueCategory === "hot_desk_revenue") row.hot_desk_revenue = amount;
+        else if (revenueCategory === "venue_revenue") row.venue_revenue = amount;
+        else if (revenueCategory === "virtual_office_revenue") row.virtual_office_revenue = amount;
+        else if (revenueCategory === "furniture_revenue") row.furniture_revenue = amount;
+        else row.additional_services_revenue = amount;
+        out.push(row);
+      } else if (costType) {
+        const amountAbs = Math.abs(value);
+        const lastDay = new Date(Date.UTC(mc.year, mc.month, 0)).toISOString().slice(0, 10);
+        out.push({
+          property_id: propertyId ?? null,
+          property: propertyRaw,
+          company_business_id: businessId,
+          account_code: accountCode,
+          account_name: accountName,
+          cost_type: costType,
+          description: accountName,
+          date: lastDay,
+          year: mc.year,
+          month: mc.month,
+          amount_ex_vat: amountAbs,
+          vat_amount: 0,
+          total_amount: amountAbs,
+        });
+      }
+    }
+  }
+  return out.map((r) => ({
+    ...r,
+    __detected_range_from: rangeFrom,
+    __detected_range_to: rangeTo,
+  }));
+}
+
 async function fileToRows(file: File, software: Software): Promise<PreviewRow[]> {
   const name = file.name.toLowerCase();
   if (name.endsWith(".csv")) {
@@ -148,14 +398,18 @@ export default function SettingsImportPage() {
   const [software, setSoftware] = useState<Software>("generic");
   const [duplicateMode, setDuplicateMode] = useState<"skip" | "overwrite" | "merge">("skip");
   const [rows, setRows] = useState<PreviewRow[]>([]);
-  const [properties, setProperties] = useState<Array<{ id: string; name: string | null; city: string | null }>>([]);
+  const [properties, setProperties] = useState<Array<{ id: string; name: string | null; city: string | null; tenant_id?: string | null }>>([]);
+  const [tenants, setTenants] = useState<TenantOption[]>([]);
+  const [selectedTenantId, setSelectedTenantId] = useState("");
   const [procountorExportType, setProcountorExportType] = useState<ProcountorExportType>("sales_invoices");
+  const [generalLedgerPropertyId, setGeneralLedgerPropertyId] = useState("");
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
   const [costCenterMappings, setCostCenterMappings] = useState<Record<string, ProcountorCostCenterMapping>>({});
   const [savedMappingsLoaded, setSavedMappingsLoaded] = useState(false);
   const [fileName, setFileName] = useState("");
   const [fileNames, setFileNames] = useState<string[]>([]);
+  const [procountorPreview, setProcountorPreview] = useState<ProcountorTuloslaskelmaPreview | null>(null);
   const [invoiceDuplicateChoice, setInvoiceDuplicateChoice] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -168,6 +422,8 @@ export default function SettingsImportPage() {
     meeting_room_revenue: "",
     hot_desk_revenue: "",
     venue_revenue: "",
+    virtual_office_revenue: "",
+    furniture_revenue: "",
     additional_services_revenue: "",
     total_revenue: "",
     date: "",
@@ -187,6 +443,8 @@ export default function SettingsImportPage() {
     occupancy_pct: "",
     revenue_per_m2: "",
   });
+  const isIncomeStatementType =
+    software === "procountor" && procountorExportType === "income_statement";
 
   const previewHead = useMemo(() => {
     if (!rows.length) return [];
@@ -214,6 +472,11 @@ export default function SettingsImportPage() {
     }
     return out;
   }, [rows]);
+  const tenantNameById = useMemo(() => {
+    const out = new Map<string, string>();
+    for (const t of tenants) out.set(t.id, t.name ?? "Organization");
+    return out;
+  }, [tenants]);
   const invoiceDuplicateGroups = useMemo(() => {
     if (importType !== "invoices") return [] as Array<{ key: string; rows: PreviewRow[] }>;
     const byInvoice = new Map<string, PreviewRow[]>();
@@ -229,12 +492,33 @@ export default function SettingsImportPage() {
 
   async function loadPropertiesAndMappings() {
     const supa = getSupabaseClient();
-    const { data: mRows } = await supa.from("memberships").select("tenant_id");
-    const tenantIds = [...new Set((mRows ?? []).map((m) => m.tenant_id).filter(Boolean))] as string[];
-    let pq = supa.from("properties").select("id,name,city,tenant_id").order("name", { ascending: true });
-    if (tenantIds.length) pq = pq.in("tenant_id", tenantIds);
-    const { data: pRows } = await pq;
-    setProperties((pRows ?? []) as Array<{ id: string; name: string | null; city: string | null }>);
+    const {
+      data: { user },
+    } = await supa.auth.getUser();
+    if (!user) {
+      setProperties([]);
+      setTenants([]);
+      return;
+    }
+    const scoped = await loadScopedPropertiesForUser(supa, user.id);
+    setProperties((scoped.properties ?? []) as Array<{ id: string; name: string | null; city: string | null; tenant_id?: string | null }>);
+    const tRowsWithY = await supa
+      .from("tenants")
+      .select("id,name,y_tunnus")
+      .order("name", { ascending: true });
+    const tRowsPlain = tRowsWithY.error
+      ? await supa
+        .from("tenants")
+        .select("id,name")
+        .order("name", { ascending: true })
+      : null;
+    const tenantRows = (tRowsWithY.error ? tRowsPlain?.data : tRowsWithY.data) ?? [];
+    const tenantList = (tenantRows as Array<{ id: string; name: string | null; y_tunnus?: string | null }>).map((t) => ({
+      id: t.id,
+      name: t.name ?? null,
+      y_tunnus: t.y_tunnus ?? null,
+    }));
+    setTenants(tenantList);
     const m = await fetch("/api/settings/import/procountor-mappings");
     const j = (await m.json()) as {
       mappings?: Array<{
@@ -278,7 +562,10 @@ export default function SettingsImportPage() {
     try {
       const mergedRows: PreviewRow[] = [];
       for (const file of files) {
-        const parsed = await fileToRows(file, software);
+        const parsed =
+          software === "procountor" && isIncomeStatementType
+            ? await fileToRowsProcountorIncomeStatement(file, generalLedgerPropertyId || null)
+            : await fileToRows(file, software);
         const transformed =
           software === "procountor"
             ? parsed.map((r, idx) => {
@@ -294,12 +581,14 @@ export default function SettingsImportPage() {
                   out.property = (r.procountor_property_code as string | null) ?? null;
                   out.supplier = r.supplier_name ?? null;
                 } else {
-                  out.date = r.posting_date ?? r.date ?? null;
-                  out.amount_ex_vat = Number(r.credit_amount ?? 0) - Number(r.debit_amount ?? 0);
-                  out.vat_amount = 0;
-                  out.total_amount = out.amount_ex_vat;
-                  out.description = r.account_name ?? r.description ?? null;
-                  out.property = (r.procountor_property_code as string | null) ?? null;
+                  if (importType !== "revenue") {
+                    out.date = r.posting_date ?? r.date ?? null;
+                    out.amount_ex_vat = Number(r.credit_amount ?? 0) - Number(r.debit_amount ?? 0);
+                    out.vat_amount = 0;
+                    out.total_amount = out.amount_ex_vat;
+                    out.description = r.account_name ?? r.description ?? null;
+                    out.property = (r.procountor_property_code as string | null) ?? null;
+                  }
                 }
                 out.__source_file = file.name;
                 out.__source_row = idx + 2;
@@ -311,9 +600,60 @@ export default function SettingsImportPage() {
       }
 
       setRows(mergedRows);
+      if (software === "procountor" && isIncomeStatementType) {
+        const detectedFrom = String(mergedRows[0]?.__detected_range_from ?? "").trim();
+        const detectedTo = String(mergedRows[0]?.__detected_range_to ?? "").trim();
+        if (detectedFrom) setRangeFrom(detectedFrom);
+        if (detectedTo) setRangeTo(detectedTo);
+        const propertyRaw = String(mergedRows[0]?.property ?? "").trim() || null;
+        const normalized = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+        const matchedProperty =
+          properties.find((p) => {
+            const pn = normalized(String(p.name ?? ""));
+            const rn = normalized(propertyRaw ?? "");
+            return pn && rn && (rn.includes(pn) || pn.includes(rn));
+          }) ?? null;
+        const yr = Number(mergedRows.find((r) => Number(r.year ?? 0) > 0)?.year ?? 0) || null;
+        const normalizeYTunnus = (s: string) => s.replace(/\s+/g, "").toLowerCase();
+        const detectedBusinessId = String(mergedRows[0]?.company_business_id ?? "").trim() || null;
+        const matchedTenant =
+          detectedBusinessId
+            ? tenants.find((t) => {
+                const a = normalizeYTunnus(String(t.y_tunnus ?? ""));
+                const b = normalizeYTunnus(detectedBusinessId);
+                return !!a && a === b;
+              }) ?? null
+            : null;
+        const revRows = mergedRows.filter((r) => Number(r.total_revenue ?? 0) > 0);
+        const costRows = mergedRows.filter((r) => Number(r.amount_ex_vat ?? 0) > 0);
+        const totalRevenue = revRows.reduce((s, r) => s + Number(r.total_revenue ?? 0), 0);
+        const totalCosts = costRows.reduce((s, r) => s + Number(r.amount_ex_vat ?? 0), 0);
+        setProcountorPreview({
+          companyBusinessId: String(mergedRows[0]?.company_business_id ?? "").trim() || null,
+          propertyRaw,
+          detectedPropertyId: matchedProperty?.id ?? null,
+          detectedPropertyName: matchedProperty?.name ?? null,
+          year: yr,
+          revenueRows: revRows.length,
+          costRows: costRows.length,
+          totalRevenue,
+          totalCosts,
+          netProfit: totalRevenue - totalCosts,
+        });
+        if (!selectedTenantId && matchedTenant?.id) setSelectedTenantId(matchedTenant.id);
+        if (!generalLedgerPropertyId && matchedProperty?.id) setGeneralLedgerPropertyId(matchedProperty.id);
+      } else {
+        setProcountorPreview(null);
+      }
       setFileName(files.length === 1 ? files[0].name : `${files.length} files`);
       setFileNames(files.map((f) => f.name));
       if (software === "procountor") {
+        if (isIncomeStatementType) {
+          setMsg(
+            `Loaded ${mergedRows.length} Tuloslaskelma row(s) from ${files.length} file(s). Metadata rows skipped, monthly columns mapped (tammi..joulu), yearly total ignored.`,
+          );
+          return;
+        }
         const detectedCodes = [...new Set(mergedRows.map((r) => String(r.procountor_property_code ?? "").trim()).filter(Boolean))];
         const newCodes = detectedCodes.filter((c) => !costCenterMappings[c]);
         if (newCodes.length) {
@@ -353,6 +693,96 @@ export default function SettingsImportPage() {
     }
     setLoading(true);
     setMsg(null);
+
+    if (software === "procountor" && isIncomeStatementType) {
+      if (!selectedTenantId) {
+        setLoading(false);
+        setMsg("Select organization (Y-tunnus match fallback) before importing.");
+        return;
+      }
+      const pid = generalLedgerPropertyId || procountorPreview?.detectedPropertyId || "";
+      if (!pid) {
+        setLoading(false);
+        setMsg("Select property for Tuloslaskelma import.");
+        return;
+      }
+      const propertyName = properties.find((p) => p.id === pid)?.name ?? "";
+      const revenueRows = payloadRows
+        .filter((r) => Number(r.total_revenue ?? 0) > 0)
+        .map((r) => ({ ...r, property_id: pid, property: propertyName }));
+      const costRows = payloadRows
+        .filter((r) => Number(r.amount_ex_vat ?? 0) > 0)
+        .map((r) => ({ ...r, property_id: pid, property: propertyName }));
+
+      if (
+        !window.confirm(
+          `Import Procountor Tuloslaskelma?\nRevenue rows: ${revenueRows.length}\nCost rows: ${costRows.length}\nProperty: ${propertyName || pid}`,
+        )
+      ) {
+        setLoading(false);
+        return;
+      }
+
+      let importedRev = 0;
+      let failedRev = 0;
+      let importedCost = 0;
+      let failedCost = 0;
+      if (revenueRows.length) {
+        const rr = await fetch("/api/settings/import/commit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            importType: "revenue",
+            duplicateMode,
+            sourceSoftware: "procountor:income_statement",
+            fileName: fileName || "manual",
+            dataSource: "procountor_tuloslaskelma",
+            tenantId: selectedTenantId || null,
+            rows: revenueRows,
+            procountorExportType,
+          }),
+        });
+        const rj = (await rr.json()) as { error?: string; rowsImported?: number; rowsFailed?: number };
+        if (!rr.ok) {
+          setLoading(false);
+          setMsg(rj.error ?? "Revenue import failed");
+          return;
+        }
+        importedRev = rj.rowsImported ?? 0;
+        failedRev = rj.rowsFailed ?? 0;
+      }
+      if (costRows.length) {
+        const cr = await fetch("/api/settings/import/commit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            importType: "costs",
+            duplicateMode,
+            sourceSoftware: "procountor:income_statement",
+            fileName: fileName || "manual",
+            dataSource: "procountor_tuloslaskelma",
+            tenantId: selectedTenantId || null,
+            rows: costRows,
+            procountorExportType,
+          }),
+        });
+        const cj = (await cr.json()) as { error?: string; rowsImported?: number; rowsFailed?: number };
+        if (!cr.ok) {
+          setLoading(false);
+          setMsg(cj.error ?? "Cost import failed");
+          return;
+        }
+        importedCost = cj.rowsImported ?? 0;
+        failedCost = cj.rowsFailed ?? 0;
+      }
+      setLoading(false);
+      setMsg(
+        `Import summary: Revenue records ${importedRev} (failed ${failedRev}), Cost records ${importedCost} (failed ${failedCost}), Matched property ${propertyName || pid}.`,
+      );
+      await loadHistory();
+      return;
+    }
+
     let mappedRows = payloadRows;
     if (software === "procountor") {
       const unresolved = payloadRows
@@ -367,6 +797,12 @@ export default function SettingsImportPage() {
       const out: PreviewRow[] = [];
       for (const r of payloadRows) {
         const code = String(r.procountor_property_code ?? "").trim();
+        if (!code && importType === "revenue" && r.property_id && Number(r.year ?? 0) > 0 && Number(r.month ?? 0) > 0) {
+          const pid = String(r.property_id);
+          const propertyName = properties.find((p) => p.id === pid)?.name ?? String(r.property ?? "");
+          out.push({ ...r, property: propertyName, property_id: pid });
+          continue;
+        }
         const m = costCenterMappings[code];
         if (!m || !m.active) continue;
         const propertyName = properties.find((p) => p.id === m.propertyId)?.name ?? code;
@@ -390,6 +826,8 @@ export default function SettingsImportPage() {
             meeting_room_revenue: 0,
             hot_desk_revenue: 0,
             venue_revenue: 0,
+            virtual_office_revenue: 0,
+            furniture_revenue: 0,
             additional_services_revenue: 0,
             total_revenue: baseAmount,
           };
@@ -397,6 +835,8 @@ export default function SettingsImportPage() {
           else if (m.category === "meeting_room_revenue") row.meeting_room_revenue = baseAmount;
           else if (m.category === "hot_desk_revenue") row.hot_desk_revenue = baseAmount;
           else if (m.category === "venue_revenue") row.venue_revenue = baseAmount;
+          else if (m.category === "virtual_office_revenue") row.virtual_office_revenue = baseAmount;
+          else if (m.category === "furniture_revenue") row.furniture_revenue = baseAmount;
           else row.additional_services_revenue = baseAmount;
           out.push(row);
         } else if (importType === "costs") {
@@ -478,6 +918,14 @@ export default function SettingsImportPage() {
       mappedRows = resolved;
     }
 
+    if (
+      software === "procountor" &&
+      isIncomeStatementType &&
+      !window.confirm("Confirm Procountor Tuloslaskelma import with detected metadata and totals?")
+    ) {
+      setLoading(false);
+      return;
+    }
     const r = await fetch("/api/settings/import/commit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -486,7 +934,11 @@ export default function SettingsImportPage() {
         duplicateMode,
         sourceSoftware: software === "procountor" ? `procountor:${procountorExportType}` : software,
         fileName: fileName || "manual",
-        dataSource,
+        dataSource:
+          software === "procountor" && isIncomeStatementType
+            ? "procountor_tuloslaskelma"
+            : dataSource,
+        tenantId: selectedTenantId || null,
         rows: mappedRows,
         procountorExportType,
       }),
@@ -512,6 +964,8 @@ export default function SettingsImportPage() {
         meeting_room_revenue: Number(manual.meeting_room_revenue || 0),
         hot_desk_revenue: Number(manual.hot_desk_revenue || 0),
         venue_revenue: Number(manual.venue_revenue || 0),
+        virtual_office_revenue: Number(manual.virtual_office_revenue || 0),
+        furniture_revenue: Number(manual.furniture_revenue || 0),
         additional_services_revenue: Number(manual.additional_services_revenue || 0),
         total_revenue: Number(manual.total_revenue || 0),
       });
@@ -685,15 +1139,35 @@ export default function SettingsImportPage() {
                 <select value={procountorExportType} onChange={(e) => setProcountorExportType(e.target.value as ProcountorExportType)}>
                   <option value="sales_invoices">Sales invoices (Myyntilaskut)</option>
                   <option value="purchase_invoices">Purchase invoices (Ostolaskut)</option>
-                  <option value="general_ledger">General ledger (Pääkirja)</option>
+                  <option value="income_statement">Tuloslaskelma (Income statement)</option>
                 </select>
               </label>
               <label>
-                Date from <input type="date" value={rangeFrom} onChange={(e) => setRangeFrom(e.target.value)} />
+                Date from <input type="date" value={rangeFrom} onChange={(e) => setRangeFrom(e.target.value)} readOnly={isIncomeStatementType} />
               </label>
               <label>
-                Date to <input type="date" value={rangeTo} onChange={(e) => setRangeTo(e.target.value)} />
+                Date to <input type="date" value={rangeTo} onChange={(e) => setRangeTo(e.target.value)} readOnly={isIncomeStatementType} />
               </label>
+              {isIncomeStatementType ? (
+                <label>
+                  Property for Tuloslaskelma rows{" "}
+                  <select
+                    value={generalLedgerPropertyId}
+                    onChange={(e) => setGeneralLedgerPropertyId(e.target.value)}
+                  >
+                    <option value="">Select property...</option>
+                    {properties.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {formatPropertyLabel(p, {
+                          includeCity: true,
+                          includeOrganization: true,
+                          organizationNameById: tenantNameById,
+                        })}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
             </>
           ) : null}
           <label>
@@ -711,7 +1185,12 @@ export default function SettingsImportPage() {
           <button
             type="button"
             onClick={() => void importRows(rows, software === "generic" ? "excel" : "accounting_software")}
-            disabled={loading || rows.length === 0 || (software === "procountor" && unmappedProcountorCodes.length > 0)}
+            disabled={
+              loading ||
+              rows.length === 0 ||
+              (software === "procountor" && unmappedProcountorCodes.length > 0) ||
+              (software === "procountor" && isIncomeStatementType && !generalLedgerPropertyId)
+            }
           >
             {loading ? "Importing..." : "Import preview rows"}
           </button>
@@ -730,6 +1209,11 @@ export default function SettingsImportPage() {
         {fileNames.length > 1 ? <p style={{ margin: 0, fontSize: 12, color: "#475569" }}>Loaded files: {fileNames.join(", ")}</p> : null}
         {msg ? <p style={{ margin: 0, color: "#1e3a8a" }}>{msg}</p> : null}
         {software === "procountor" && savedMappingsLoaded ? <p style={{ margin: 0, fontSize: 12, color: "#166534" }}>Using saved mapping (review/edit before import).</p> : null}
+        {software === "procountor" && isIncomeStatementType && !generalLedgerPropertyId ? (
+          <p style={{ margin: 0, color: "#991b1b", fontSize: 12 }}>
+            Select a property for Tuloslaskelma import before importing.
+          </p>
+        ) : null}
         {software === "procountor" && unmappedProcountorCodes.length ? (
           <p style={{ margin: 0, color: "#991b1b", fontSize: 12 }}>
             New cost center found: {unmappedProcountorCodes.join(", ")}. Map these before importing.
@@ -832,7 +1316,11 @@ export default function SettingsImportPage() {
                             <option value="">Select property...</option>
                             {properties.map((p) => (
                               <option key={p.id} value={p.id}>
-                                {(p.name ?? "Property") + (p.city ? ` (${p.city})` : "")}
+                                {formatPropertyLabel(p, {
+                                  includeCity: true,
+                                  includeOrganization: true,
+                                  organizationNameById: tenantNameById,
+                                })}
                               </option>
                             ))}
                           </select>
@@ -888,6 +1376,30 @@ export default function SettingsImportPage() {
             </div>
           </div>
         ) : null}
+        {software === "procountor" && isIncomeStatementType && procountorPreview ? (
+          <div style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: 10, background: "#f8fafc", display: "grid", gap: 4 }}>
+            <strong>Import preview</strong>
+            <div>Detected property: {procountorPreview.detectedPropertyName ?? procountorPreview.propertyRaw ?? "—"}</div>
+            <div>Detected year: {procountorPreview.year ?? "—"}</div>
+            <div>Detected company Y-tunnus: {procountorPreview.companyBusinessId ?? "—"}</div>
+            <div>Revenue rows found: {procountorPreview.revenueRows}</div>
+            <div>Cost rows found: {procountorPreview.costRows}</div>
+            <div>Total revenue: EUR {procountorPreview.totalRevenue.toFixed(2)}</div>
+            <div>Total costs: EUR {procountorPreview.totalCosts.toFixed(2)}</div>
+            <div>Net profit: EUR {procountorPreview.netProfit.toFixed(2)}</div>
+            <label style={{ marginTop: 6 }}>
+              Organization (auto-matched by Y-tunnus, override if needed){" "}
+              <select value={selectedTenantId} onChange={(e) => setSelectedTenantId(e.target.value)}>
+                <option value="">Select organization...</option>
+                {tenants.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {(t.name ?? t.id) + (t.y_tunnus ? ` (${t.y_tunnus})` : "")}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        ) : null}
       </section>
 
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, background: "#fff", display: "grid", gap: 8 }}>
@@ -905,6 +1417,8 @@ export default function SettingsImportPage() {
               <input placeholder="Meeting revenue" value={manual.meeting_room_revenue} onChange={(e) => setManual((s) => ({ ...s, meeting_room_revenue: e.target.value }))} />
               <input placeholder="Hot desk revenue" value={manual.hot_desk_revenue} onChange={(e) => setManual((s) => ({ ...s, hot_desk_revenue: e.target.value }))} />
               <input placeholder="Venue revenue" value={manual.venue_revenue} onChange={(e) => setManual((s) => ({ ...s, venue_revenue: e.target.value }))} />
+              <input placeholder="Virtual office revenue" value={manual.virtual_office_revenue} onChange={(e) => setManual((s) => ({ ...s, virtual_office_revenue: e.target.value }))} />
+              <input placeholder="Furniture revenue" value={manual.furniture_revenue} onChange={(e) => setManual((s) => ({ ...s, furniture_revenue: e.target.value }))} />
               <input placeholder="Additional services" value={manual.additional_services_revenue} onChange={(e) => setManual((s) => ({ ...s, additional_services_revenue: e.target.value }))} />
               <input placeholder="Total revenue" value={manual.total_revenue} onChange={(e) => setManual((s) => ({ ...s, total_revenue: e.target.value }))} />
             </>
@@ -968,7 +1482,7 @@ export default function SettingsImportPage() {
               <tbody>
                 {history.map((b) => (
                   <tr key={b.id}>
-                    <td style={{ borderBottom: "1px solid #f1f5f9", padding: 6 }}>{new Date(b.created_at).toLocaleString()}</td>
+                    <td style={{ borderBottom: "1px solid #f1f5f9", padding: 6 }}>{formatDateTime(b.created_at)}</td>
                     <td style={{ borderBottom: "1px solid #f1f5f9", padding: 6 }}>{b.import_type}</td>
                     <td style={{ borderBottom: "1px solid #f1f5f9", padding: 6 }}>{b.source_software ?? "—"}</td>
                     <td style={{ borderBottom: "1px solid #f1f5f9", padding: 6 }}>{b.file_name ?? "—"}</td>

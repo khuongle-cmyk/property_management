@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { spaceTypeLabel } from "@/lib/bookings/status-style";
+import { loadScopedPropertiesForUser } from "@/lib/properties/scoped";
 
 type PropertyRow = { id: string; name: string; city: string | null; tenant_id: string };
 type SpaceRow = {
@@ -57,7 +58,7 @@ export default function NewBookingPage() {
   );
 
   const showOnBehalfTenantEmailField = useMemo(
-    () => roles.some((r) => ["owner", "manager"].includes(r)),
+    () => roles.some((r) => ["super_admin", "owner", "manager"].includes(r)),
     [roles]
   );
 
@@ -77,31 +78,12 @@ export default function NewBookingPage() {
     }
     setUserId(user.id);
 
-    const { data: memberships, error: mErr } = await supabase.from("memberships").select("tenant_id, role");
+    const { data: memberships, error: mErr } = await supabase.from("memberships").select("tenant_id, role").eq("user_id", user.id);
     if (mErr) throw new Error(mErr.message);
     const roleList = (memberships ?? []).map((m) => (m.role ?? "").toLowerCase());
     setRoles(roleList);
-    const isSuperAdmin = roleList.includes("super_admin");
-    const tenantIds = [
-      ...new Set(
-        (memberships ?? [])
-          .map((m) => m.tenant_id)
-          .filter((id): id is string => typeof id === "string" && id.length > 0)
-      ),
-    ];
-
-    let q = supabase.from("properties").select("id, name, city, tenant_id").order("name", { ascending: true });
-    if (!isSuperAdmin) {
-      if (tenantIds.length === 0) {
-        setProperties([]);
-        return;
-      }
-      q = q.in("tenant_id", tenantIds);
-    }
-
-    const { data: props, error: pErr } = await q;
-    if (pErr) throw new Error(pErr.message);
-    const list = (props as PropertyRow[]) ?? [];
+    const scoped = await loadScopedPropertiesForUser(supabase, user.id);
+    const list = (scoped.properties as PropertyRow[]) ?? [];
     setProperties(list);
     setPropertyId((prev) => prev || list[0]?.id || "");
   }, [router]);

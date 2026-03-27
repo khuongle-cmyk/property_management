@@ -27,7 +27,7 @@ export async function POST(req: Request) {
     .select("id,name,plan,trial_status,trial_ends_at,contact_email")
     .eq("id", tenantId)
     .maybeSingle();
-  if (!tenant) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
+  if (!tenant) return NextResponse.json({ error: "Organization not found" }, { status: 404 });
   const planId = String((tenant as { plan?: string }).plan ?? "starter");
   const plan = await loadPlan(supabase, planId);
   if (!plan) return NextResponse.json({ error: "Pricing plan missing" }, { status: 500 });
@@ -42,6 +42,44 @@ export async function POST(req: Request) {
     billingMonth,
     inTrial,
   });
+  const billingMonthPrefix = billingMonth.slice(0, 7);
+
+  const [{ data: virtualOfficeRows }, { data: furnitureRows }] = await Promise.all([
+    supabase
+      .from("virtual_office_contracts")
+      .select("id,property_id,monthly_fee,status,start_date,end_date")
+      .eq("tenant_id", tenantId)
+      .eq("status", "active")
+      .lte("start_date", `${billingMonthPrefix}-31`)
+      .or(`end_date.is.null,end_date.gte.${billingMonth}`),
+    supabase
+      .from("furniture_rentals")
+      .select("id,rental_type,monthly_fee,sale_price,start_date,end_date,status")
+      .eq("tenant_id", tenantId)
+      .eq("status", "active")
+      .lte("start_date", `${billingMonthPrefix}-31`)
+      .or(`end_date.is.null,end_date.gte.${billingMonth}`),
+  ]);
+
+  const virtualOfficeSubtotal = (virtualOfficeRows ?? []).reduce(
+    (sum, r) => sum + Number((r as { monthly_fee?: number }).monthly_fee ?? 0),
+    0,
+  );
+  const furnitureRecurringSubtotal = (furnitureRows ?? [])
+    .filter((r) => (r as { rental_type?: string }).rental_type === "extra_rental")
+    .reduce((sum, r) => sum + Number((r as { monthly_fee?: number }).monthly_fee ?? 0), 0);
+  const furnitureSalesSubtotal = (furnitureRows ?? [])
+    .filter(
+      (r) =>
+        (r as { rental_type?: string }).rental_type === "sold" &&
+        String((r as { start_date?: string }).start_date ?? "").slice(0, 7) === billingMonthPrefix,
+    )
+    .reduce((sum, r) => sum + Number((r as { sale_price?: number }).sale_price ?? 0), 0);
+  const extraSubtotal = virtualOfficeSubtotal + furnitureRecurringSubtotal + furnitureSalesSubtotal;
+  const extraTax = Number((extraSubtotal * 0.255).toFixed(2));
+  const subtotal = Number((breakdown.subtotal + extraSubtotal).toFixed(2));
+  const taxAmount = Number((breakdown.taxAmount + extraTax).toFixed(2));
+  const totalAmount = Number((subtotal + taxAmount).toFixed(2));
 
   const dueDate = (body.dueDate ?? new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)).slice(0, 10);
   const recipientEmail = (body.recipientEmail ?? (tenant as { contact_email?: string | null }).contact_email ?? "").trim() || null;
@@ -60,9 +98,9 @@ export async function POST(req: Request) {
       recipient_email: recipientEmail,
       sender_name: brand.email_sender_name ?? brand.brand_name,
       sender_email: brand.email_sender_address ?? null,
-      subtotal: breakdown.subtotal,
-      tax_amount: breakdown.taxAmount,
-      total_amount: breakdown.totalAmount,
+      subtotal,
+      tax_amount: taxAmount,
+      total_amount: totalAmount,
       notes: body.notes ?? null,
       created_by: scope.userId,
     })
@@ -92,6 +130,47 @@ export async function POST(req: Request) {
       metadata: {},
     });
   }
+  for (const row of virtualOfficeRows ?? []) {
+    itemRows.push({
+      invoice_id: (invoice as { id: string }).id,
+      item_type: "manual",
+      description: `Virtuaalitoimisto - ${String((row as { property_id?: string }).property_id ?? "").slice(0, 8)}`,
+      quantity: 1,
+      unit_price: Number((row as { monthly_fee?: number }).monthly_fee ?? 0),
+      amount: Number((row as { monthly_fee?: number }).monthly_fee ?? 0),
+      metadata: { virtual_office_contract_id: (row as { id: string }).id },
+    });
+  }
+  for (const row of furnitureRows ?? []) {
+    const rentalType = String((row as { rental_type?: string }).rental_type ?? "");
+    if (rentalType === "extra_rental") {
+      const amount = Number((row as { monthly_fee?: number }).monthly_fee ?? 0);
+      itemRows.push({
+        invoice_id: (invoice as { id: string }).id,
+        item_type: "manual",
+        description: "Kalusteet",
+        quantity: 1,
+        unit_price: amount,
+        amount,
+        metadata: { furniture_rental_id: (row as { id: string }).id, rental_type: rentalType },
+      });
+    } else if (
+      rentalType === "sold" &&
+      String((row as { start_date?: string }).start_date ?? "").slice(0, 7) === billingMonthPrefix
+    ) {
+      const amount = Number((row as { sale_price?: number }).sale_price ?? 0);
+      itemRows.push({
+        invoice_id: (invoice as { id: string }).id,
+        item_type: "manual",
+        description: "Kalusteet (kertamyynti)",
+        quantity: 1,
+        unit_price: amount,
+        amount,
+        metadata: { furniture_rental_id: (row as { id: string }).id, rental_type: rentalType },
+      });
+      await supabase.from("furniture_rentals").update({ status: "ended" }).eq("id", (row as { id: string }).id);
+    }
+  }
   if (itemRows.length) {
     const { error: iErr } = await supabase.from("manual_billing_invoice_items").insert(itemRows);
     if (iErr) return NextResponse.json({ error: iErr.message }, { status: 500 });
@@ -107,22 +186,22 @@ export async function POST(req: Request) {
     }
     const resend = new Resend(resendKey);
     const from = brandEmailFrom(brand, process.env.RESEND_FROM_EMAIL?.trim() || "Billing <onboarding@resend.dev>");
-    const lines = breakdown.lineItems
+    const lines = itemRows
       .filter((l) => l.amount > 0)
-      .map((l) => `<li>${l.label}: ${l.qty} x €${l.unitPrice.toFixed(2)} = €${l.amount.toFixed(2)}</li>`)
+      .map((l) => `<li>${l.description}: ${l.quantity} x €${Number(l.unit_price).toFixed(2)} = €${Number(l.amount).toFixed(2)}</li>`)
       .join("");
     const html = `
       <p>Hello,</p>
       <p>Your manual invoice <strong>${invoiceNumber}</strong> for ${billingMonth.slice(0, 7)} is ready.</p>
       <ul>${lines}</ul>
-      <p>Subtotal: €${breakdown.subtotal.toFixed(2)}<br/>VAT: €${breakdown.taxAmount.toFixed(2)}<br/><strong>Total: €${breakdown.totalAmount.toFixed(2)}</strong></p>
+      <p>Subtotal: €${subtotal.toFixed(2)}<br/>VAT: €${taxAmount.toFixed(2)}<br/><strong>Total: €${totalAmount.toFixed(2)}</strong></p>
       <p>Due date: ${dueDate}</p>
       <p>${brand.email_footer_text ?? brand.brand_name}</p>
     `;
     const { error: sErr } = await resend.emails.send({
       from,
       to: recipientEmail,
-      subject: `Invoice ${invoiceNumber} - ${(tenant as { name?: string | null }).name ?? "Tenant"}`,
+      subject: `Invoice ${invoiceNumber} - ${(tenant as { name?: string | null }).name ?? "Organization"}`,
       html,
     });
     if (sErr) return NextResponse.json({ error: sErr.message, invoice }, { status: 500 });

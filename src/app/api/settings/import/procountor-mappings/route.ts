@@ -21,14 +21,20 @@ export async function GET() {
 
   const { data: mRows, error: mErr } = await supabase.from("memberships").select("tenant_id, role").eq("user_id", user.id);
   if (mErr) return NextResponse.json({ error: mErr.message }, { status: 500 });
-  const tenantIds = [...new Set((mRows ?? []).map((m) => m.tenant_id).filter(Boolean))] as string[];
-  if (!tenantIds.length) return NextResponse.json({ ok: true, mappings: [] });
+  const roleRows = (mRows ?? []).map((m) => ({
+    role: (m.role ?? "").toLowerCase(),
+    tenant_id: m.tenant_id,
+  }));
+  const isSuperAdmin = roleRows.some((m) => m.role === "super_admin");
+  const tenantIds = [...new Set(roleRows.map((m) => m.tenant_id).filter(Boolean))] as string[];
+  if (!isSuperAdmin && !tenantIds.length) return NextResponse.json({ ok: true, mappings: [] });
 
-  const { data, error } = await supabase
+  let q = supabase
     .from("procountor_cost_center_mappings")
     .select("id, tenant_id, cost_center_code, cost_center_name, property_id, data_type, category, active, created_at, updated_at")
-    .in("tenant_id", tenantIds)
     .order("updated_at", { ascending: false });
+  if (!isSuperAdmin) q = q.in("tenant_id", tenantIds);
+  const { data, error } = await q;
   if (error) {
     if (error.code === "42P01") return NextResponse.json({ ok: true, mappings: [] });
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -54,13 +60,20 @@ export async function POST(req: Request) {
 
   const { data: mRows, error: mErr } = await supabase.from("memberships").select("tenant_id, role").eq("user_id", user.id);
   if (mErr) return NextResponse.json({ error: mErr.message }, { status: 500 });
-  const allowedTenantIds = [...new Set((mRows ?? [])
-    .filter((m) => ["super_admin", "owner", "manager"].includes((m.role ?? "").toLowerCase()))
+  const roleRows = (mRows ?? []).map((m) => ({
+    role: (m.role ?? "").toLowerCase(),
+    tenant_id: m.tenant_id,
+  }));
+  const isSuperAdmin = roleRows.some((m) => m.role === "super_admin");
+  const allowedTenantIds = [...new Set(roleRows
+    .filter((m) => ["super_admin", "owner", "manager"].includes(m.role))
     .map((m) => m.tenant_id)
     .filter(Boolean))] as string[];
-  if (!allowedTenantIds.length) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!isSuperAdmin && !allowedTenantIds.length) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const { data: properties, error: pErr } = await supabase.from("properties").select("id, tenant_id").in("tenant_id", allowedTenantIds);
+  let pQuery = supabase.from("properties").select("id, tenant_id");
+  if (!isSuperAdmin) pQuery = pQuery.in("tenant_id", allowedTenantIds);
+  const { data: properties, error: pErr } = await pQuery;
   if (pErr) return NextResponse.json({ error: pErr.message }, { status: 500 });
   const propById = new Map((properties ?? []).map((p) => [p.id, p.tenant_id]));
 

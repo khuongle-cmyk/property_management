@@ -403,14 +403,14 @@ export default function DashboardPage() {
                 </select>
               </label>
               <label style={{ display: "grid", gap: 6 }}>
-                <span>Tenant</span>
+                <span>Organization</span>
                 <select
                   value={inviteTenantId}
                   onChange={(e) => setInviteTenantId(e.target.value)}
                   required
                   style={{ padding: 10, borderRadius: 8, border: "1px solid #ddd" }}
                 >
-                  <option value="">Select tenant…</option>
+                  <option value="">Select organization…</option>
                   {ownerTenants.map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.name}
@@ -442,7 +442,7 @@ export default function DashboardPage() {
             <h2 style={{ margin: "0 0 10px", fontSize: 16 }}>Owner pipeline settings</h2>
             <form onSubmit={onSavePipelineSettings} style={{ display: "grid", gap: 10, maxWidth: 640 }}>
               <label style={{ display: "grid", gap: 6 }}>
-                <span>Tenant</span>
+                <span>Organization</span>
                 <select
                   value={pipelineTenantId}
                   onChange={(e) => setPipelineTenantId(e.target.value)}
@@ -531,7 +531,7 @@ export default function DashboardPage() {
           <p>Loading...</p>
         ) : rows.length === 0 ? (
           <p>
-            This account isn&apos;t connected to any owner tenant (or they have
+            This account isn&apos;t connected to any owner organization (or they have
             no properties yet).
           </p>
         ) : (

@@ -132,6 +132,14 @@ function PublicBookingForm() {
       <p style={{ marginTop: 0, color: "#555" }}>
         {propertyName || "Visitor booking"} — no account required.
       </p>
+      <p style={{ margin: "6px 0 0", fontSize: 14 }}>
+        Browse by product:{" "}
+        <Link href="/book/meeting-rooms">Meeting rooms</Link>
+        {" · "}
+        <Link href="/book/venues">Venues</Link>
+        {" · "}
+        <Link href="/book/coworking">Coworking / Hot desks</Link>
+      </p>
 
       {loadError ? <p style={{ color: "#b00020" }}>{loadError}</p> : null}
       {loading ? (

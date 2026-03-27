@@ -100,13 +100,13 @@ export async function GET() {
     .map((t) => (t?.name ?? "").trim())
     .filter(Boolean);
 
-  const exampleTenantName = tenantNames[0] ?? "Tenant name";
+  const exampleTenantName = tenantNames[0] ?? "Organization name";
 
   for (let i = 0; i < tenantNames.length; i++) {
     lists.getCell(`A${i + 2}`).value = tenantNames[i];
   }
   if (tenantNames.length === 0) {
-    lists.getCell("A2").value = "Tenant name";
+    lists.getCell("A2").value = "Organization name";
   }
 
   for (let i = 0; i < propertyNames.length; i++) {
@@ -189,7 +189,7 @@ export async function GET() {
       ws.getCell(r, 1).dataValidation = {
         type: "list",
         allowBlank: false,
-        formulae: [csvList(tenantNames.length ? tenantNames : ["Tenant name"])],
+        formulae: [csvList(tenantNames.length ? tenantNames : ["Organization name"])],
       };
 
       // property_name dropdown

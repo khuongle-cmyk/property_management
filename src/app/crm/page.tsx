@@ -105,7 +105,7 @@ export default function CRMPage() {
 
   const primaryTenantId = useMemo(() => {
     const prefer = memberships.filter(
-      (m) => m.tenant_id && ["owner", "manager"].includes((m.role ?? "").toLowerCase())
+      (m) => m.tenant_id && ["super_admin", "owner", "manager"].includes((m.role ?? "").toLowerCase())
     );
     return prefer[0]?.tenant_id ?? memberships.find((m) => m.tenant_id)?.tenant_id ?? null;
   }, [memberships]);

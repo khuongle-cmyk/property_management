@@ -13,6 +13,7 @@ import {
 import { downloadRentRollExcel } from "@/lib/reports/rent-roll-excel";
 import { REPORT_READER_ROLES } from "@/lib/reports/report-access";
 import { spaceTypeLabel } from "@/lib/rooms/labels";
+import { loadScopedPropertiesForUser } from "@/lib/properties/scoped";
 
 type PropertyRow = { id: string; name: string; city: string | null; tenant_id: string };
 type MembershipRow = { tenant_id: string | null; role: string | null };
@@ -65,7 +66,7 @@ function ReportBuilderInner() {
         return;
       }
 
-      const { data: mem } = await supabase.from("memberships").select("tenant_id, role");
+      const { data: mem } = await supabase.from("memberships").select("tenant_id, role").eq("user_id", user.id);
       if (cancelled) return;
       const roles = (mem ?? []).map((m: MembershipRow) => (m.role ?? "").toLowerCase());
       if (!roles.some((r: string) => REPORT_READER_ROLES.has(r))) {
@@ -74,27 +75,9 @@ function ReportBuilderInner() {
         return;
       }
 
-      const superA = roles.includes("super_admin");
-      setIsSuperAdmin(superA);
-      const tenantIds = [...new Set((mem ?? []).map((m: MembershipRow) => m.tenant_id).filter(Boolean))] as string[];
-
-      let pq = supabase.from("properties").select("id, name, city, tenant_id").order("name");
-      if (!superA) {
-        if (tenantIds.length === 0) {
-          setProperties([]);
-          setLoadingMeta(false);
-          return;
-        }
-        pq = pq.in("tenant_id", tenantIds);
-      }
-      const { data: props, error } = await pq;
-      if (cancelled) return;
-      if (error) {
-        setGenError(error.message);
-        setLoadingMeta(false);
-        return;
-      }
-      const plist = (props as PropertyRow[]) ?? [];
+      const scoped = await loadScopedPropertiesForUser(supabase, user.id);
+      const plist = (scoped.properties as PropertyRow[]) ?? [];
+      setIsSuperAdmin(scoped.isSuperAdmin);
       setProperties(plist);
 
       if (prePropertyId && plist.some((p) => p.id === prePropertyId)) {
@@ -468,6 +451,8 @@ function ReportBuilderInner() {
                       <th style={th}>Meeting</th>
                       <th style={th}>Hot desk</th>
                       <th style={th}>Venue</th>
+                      <th style={th}>Virtual office</th>
+                      <th style={th}>Furniture</th>
                       <th style={th}>Services</th>
                       <th style={th}>Total</th>
                     </tr>
@@ -480,6 +465,8 @@ function ReportBuilderInner() {
                         <td style={tdR}>{money(r.meetingRoomBookings)}</td>
                         <td style={tdR}>{money(r.hotDeskBookings)}</td>
                         <td style={tdR}>{money(r.venueBookings)}</td>
+                        <td style={tdR}>{money(r.virtualOfficeRevenue)}</td>
+                        <td style={tdR}>{money(r.furnitureRevenue)}</td>
                         <td style={tdR}>{money(r.additionalServices)}</td>
                         <td style={tdR}>
                           <strong>{money(r.total)}</strong>

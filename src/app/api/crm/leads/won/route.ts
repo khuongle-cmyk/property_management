@@ -3,6 +3,7 @@ import { sumProposalMonthlyRent } from "@/lib/crm/proposal-items";
 import { userCanManageLeadPipeline } from "@/lib/auth/crm-lead-access";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createOnboardingTasksFromContract } from "@/lib/tasks/automation";
 
 type Body = { leadId?: string; proposalId?: string };
 
@@ -210,6 +211,16 @@ export async function POST(req: Request) {
     })
     .eq("id", leadId);
   if (leadUpdErr) return NextResponse.json({ error: leadUpdErr.message }, { status: 400 });
+
+  await createOnboardingTasksFromContract({
+    supabase: admin,
+    contractId: contractId!,
+    tenantId: landlordTenantId,
+    leadId: leadId,
+    propertyId: String(proposal.property_id),
+    roomId: primaryRoomId,
+    contractStartDate: String(proposal.proposed_start_date),
+  });
 
   return NextResponse.json({ ok: true, clientTenantId, contractId });
 }

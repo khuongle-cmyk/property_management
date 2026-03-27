@@ -8,6 +8,7 @@ import { sumProposalMonthlyRent } from "@/lib/crm/proposal-items";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { LeadFormModal } from "@/components/crm/LeadFormModal";
 import { ytunnusFormatWarning, vatFiFormatWarning } from "@/lib/crm/finnish-company";
+import { formatDateTime } from "@/lib/date/format";
 
 type LeadRow = {
   id: string;
@@ -742,7 +743,7 @@ function LeadDetailPageInner() {
         </div>
         {activities.map((a) => (
           <div key={a.id} style={{ borderBottom: "1px solid #f1f5f9", padding: "8px 0", fontSize: 14 }}>
-            <span style={{ color: "#64748b" }}>{new Date(a.occurred_at).toLocaleString()}</span> · {a.summary}
+            <span style={{ color: "#64748b" }}>{formatDateTime(a.occurred_at)}</span> · {a.summary}
             {a.details ? <div style={{ whiteSpace: "pre-wrap" }}>{a.details}</div> : null}
           </div>
         ))}
@@ -752,7 +753,7 @@ function LeadDetailPageInner() {
         <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Stage history</h3>
         {history.map((h) => (
           <div key={h.id} style={{ fontSize: 14, padding: "6px 0" }}>
-            {new Date(h.changed_at).toLocaleString()}: {h.from_stage ?? "start"} → {h.to_stage}
+            {formatDateTime(h.changed_at)}: {h.from_stage ?? "start"} → {h.to_stage}
             {h.notes ? ` — ${h.notes}` : ""}
           </div>
         ))}

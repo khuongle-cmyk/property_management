@@ -15,6 +15,8 @@ const REVENUE_SECTIONS: ReportSections = {
   hotDeskRevenue: true,
   venueRevenue: true,
   additionalServices: true,
+  virtualOfficeRevenue: true,
+  furnitureRevenue: true,
   vacancyForecast: false,
   revenueVsTarget: false,
   roomByRoom: false,

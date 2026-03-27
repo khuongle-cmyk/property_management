@@ -12,12 +12,15 @@ export async function getMembershipScope(supabase: SupabaseClient): Promise<Memb
   } = await supabase.auth.getUser();
   if (!user) return null;
   const { data } = await supabase.from("memberships").select("tenant_id, role").eq("user_id", user.id);
-  const tenantRoles = (data ?? [])
-    .map((m) => ({ tenant_id: String(m.tenant_id ?? ""), role: String(m.role ?? "").toLowerCase() }))
-    .filter((m) => m.tenant_id);
+  const rawRoles = (data ?? []).map((m) => ({
+    tenant_id: String(m.tenant_id ?? ""),
+    role: String(m.role ?? "").toLowerCase(),
+  }));
+  const isSuperAdmin = rawRoles.some((m) => m.role === "super_admin");
+  const tenantRoles = rawRoles.filter((m) => m.tenant_id);
   return {
     userId: user.id,
-    isSuperAdmin: tenantRoles.some((m) => m.role === "super_admin"),
+    isSuperAdmin,
     tenantRoles,
   };
 }

@@ -9,7 +9,7 @@ export async function GET(req: Request) {
   if (!scope) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { searchParams } = new URL(req.url);
   const tenantId = searchParams.get("tenantId")?.trim() || firstManageableTenant(scope);
-  if (!tenantId) return NextResponse.json({ error: "No tenant in scope" }, { status: 400 });
+  if (!tenantId) return NextResponse.json({ error: "No organization in scope" }, { status: 400 });
   if (!canViewTenant(scope, tenantId)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { data: tenant, error: tErr } = await supabase
@@ -17,7 +17,7 @@ export async function GET(req: Request) {
     .select("id,name,plan,trial_starts_at,trial_ends_at,trial_status,contact_email")
     .eq("id", tenantId)
     .maybeSingle();
-  if (tErr || !tenant) return NextResponse.json({ error: tErr?.message ?? "Tenant not found" }, { status: 404 });
+  if (tErr || !tenant) return NextResponse.json({ error: tErr?.message ?? "Organization not found" }, { status: 404 });
 
   const planId = String((tenant as { plan?: string }).plan ?? "starter");
   const plan = await loadPlan(supabase, planId);

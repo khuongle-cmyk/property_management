@@ -22,6 +22,7 @@ import {
   spaceTypeBadgeStyle,
   spaceTypeLabel,
 } from "@/lib/rooms/labels";
+import { loadScopedPropertiesForUser } from "@/lib/properties/scoped";
 
 type RoomPhoto = { id: string; storage_path: string; sort_order: number };
 
@@ -428,28 +429,14 @@ export default function RoomsDashboardPage() {
       return;
     }
 
-    const { data: mem, error: mErr } = await supabase.from("memberships").select("tenant_id, role");
+    const { data: mem, error: mErr } = await supabase.from("memberships").select("tenant_id, role").eq("user_id", user.id);
     if (mErr) throw new Error(mErr.message);
     const mrows = (mem ?? []) as MembershipRow[];
     setMemberships(mrows);
-    const roles = mrows.map((x) => (x.role ?? "").toLowerCase());
-    const superA = roles.includes("super_admin");
+    const scoped = await loadScopedPropertiesForUser(supabase, user.id);
+    const superA = scoped.isSuperAdmin;
     setIsSuperAdmin(superA);
-    const tenantIds = [...new Set(mrows.map((x) => x.tenant_id).filter(Boolean))] as string[];
-
-    let pq = supabase.from("properties").select("id, name, city, tenant_id").order("name");
-    if (!superA) {
-      if (tenantIds.length === 0) {
-        setProperties([]);
-        setRooms([]);
-        setSelectedPropertyId("");
-        return;
-      }
-      pq = pq.in("tenant_id", tenantIds);
-    }
-    const { data: props, error: pErr } = await pq;
-    if (pErr) throw new Error(pErr.message);
-    const plist = (props as PropertyRow[]) ?? [];
+    const plist = (scoped.properties as PropertyRow[]) ?? [];
     setProperties(plist);
     const pids = plist.map((p) => p.id);
     if (pids.length === 0) {
@@ -1109,7 +1096,7 @@ export default function RoomsDashboardPage() {
         </div>
         <div style={{ padding: "8px 12px", background: "#fff", borderRadius: 8, border: "1px solid #dee2e6" }}>
           <div style={{ fontSize: 12, color: "#666" }}>Monthly office rent (occupied)</div>
-          <div style={{ fontWeight: 600 }}>€{monthlyOfficeRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+          <div style={{ fontWeight: 600 }}>€{Math.round(monthlyOfficeRevenue).toString()}</div>
         </div>
       </section>
 

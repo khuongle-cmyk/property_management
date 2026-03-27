@@ -10,7 +10,7 @@ export async function POST(req: Request) {
 
   const body = (await req.json()) as { tenantId?: string; billingMonth?: string };
   const tenantId = body.tenantId?.trim() || firstManageableTenant(scope);
-  if (!tenantId) return NextResponse.json({ error: "No tenant in scope" }, { status: 400 });
+  if (!tenantId) return NextResponse.json({ error: "No organization in scope" }, { status: 400 });
   if (!canViewTenant(scope, tenantId)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { data: tenant, error: tErr } = await supabase
@@ -18,7 +18,7 @@ export async function POST(req: Request) {
     .select("id,name,plan,trial_starts_at,trial_ends_at,trial_status,contact_email")
     .eq("id", tenantId)
     .maybeSingle();
-  if (tErr || !tenant) return NextResponse.json({ error: tErr?.message ?? "Tenant not found" }, { status: 404 });
+  if (tErr || !tenant) return NextResponse.json({ error: tErr?.message ?? "Organization not found" }, { status: 404 });
 
   const planId = String((tenant as { plan?: string }).plan ?? "starter");
   const plan = await loadPlan(supabase, planId);
@@ -42,7 +42,7 @@ export async function POST(req: Request) {
     ok: true,
     tenant: {
       id: (tenant as { id: string }).id,
-      name: (tenant as { name?: string | null }).name ?? "Tenant",
+      name: (tenant as { name?: string | null }).name ?? "Organization",
       plan: planId,
       trial_status: trialStatus,
       trial_ends_at: trialEndsAt || null,

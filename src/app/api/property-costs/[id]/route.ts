@@ -19,8 +19,9 @@ type PatchBody = {
   status?: "scheduled" | "confirmed" | "cancelled";
 };
 
-export async function PATCH(req: Request, { params }: { params: { id: string } }) {
-  const entryId = params.id?.trim();
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const entryId = id?.trim();
   if (!entryId) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
   let body: PatchBody;
@@ -95,8 +96,9 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   return NextResponse.json({ ok: true, entry: row });
 }
 
-export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
-  const entryId = params.id?.trim();
+export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const entryId = id?.trim();
   if (!entryId) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
   const supabase = createSupabaseServerClient();

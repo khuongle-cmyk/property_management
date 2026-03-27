@@ -246,8 +246,8 @@ export default function SuperAdminDashboardPage() {
     <main>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div>
-          <h1 style={{ margin: "0 0 8px" }}>Super Admin Dashboard</h1>
-          <p style={{ margin: 0, color: "#555" }}>All tenants, all properties, system-wide occupancy.</p>
+          <h1 style={{ margin: "0 0 8px" }}>All organizations</h1>
+          <p style={{ margin: 0, color: "#555" }}>All organizations, all properties, system-wide occupancy.</p>
           <p style={{ margin: "10px 0 0", fontSize: 14 }}>
             <Link href="/reports">Financial reports (rent roll, net income)</Link>
             {" · "}
@@ -269,7 +269,7 @@ export default function SuperAdminDashboardPage() {
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginTop: 18 }}>
             <div style={{ border: "1px solid #eee", borderRadius: 12, padding: 14 }}>
-              <div style={{ color: "#666", fontSize: 12 }}>Tenants</div>
+              <div style={{ color: "#666", fontSize: 12 }}>Organizations</div>
               <div style={{ fontSize: 26, fontWeight: 700 }}>{counts.tenants}</div>
             </div>
             <div style={{ border: "1px solid #eee", borderRadius: 12, padding: 14 }}>
@@ -287,9 +287,9 @@ export default function SuperAdminDashboardPage() {
           </div>
 
           <div style={{ marginTop: 22 }}>
-            <h2 style={{ margin: "0 0 10px", fontSize: 16 }}>Tenants</h2>
+            <h2 style={{ margin: "0 0 10px", fontSize: 16 }}>Organizations</h2>
             {tenants.length === 0 ? (
-              <p>No tenants found.</p>
+              <p>No organizations found.</p>
             ) : (
               <table style={{ width: "100%", borderCollapse: "collapse", border: "1px solid #ddd" }}>
                 <thead>
@@ -320,7 +320,7 @@ export default function SuperAdminDashboardPage() {
               <table style={{ width: "100%", borderCollapse: "collapse", border: "1px solid #ddd" }}>
                 <thead>
                   <tr>
-                    <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #ddd" }}>Owner Tenant</th>
+                    <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #ddd" }}>Owner organization</th>
                     <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #ddd" }}>Property</th>
                     <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #ddd" }}>Address</th>
                     <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #ddd" }}>Occupancy</th>
@@ -424,14 +424,14 @@ export default function SuperAdminDashboardPage() {
                 </select>
               </label>
               <label style={{ display: "grid", gap: 6 }}>
-                <span>Tenant</span>
+                <span>Organization</span>
                 <select
                   value={inviteTenantId}
                   onChange={(e) => setInviteTenantId(e.target.value)}
                   required
                   style={{ padding: 10, borderRadius: 8, border: "1px solid #ddd" }}
                 >
-                  <option value="">Select tenant…</option>
+                  <option value="">Select organization…</option>
                   {tenants.map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.name}
@@ -458,10 +458,10 @@ export default function SuperAdminDashboardPage() {
           </div>
 
           <div style={{ marginTop: 22, borderTop: "1px solid #eee", paddingTop: 18 }}>
-            <h2 style={{ margin: "0 0 10px", fontSize: 16 }}>Add Tenant / Owner</h2>
+            <h2 style={{ margin: "0 0 10px", fontSize: 16 }}>Add organization / owner</h2>
             <form onSubmit={onAddTenant} style={{ display: "grid", gap: 12, maxWidth: 520 }}>
               <label style={{ display: "grid", gap: 6 }}>
-                <span>Tenant (owner company) name</span>
+                <span>Organization name (owner company)</span>
                 <input
                   value={tenantName}
                   onChange={(e) => setTenantName(e.target.value)}
@@ -491,7 +491,7 @@ export default function SuperAdminDashboardPage() {
                   cursor: submitLoading ? "not-allowed" : "pointer",
                 }}
               >
-                {submitLoading ? "Adding..." : "Add tenant/owner"}
+                {submitLoading ? "Adding..." : "Add organization/owner"}
               </button>
               <p style={{ margin: 0, color: "#666", fontSize: 12 }}>
                 You’ll need the owner’s user UUID from Supabase Auth (since the browser cannot look up auth user ids).

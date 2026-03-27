@@ -24,8 +24,9 @@ type Body = Record<string, unknown> & {
 const SOURCES = new Set(["email", "website", "phone", "chatbot", "social_media", "referral", "other"]);
 const SPACE_TYPES = new Set(["office", "meeting_room", "venue", "hot_desk"]);
 
-export async function PATCH(req: Request, { params }: { params: { id: string } }) {
-  const leadId = params.id?.trim();
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const leadId = id?.trim();
   if (!leadId) return NextResponse.json({ error: "Missing lead id" }, { status: 400 });
 
   let body: Body;

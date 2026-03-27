@@ -5,6 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { LEAD_STAGE_LABEL, LEAD_STAGES, type LeadStage } from "@/lib/crm";
+import { formatPropertyLabel } from "@/lib/properties/label";
+import { formatDate } from "@/lib/date/format";
 
 type Role = "super_admin" | "owner" | "manager" | "customer_service" | "agent" | string;
 type MembershipRow = { tenant_id: string | null; role: string | null };
@@ -271,7 +273,7 @@ export default function CrmContactsPage() {
 
     for (const c of contracts) {
       const p = c.source_proposal_id ? proposalMap.get(c.source_proposal_id) : null;
-      const company = p?.tenant_company_name?.trim() || `Tenant ${c.tenant_id.slice(0, 8)}`;
+      const company = p?.tenant_company_name?.trim() || `Organization ${c.tenant_id.slice(0, 8)}`;
       const key = `tenant_${c.tenant_id}_${company.toLowerCase().replace(/\s+/g, "_")}`;
       const status: ContactStatus =
         c.status === "active" && (!c.end_date || +new Date(c.end_date) >= +new Date()) ? "active_tenant" : "past_tenant";
@@ -489,7 +491,7 @@ export default function CrmContactsPage() {
                 <option value="all">All</option>
                 {properties.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {(p.name ?? "Property") + (p.city ? ` (${p.city})` : "")}
+                    {formatPropertyLabel(p, { includeCity: true })}
                   </option>
                 ))}
               </select>
@@ -582,7 +584,7 @@ export default function CrmContactsPage() {
                       <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{r.propertyName ?? "—"}</td>
                       <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{r.stage ? LEAD_STAGE_LABEL[r.stage] : "—"}</td>
                       <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{r.source ?? "—"}</td>
-                      <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{new Date(r.addedAt).toLocaleDateString()}</td>
+                      <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{formatDate(r.addedAt)}</td>
                       <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{r.assignedAgentName ?? "—"}</td>
                       <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9", whiteSpace: "nowrap" }}>
                         <Link href={`/crm/contacts/${encodeURIComponent(r.id)}`}>View</Link>

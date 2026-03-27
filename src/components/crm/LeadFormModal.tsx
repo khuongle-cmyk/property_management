@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { LEAD_SOURCES } from "@/lib/crm";
 import { COMPANY_SIZES, vatFiFormatWarning, ytunnusFormatWarning } from "@/lib/crm/finnish-company";
+import { formatPropertyLabel } from "@/lib/properties/label";
 
 export type LeadFormProperty = { id: string; name: string | null; city: string | null };
 
@@ -387,7 +388,7 @@ export function LeadFormModal({ open, mode, leadId, tenantId, properties, initia
               <option value="">—</option>
               {properties.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {(p.name ?? "Property") + (p.city ? ` (${p.city})` : "")}
+                  {formatPropertyLabel(p, { includeCity: true })}
                 </option>
               ))}
             </select>

@@ -28,13 +28,13 @@ export function spaceTypeLabel(t: string): string {
     case "office":
       return "Office";
     case "conference_room":
-      return "Conference room";
+      return "Meeting room";
     case "venue":
       return "Venue";
     case "hot_desk":
       return "Hot desk";
     case "meeting_room":
-      return "Conference room";
+      return "Meeting room";
     case "desk":
       return "Hot desk";
     default:

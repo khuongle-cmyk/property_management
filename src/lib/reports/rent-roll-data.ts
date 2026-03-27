@@ -112,7 +112,7 @@ export async function loadRentRollSourceRows(
   const { data: historicalRevenue, error: hErr } = await supabase
     .from("historical_revenue")
     .select(
-      "property_id, year, month, office_rent_revenue, meeting_room_revenue, hot_desk_revenue, venue_revenue, additional_services_revenue, total_revenue",
+      "property_id, year, month, office_rent_revenue, meeting_room_revenue, hot_desk_revenue, venue_revenue, additional_services_revenue, virtual_office_revenue, furniture_revenue, total_revenue",
     )
     .in("property_id", allowedIds)
     .gte("year", Number(monthKeys[0].slice(0, 4)))

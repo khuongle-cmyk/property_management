@@ -5,6 +5,7 @@ import { useMemo, useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { LEAD_STAGE_LABEL, type LeadStage } from "@/lib/crm";
+import { formatDate, formatDateTime } from "@/lib/date/format";
 
 type TabKey = "overview" | "timeline" | "proposals" | "contracts" | "invoices" | "bookings" | "notes";
 type LeadRow = Record<string, unknown> & {
@@ -161,7 +162,7 @@ export default function ContactDetailPage() {
         setLead({
           id: `tenant_${tenantId}`,
           tenant_id: tenantId,
-          company_name: `Tenant ${tenantId.slice(0, 8)}`,
+          company_name: `Organization ${tenantId.slice(0, 8)}`,
           contact_person_name: "—",
           email: "",
           phone: null,
@@ -273,7 +274,7 @@ export default function ContactDetailPage() {
           {activities.length === 0 ? <p style={{ color: "#64748b" }}>No timeline events yet.</p> : null}
           {activities.map((a) => (
             <div key={a.id} style={{ borderBottom: "1px solid #f1f5f9", padding: "8px 0" }}>
-              <div style={{ fontSize: 12, color: "#64748b" }}>{new Date(a.occurred_at).toLocaleString()}</div>
+              <div style={{ fontSize: 12, color: "#64748b" }}>{formatDateTime(a.occurred_at)}</div>
               <div style={{ fontWeight: 600 }}>{a.summary}</div>
               {a.details ? <div style={{ whiteSpace: "pre-wrap" }}>{a.details}</div> : null}
             </div>
@@ -289,7 +290,7 @@ export default function ContactDetailPage() {
             <div key={p.id} style={{ borderBottom: "1px solid #f1f5f9", padding: "8px 0" }}>
               <div style={{ fontWeight: 600 }}>{p.tenant_company_name}</div>
               <div style={{ fontSize: 13 }}>
-                {p.status} · {propertiesMap.get(p.property_id) ?? p.property_id} · {new Date(p.created_at).toLocaleDateString()}
+                {p.status} · {propertiesMap.get(p.property_id) ?? p.property_id} · {formatDate(p.created_at)}
               </div>
             </div>
           ))}
@@ -331,7 +332,7 @@ export default function ContactDetailPage() {
           {bookings.map((b) => (
             <div key={b.id} style={{ borderBottom: "1px solid #f1f5f9", padding: "8px 0" }}>
               <div style={{ fontWeight: 600 }}>{b.status ?? "—"}</div>
-              <div style={{ fontSize: 13 }}>{new Date(b.start_at).toLocaleString()} → {new Date(b.end_at).toLocaleString()}</div>
+              <div style={{ fontSize: 13 }}>{formatDateTime(b.start_at)} → {formatDateTime(b.end_at)}</div>
             </div>
           ))}
         </section>
@@ -349,7 +350,7 @@ export default function ContactDetailPage() {
               <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
                 {activities.filter((a) => a.activity_type === "note_added").map((a) => (
                   <div key={a.id} style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 8 }}>
-                    <div style={{ fontSize: 12, color: "#64748b" }}>{new Date(a.occurred_at).toLocaleString()}</div>
+                    <div style={{ fontSize: 12, color: "#64748b" }}>{formatDateTime(a.occurred_at)}</div>
                     <div>{a.details ?? a.summary}</div>
                   </div>
                 ))}

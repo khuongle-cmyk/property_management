@@ -5,8 +5,9 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 type Body = { contractTerms?: string | null };
 
-export async function PATCH(req: Request, { params }: { params: { id: string } }) {
-  const contractId = params.id?.trim();
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const contractId = id?.trim();
   if (!contractId) return NextResponse.json({ error: "Missing contract id" }, { status: 400 });
 
   let body: Body;

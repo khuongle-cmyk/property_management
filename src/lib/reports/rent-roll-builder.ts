@@ -123,6 +123,8 @@ type HistoricalRevenue = {
   hot_desk_revenue: number;
   venue_revenue: number;
   additional_services_revenue: number;
+  virtual_office_revenue: number;
+  furniture_revenue: number;
   total_revenue: number;
 };
 
@@ -266,12 +268,16 @@ export function buildRentRollReport(
   const hotDesk: Record<string, number> = {};
   const venue: Record<string, number> = {};
   const addl: Record<string, number> = {};
+  const virtualOffice: Record<string, number> = {};
+  const furniture: Record<string, number> = {};
 
   for (const m of monthKeys) {
     meeting[m] = 0;
     hotDesk[m] = 0;
     venue[m] = 0;
     addl[m] = 0;
+    virtualOffice[m] = 0;
+    furniture[m] = 0;
   }
 
   for (const b of rows.bookings) {
@@ -313,6 +319,8 @@ export function buildRentRollReport(
     if (sections.hotDeskRevenue) hotDesk[mk] = (hotDesk[mk] ?? 0) + (Number(hr.hot_desk_revenue) || 0);
     if (sections.venueRevenue) venue[mk] = (venue[mk] ?? 0) + (Number(hr.venue_revenue) || 0);
     if (sections.additionalServices) addl[mk] = (addl[mk] ?? 0) + (Number(hr.additional_services_revenue) || 0);
+    if (sections.virtualOfficeRevenue) virtualOffice[mk] = (virtualOffice[mk] ?? 0) + (Number(hr.virtual_office_revenue) || 0);
+    if (sections.furnitureRevenue) furniture[mk] = (furniture[mk] ?? 0) + (Number(hr.furniture_revenue) || 0);
   }
 
   const monthlySummary = monthKeys.map((mk) => {
@@ -321,8 +329,10 @@ export function buildRentRollReport(
     const hotDeskBookings = sections.hotDeskRevenue ? hotDesk[mk] ?? 0 : 0;
     const venueBookings = sections.venueRevenue ? venue[mk] ?? 0 : 0;
     const additionalServices = sections.additionalServices ? addl[mk] ?? 0 : 0;
+    const virtualOfficeRevenue = sections.virtualOfficeRevenue ? virtualOffice[mk] ?? 0 : 0;
+    const furnitureRevenue = sections.furnitureRevenue ? furniture[mk] ?? 0 : 0;
     const total =
-      officeContractRent + meetingRoomBookings + hotDeskBookings + venueBookings + additionalServices;
+      officeContractRent + meetingRoomBookings + hotDeskBookings + venueBookings + additionalServices + virtualOfficeRevenue + furnitureRevenue;
     return {
       monthKey: mk,
       officeContractRent,
@@ -330,6 +340,8 @@ export function buildRentRollReport(
       hotDeskBookings,
       venueBookings,
       additionalServices,
+      virtualOfficeRevenue,
+      furnitureRevenue,
       total,
     };
   });
@@ -476,6 +488,8 @@ export function buildRentRollReport(
       hotDesk: sections.hotDeskRevenue ? hotDesk : {},
       venue: sections.venueRevenue ? venue : {},
       additionalServices: sections.additionalServices ? addl : {},
+      virtualOffice: sections.virtualOfficeRevenue ? virtualOffice : {},
+      furniture: sections.furnitureRevenue ? furniture : {},
     },
     monthlySummary,
     vacancyForecast: sections.vacancyForecast ? vacancyForecast : [],

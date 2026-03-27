@@ -2,7 +2,7 @@ import type { ImportType } from "./types";
 
 const templates: Record<ImportType, string> = {
   revenue:
-    "property,year,month,office_rent_revenue,meeting_room_revenue,hot_desk_revenue,venue_revenue,additional_services_revenue,total_revenue\nErottaja2,2024,1,25000,3200,1800,2200,900,33100\n",
+    "property,year,month,office_rent_revenue,meeting_room_revenue,hot_desk_revenue,venue_revenue,virtual_office_revenue,furniture_revenue,additional_services_revenue,total_revenue\nErottaja2,2024,1,25000,3200,1800,2200,1200,650,900,34950\n",
   costs:
     "property,date,cost_type,description,amount_ex_vat,vat_amount,total_amount,supplier,invoice_number\nErottaja2,2024-01-10,utilities,Electricity January,2400,612,3012,Helen Oy,EL-2024-001\n",
   invoices:

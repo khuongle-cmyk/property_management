@@ -23,6 +23,8 @@ function coerceSections(raw: unknown): ReportSections {
     hotDeskRevenue: !!d.hotDeskRevenue,
     venueRevenue: !!d.venueRevenue,
     additionalServices: !!d.additionalServices,
+    virtualOfficeRevenue: !!d.virtualOfficeRevenue,
+    furnitureRevenue: !!d.furnitureRevenue,
     vacancyForecast: !!d.vacancyForecast,
     revenueVsTarget: !!d.revenueVsTarget,
     roomByRoom: !!d.roomByRoom,

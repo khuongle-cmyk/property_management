@@ -10,7 +10,8 @@ type Body = {
   fileName?: string | null;
   dataSource?: DataSource;
   rows?: ParsedRow[];
-  procountorExportType?: "sales_invoices" | "purchase_invoices" | "general_ledger";
+  procountorExportType?: "sales_invoices" | "purchase_invoices" | "income_statement";
+  tenantId?: string | null;
 };
 
 function num(v: unknown): number | null {
@@ -47,17 +48,25 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid duplicateMode" }, { status: 400 });
   }
   if (!rows.length) return NextResponse.json({ error: "No rows provided" }, { status: 400 });
+  const requestedTenantId = str(body.tenantId);
 
   const { data: memberships, error: mErr } = await supabase.from("memberships").select("tenant_id, role").eq("user_id", user.id);
   if (mErr) return NextResponse.json({ error: mErr.message }, { status: 500 });
-  const roles = (memberships ?? []).map((m) => (m.role ?? "").toLowerCase());
-  const isSuperAdmin = roles.includes("super_admin");
+  const roleRows = (memberships ?? []).map((m) => ({
+    role: (m.role ?? "").toLowerCase(),
+    tenant_id: m.tenant_id,
+  }));
+  const isSuperAdmin = roleRows.some((m) => m.role === "super_admin");
   const manageRoles = new Set(["super_admin", "owner", "manager"]);
-  const allowedTenantIds = [...new Set((memberships ?? []).filter((m) => manageRoles.has((m.role ?? "").toLowerCase())).map((m) => m.tenant_id).filter(Boolean))] as string[];
+  const allowedTenantIds = [...new Set(roleRows.filter((m) => manageRoles.has(m.role)).map((m) => m.tenant_id).filter(Boolean))] as string[];
   if (!isSuperAdmin && !allowedTenantIds.length) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (requestedTenantId && !isSuperAdmin && !allowedTenantIds.includes(requestedTenantId)) {
+    return NextResponse.json({ error: "Requested tenant not in your scope" }, { status: 403 });
+  }
 
   let pq = supabase.from("properties").select("id,name,tenant_id");
   if (!isSuperAdmin) pq = pq.in("tenant_id", allowedTenantIds);
+  if (requestedTenantId) pq = pq.eq("tenant_id", requestedTenantId);
   const { data: propRows, error: pErr } = await pq;
   if (pErr) return NextResponse.json({ error: pErr.message }, { status: 500 });
   const properties = (propRows ?? []) as Array<{ id: string; name: string | null; tenant_id: string | null }>;
@@ -65,8 +74,8 @@ export async function POST(req: Request) {
   const byId = new Map(properties.map((p) => [p.id, p]));
   const byName = new Map(properties.map((p) => [(p.name ?? "").toLowerCase(), p]));
 
-  const batchTenant = properties[0]?.tenant_id ?? null;
-  if (!batchTenant) return NextResponse.json({ error: "Missing tenant scope for import" }, { status: 400 });
+  const batchTenant = requestedTenantId || properties[0]?.tenant_id || null;
+  if (!batchTenant) return NextResponse.json({ error: "Missing organization scope for import" }, { status: 400 });
   const { data: batch, error: bErr } = await supabase
     .from("import_batches")
     .insert({
@@ -123,8 +132,10 @@ export async function POST(req: Request) {
         const hotDesk = num(r.hot_desk_revenue) ?? 0;
         const venue = num(r.venue_revenue) ?? 0;
         const addl = num(r.additional_services_revenue) ?? 0;
-        const total = num(r.total_revenue) ?? office + meeting + hotDesk + venue + addl;
-        if ([office, meeting, hotDesk, venue, addl, total].some((n) => n < 0)) throw new Error("Amounts must be positive");
+        const virtualOffice = num((r as ParsedRow & { virtual_office_revenue?: unknown }).virtual_office_revenue) ?? 0;
+        const furniture = num((r as ParsedRow & { furniture_revenue?: unknown }).furniture_revenue) ?? 0;
+        const total = num(r.total_revenue) ?? office + meeting + hotDesk + venue + addl + virtualOffice + furniture;
+        if ([office, meeting, hotDesk, venue, addl, virtualOffice, furniture, total].some((n) => n < 0)) throw new Error("Amounts must be positive");
 
         const payload = {
           property_id: p.id,
@@ -136,8 +147,13 @@ export async function POST(req: Request) {
           hot_desk_revenue: hotDesk,
           venue_revenue: venue,
           additional_services_revenue: addl,
+          virtual_office_revenue: virtualOffice,
+          furniture_revenue: furniture,
           total_revenue: total,
           data_source: dataSource,
+          account_code: str((r as ParsedRow & { account_code?: unknown }).account_code) || null,
+          account_name: str((r as ParsedRow & { account_name?: unknown }).account_name) || null,
+          category: str((r as ParsedRow & { category?: unknown }).category) || null,
           import_batch_id: batchId,
         };
         if (duplicateMode === "skip") {
@@ -154,7 +170,7 @@ export async function POST(req: Request) {
         } else {
           const { data: ex } = await supabase
             .from("historical_revenue")
-            .select("id,office_rent_revenue,meeting_room_revenue,hot_desk_revenue,venue_revenue,additional_services_revenue,total_revenue")
+            .select("id,office_rent_revenue,meeting_room_revenue,hot_desk_revenue,venue_revenue,additional_services_revenue,virtual_office_revenue,furniture_revenue,total_revenue")
             .eq("property_id", p.id)
             .eq("year", year)
             .eq("month", month)
@@ -171,6 +187,8 @@ export async function POST(req: Request) {
                 hot_desk_revenue: Number(ex.hot_desk_revenue || 0) + hotDesk,
                 venue_revenue: Number(ex.venue_revenue || 0) + venue,
                 additional_services_revenue: Number(ex.additional_services_revenue || 0) + addl,
+                virtual_office_revenue: Number((ex as { virtual_office_revenue?: number }).virtual_office_revenue || 0) + virtualOffice,
+                furniture_revenue: Number((ex as { furniture_revenue?: number }).furniture_revenue || 0) + furniture,
                 total_revenue: Number(ex.total_revenue || 0) + total,
                 import_batch_id: batchId,
               })
@@ -187,7 +205,7 @@ export async function POST(req: Request) {
         const totalAmount = num(r.total_amount) ?? ((amountEx ?? 0) + vatAmount);
         if (amountEx == null || amountEx < 0 || vatAmount < 0 || totalAmount < 0) throw new Error("Amounts must be positive");
         const typeRaw = str(r.cost_type).toLowerCase().replace(/\s+/g, "_");
-        const costType = isPropertyCostType(typeRaw) ? typeRaw : "one_off";
+        const costType = typeRaw || (isPropertyCostType(typeRaw) ? typeRaw : "one_off");
 
         const payload = {
           property_id: p.id,
@@ -203,6 +221,8 @@ export async function POST(req: Request) {
           supplier_name: str(r.supplier || r.supplier_name) || null,
           invoice_number: str(r.invoice_number) || null,
           data_source: dataSource,
+          account_code: str((r as ParsedRow & { account_code?: unknown }).account_code) || null,
+          account_name: str((r as ParsedRow & { account_name?: unknown }).account_name) || null,
           import_batch_id: batchId,
         };
         const { error } = await supabase.from("historical_costs").insert(payload);

@@ -7,6 +7,7 @@ import { getSupabaseClient } from "@/lib/supabase/browser";
 import type { NetIncomeReportModel } from "@/lib/reports/net-income-types";
 import { REPORT_READER_ROLES } from "@/lib/reports/report-access";
 import { PROPERTY_COST_TYPE_LABELS } from "@/lib/property-costs/constants";
+import { loadScopedPropertiesForUser } from "@/lib/properties/scoped";
 
 type PropertyRow = { id: string; name: string; city: string | null; tenant_id: string };
 type MembershipRow = { tenant_id: string | null; role: string | null };
@@ -55,7 +56,7 @@ function NetIncomeInner() {
         router.replace("/login");
         return;
       }
-      const { data: mem } = await supabase.from("memberships").select("tenant_id, role");
+      const { data: mem } = await supabase.from("memberships").select("tenant_id, role").eq("user_id", user.id);
       if (cancelled) return;
       const roles = (mem ?? []).map((m: MembershipRow) => (m.role ?? "").toLowerCase());
       if (!roles.some((r: string) => REPORT_READER_ROLES.has(r))) {
@@ -63,26 +64,9 @@ function NetIncomeInner() {
         setLoadingMeta(false);
         return;
       }
-      const superA = roles.includes("super_admin");
-      setIsSuperAdmin(superA);
-      const tenantIds = [...new Set((mem ?? []).map((m: MembershipRow) => m.tenant_id).filter(Boolean))] as string[];
-      let pq = supabase.from("properties").select("id, name, city, tenant_id").order("name");
-      if (!superA) {
-        if (tenantIds.length === 0) {
-          setProperties([]);
-          setLoadingMeta(false);
-          return;
-        }
-        pq = pq.in("tenant_id", tenantIds);
-      }
-      const { data: props, error } = await pq;
-      if (cancelled) return;
-      if (error) {
-        setGenError(error.message);
-        setLoadingMeta(false);
-        return;
-      }
-      const plist = (props as PropertyRow[]) ?? [];
+      const scoped = await loadScopedPropertiesForUser(supabase, user.id);
+      const plist = (scoped.properties as PropertyRow[]) ?? [];
+      setIsSuperAdmin(scoped.isSuperAdmin);
       setProperties(plist);
       if (prePropertyId && plist.some((p) => p.id === prePropertyId)) {
         setAllProperties(false);

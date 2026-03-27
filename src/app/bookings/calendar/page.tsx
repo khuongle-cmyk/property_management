@@ -5,11 +5,14 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { bookingStatusStyle, spaceTypeLabel } from "@/lib/bookings/status-style";
+import { loadScopedPropertiesForUser } from "@/lib/properties/scoped";
+import { formatTime } from "@/lib/date/format";
 
 type PropertyRow = { id: string; name: string; city: string | null; tenant_id: string };
 
 type BookingRow = {
   id: string;
+  space_id: string;
   start_at: string;
   end_at: string;
   status: string;
@@ -32,7 +35,12 @@ function addDays(d: Date, n: number): Date {
 }
 
 function dayLabel(d: Date): string {
-  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  return d.toLocaleDateString("en-GB", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
 }
 
 function overlapsDay(booking: BookingRow, day: Date): boolean {
@@ -50,12 +58,18 @@ function BookingsCalendarContent() {
   const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [mounted, setMounted] = useState(false);
   const [properties, setProperties] = useState<PropertyRow[]>([]);
   const [propertyId, setPropertyId] = useState<string>("");
+  const [spaceIdFilter, setSpaceIdFilter] = useState<string>("");
   const [weekStart, setWeekStart] = useState(() => startOfWeekMonday(new Date()));
   const [bookings, setBookings] = useState<BookingRow[]>([]);
 
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const loadProperties = useCallback(async () => {
     const supabase = getSupabaseClient();
@@ -67,31 +81,8 @@ function BookingsCalendarContent() {
       return;
     }
 
-    const { data: memberships, error: mErr } = await supabase.from("memberships").select("tenant_id, role");
-    if (mErr) throw new Error(mErr.message);
-
-    const roles = (memberships ?? []).map((m) => (m.role ?? "").toLowerCase());
-    const isSuperAdmin = roles.includes("super_admin");
-    const tenantIds = [
-      ...new Set(
-        (memberships ?? [])
-          .map((m) => m.tenant_id)
-          .filter((id): id is string => typeof id === "string" && id.length > 0)
-      ),
-    ];
-
-    let q = supabase.from("properties").select("id, name, city, tenant_id").order("name", { ascending: true });
-    if (!isSuperAdmin) {
-      if (tenantIds.length === 0) {
-        setProperties([]);
-        return;
-      }
-      q = q.in("tenant_id", tenantIds);
-    }
-
-    const { data: props, error: pErr } = await q;
-    if (pErr) throw new Error(pErr.message);
-    const list = (props as PropertyRow[]) ?? [];
+    const scoped = await loadScopedPropertiesForUser(supabase, user.id);
+    const list = (scoped.properties as PropertyRow[]) ?? [];
     setProperties(list);
     setPropertyId((prev) => prev || list[0]?.id || "");
   }, [router]);
@@ -103,11 +94,12 @@ function BookingsCalendarContent() {
     }
     const supabase = getSupabaseClient();
     const weekEnd = addDays(weekStart, 7);
-    const { data, error: bErr } = await supabase
+    let query = supabase
       .from("bookings")
       .select(
         `
         id,
+        space_id,
         start_at,
         end_at,
         status,
@@ -119,12 +111,14 @@ function BookingsCalendarContent() {
       .lt("start_at", weekEnd.toISOString())
       .gt("end_at", weekStart.toISOString())
       .order("start_at", { ascending: true });
+    if (spaceIdFilter) query = query.eq("space_id", spaceIdFilter);
 
+    const { data, error: bErr } = await query;
     if (bErr) throw new Error(bErr.message);
 
     const raw = (data ?? []) as unknown as BookingRow[];
     setBookings(raw);
-  }, [propertyId, weekStart]);
+  }, [propertyId, weekStart, spaceIdFilter]);
 
   useEffect(() => {
     let cancelled = false;
@@ -167,6 +161,13 @@ function BookingsCalendarContent() {
     }
   }, [searchParams, properties]);
 
+  useEffect(() => {
+    const qs = searchParams.get("spaceId")?.trim() ?? "";
+    setSpaceIdFilter(qs);
+  }, [searchParams]);
+
+  if (!mounted) return <p>Loading...</p>;
+
   if (loading && properties.length === 0) {
     return <p>Loading...</p>;
   }
@@ -199,6 +200,15 @@ function BookingsCalendarContent() {
               ))
             )}
           </select>
+        </label>
+        <label style={{ display: "grid", gap: 6 }}>
+          <span style={{ fontSize: 13, color: "#555" }}>Space filter</span>
+          <input
+            value={spaceIdFilter}
+            onChange={(e) => setSpaceIdFilter(e.target.value.trim())}
+            placeholder="Optional space id"
+            style={{ padding: 10, borderRadius: 8, border: "1px solid #ddd", minWidth: 220 }}
+          />
         </label>
         <div style={{ display: "flex", gap: 8 }}>
           <button
@@ -257,8 +267,7 @@ function BookingsCalendarContent() {
                     <div style={{ fontWeight: 600 }}>{space?.name ?? "Space"}</div>
                     <div style={{ opacity: 0.9 }}>{space ? spaceTypeLabel(space.space_type) : ""}</div>
                     <div>
-                      {new Date(b.start_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} –{" "}
-                      {new Date(b.end_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      {formatTime(b.start_at)} – {formatTime(b.end_at)}
                     </div>
                     <div style={{ textTransform: "capitalize", marginTop: 4 }}>{b.status}</div>
                     {b.purpose ? <div style={{ marginTop: 4 }}>{b.purpose}</div> : null}

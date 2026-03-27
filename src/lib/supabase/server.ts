@@ -19,14 +19,16 @@ export function createSupabaseServerClient() {
   if (!url) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL");
   if (!anonKey) throw new Error("Missing NEXT_PUBLIC_SUPABASE_ANON_KEY");
 
-  const cookieStore = cookies();
+  const cookieStorePromise = cookies();
 
   return createServerClient(url, anonKey, {
     cookies: {
-      getAll() {
+      async getAll() {
+        const cookieStore = await cookieStorePromise;
         return cookieStore.getAll().map((c) => ({ name: c.name, value: c.value }));
       },
-      setAll(cookiesToSet) {
+      async setAll(cookiesToSet) {
+        const cookieStore = await cookieStorePromise;
         cookiesToSet.forEach(({ name, value, options }) => {
           cookieStore.set({ name, value, ...(options ?? {}) });
         });

@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { bookingStatusStyle, spaceTypeLabel } from "@/lib/bookings/status-style";
+import { loadScopedPropertiesForUser } from "@/lib/properties/scoped";
+import { formatDateTime } from "@/lib/date/format";
 
 type PropertyRow = { id: string; name: string; city: string | null; tenant_id: string };
 
@@ -64,31 +66,12 @@ export default function ManageBookingsPage() {
       return;
     }
 
-    const { data: memberships, error: mErr } = await supabase.from("memberships").select("tenant_id, role");
+    const { data: memberships, error: mErr } = await supabase.from("memberships").select("tenant_id, role").eq("user_id", user.id);
     if (mErr) throw new Error(mErr.message);
     const roleList = (memberships ?? []).map((m) => (m.role ?? "").toLowerCase());
     setRoles(roleList);
-    const isSuperAdmin = roleList.includes("super_admin");
-    const tenantIds = [
-      ...new Set(
-        (memberships ?? [])
-          .map((m) => m.tenant_id)
-          .filter((id): id is string => typeof id === "string" && id.length > 0)
-      ),
-    ];
-
-    let q = supabase.from("properties").select("id, name, city, tenant_id").order("name", { ascending: true });
-    if (!isSuperAdmin) {
-      if (tenantIds.length === 0) {
-        setProperties([]);
-        return;
-      }
-      q = q.in("tenant_id", tenantIds);
-    }
-
-    const { data: props, error: pErr } = await q;
-    if (pErr) throw new Error(pErr.message);
-    const list = (props as PropertyRow[]) ?? [];
+    const scoped = await loadScopedPropertiesForUser(supabase, user.id);
+    const list = (scoped.properties as PropertyRow[]) ?? [];
     setProperties(list);
     setPropertyId((prev) => prev || list[0]?.id || "");
   }, [router]);
@@ -418,8 +401,8 @@ function BookingCard({ b, bookerLabel }: { b: BookingRow; bookerLabel: string })
         {space?.name ?? "Space"} · {prop?.name ?? "Property"}
       </div>
       <div style={{ color: "#666", fontSize: 14 }}>
-        {space ? spaceTypeLabel(space.space_type) : ""} · {new Date(b.start_at).toLocaleString()} →{" "}
-        {new Date(b.end_at).toLocaleString()}
+        {space ? spaceTypeLabel(space.space_type) : ""} · {formatDateTime(b.start_at)} →{" "}
+        {formatDateTime(b.end_at)}
       </div>
       <div style={{ marginTop: 6, fontSize: 14 }}>
         Booker: <strong>{bookerLabel}</strong>

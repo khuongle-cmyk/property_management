@@ -13,7 +13,7 @@ export function rentRollReportToEmailHtml(report: RentRollReportModel): string {
   const monthRows = report.monthlySummary
     .map(
       (r) =>
-        `<tr><td>${e(r.monthKey)}</td><td style="text-align:right">${fmt(r.officeContractRent)}</td><td style="text-align:right">${fmt(r.meetingRoomBookings)}</td><td style="text-align:right">${fmt(r.hotDeskBookings)}</td><td style="text-align:right">${fmt(r.venueBookings)}</td><td style="text-align:right">${fmt(r.additionalServices)}</td><td style="text-align:right"><strong>${fmt(r.total)}</strong></td></tr>`,
+        `<tr><td>${e(r.monthKey)}</td><td style="text-align:right">${fmt(r.officeContractRent)}</td><td style="text-align:right">${fmt(r.meetingRoomBookings)}</td><td style="text-align:right">${fmt(r.hotDeskBookings)}</td><td style="text-align:right">${fmt(r.venueBookings)}</td><td style="text-align:right">${fmt(r.virtualOfficeRevenue)}</td><td style="text-align:right">${fmt(r.furnitureRevenue)}</td><td style="text-align:right">${fmt(r.additionalServices)}</td><td style="text-align:right"><strong>${fmt(r.total)}</strong></td></tr>`,
     )
     .join("");
 
@@ -29,7 +29,7 @@ export function rentRollReportToEmailHtml(report: RentRollReportModel): string {
 <p style="color:#555;font-size:14px">Generated ${e(report.generatedAt)} · Range ${e(report.startDate)} → ${e(report.endDate)}</p>
 <h2 style="margin:16px 0 8px">Monthly summary</h2>
 <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-size:13px">
-<thead><tr><th>Month</th><th>Office (contract)</th><th>Meeting</th><th>Hot desk</th><th>Venue</th><th>Add-on services</th><th>Total</th></tr></thead>
+<thead><tr><th>Month</th><th>Office (contract)</th><th>Meeting</th><th>Hot desk</th><th>Venue</th><th>Virtual office</th><th>Furniture</th><th>Add-on services</th><th>Total</th></tr></thead>
 <tbody>${monthRows}</tbody>
 </table>
 ${

@@ -6,8 +6,9 @@ import { assertPropertyFinancialAccess } from "@/lib/property-costs/access";
  * Deletes a recurring template and removes future scheduled line items.
  * Confirmed historical rows keep their template_id cleared.
  */
-export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
-  const templateId = params.id?.trim();
+export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const templateId = id?.trim();
   if (!templateId) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
   const supabase = createSupabaseServerClient();

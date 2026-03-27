@@ -11,13 +11,15 @@ export function downloadRentRollExcel(report: RentRollReportModel, baseName: str
   const safeName = baseName.replace(/[^\w\-]+/g, "_").slice(0, 80);
 
   const summaryHead: (string | number | null)[][] = [
-    ["Month", "Office (contract)", "Meeting bookings", "Hot desk", "Venue", "Additional services", "Total"],
+    ["Month", "Office (contract)", "Meeting bookings", "Hot desk", "Venue", "Virtual office", "Furniture", "Additional services", "Total"],
     ...report.monthlySummary.map((r) => [
       r.monthKey,
       r.officeContractRent,
       r.meetingRoomBookings,
       r.hotDeskBookings,
       r.venueBookings,
+      r.virtualOfficeRevenue,
+      r.furnitureRevenue,
       r.additionalServices,
       r.total,
     ]),

@@ -6,6 +6,8 @@ export type ReportSections = {
   hotDeskRevenue: boolean;
   venueRevenue: boolean;
   additionalServices: boolean;
+  virtualOfficeRevenue: boolean;
+  furnitureRevenue: boolean;
   vacancyForecast: boolean;
   revenueVsTarget: boolean;
   roomByRoom: boolean;
@@ -19,6 +21,8 @@ export const defaultReportSections = (): ReportSections => ({
   hotDeskRevenue: true,
   venueRevenue: true,
   additionalServices: true,
+  virtualOfficeRevenue: true,
+  furnitureRevenue: true,
   vacancyForecast: true,
   revenueVsTarget: false,
   roomByRoom: true,
@@ -73,6 +77,8 @@ export type MonthlyRevenueBreakdown = {
   hotDeskBookings: number;
   venueBookings: number;
   additionalServices: number;
+  virtualOfficeRevenue: number;
+  furnitureRevenue: number;
   total: number;
 };
 
@@ -123,6 +129,8 @@ export type RentRollReportModel = {
     hotDesk: Record<string, number>;
     venue: Record<string, number>;
     additionalServices: Record<string, number>;
+    virtualOffice: Record<string, number>;
+    furniture: Record<string, number>;
   };
   monthlySummary: MonthlyRevenueBreakdown[];
   vacancyForecast: VacancyRow[];

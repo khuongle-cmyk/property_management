@@ -145,7 +145,14 @@ export default function AppNav() {
       items: [
         { href: "/dashboard", label: "Dashboard", visible: showOwnerDashboard },
         { href: "/dashboard", label: "Properties", visible: loggedIn },
-        { href: "/rooms", label: "Rooms", visible: loggedIn && showRoomsNav },
+        { href: "/tasks", label: "Tasks", visible: loggedIn },
+        { href: "/offices", label: "Offices", visible: loggedIn && showRoomsNav },
+        { href: "/meeting-rooms", label: "Meeting rooms", visible: loggedIn && showRoomsNav },
+        { href: "/venues", label: "Venues", visible: loggedIn && showRoomsNav },
+        { href: "/coworking", label: "Coworking / Hot desks", visible: loggedIn && showRoomsNav },
+        { href: "/virtual-office", label: "Virtual Office", visible: loggedIn && showRoomsNav },
+        { href: "/rooms", label: "Rooms (all products)", visible: loggedIn && showRoomsNav },
+        { href: "/rooms/furniture", label: "Furniture", visible: loggedIn && showRoomsNav },
       ],
     },
     {
@@ -173,7 +180,7 @@ export default function AppNav() {
     {
       title: "ADMIN",
       items: [
-        { href: "/super-admin", label: "All tenants", visible: loggedIn && isSuperAdmin },
+        { href: "/super-admin", label: "All organizations", visible: loggedIn && isSuperAdmin },
         { href: "/super-admin", label: "User management", visible: loggedIn && isSuperAdmin },
         { href: "/settings", label: "Settings", visible: loggedIn && isSuperAdmin },
       ],

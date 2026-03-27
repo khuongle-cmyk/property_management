@@ -1,6 +1,6 @@
 export type ImportType = "revenue" | "costs" | "invoices" | "occupancy";
 export type DuplicateMode = "skip" | "overwrite" | "merge";
-export type DataSource = "manual" | "excel" | "accounting_software";
+export type DataSource = "manual" | "excel" | "accounting_software" | "procountor_tuloslaskelma";
 
 export type ParsedRow = Record<string, unknown>;
 

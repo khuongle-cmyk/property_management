@@ -35,7 +35,7 @@ export default function CrmImportPage() {
         return;
       }
       const memberships = (mRows ?? []) as MembershipRow[];
-      const preferred = memberships.find((m) => m.tenant_id && ["owner", "manager"].includes((m.role ?? "").toLowerCase()));
+      const preferred = memberships.find((m) => m.tenant_id && ["super_admin", "owner", "manager"].includes((m.role ?? "").toLowerCase()));
       setTenantId(preferred?.tenant_id ?? memberships.find((m) => m.tenant_id)?.tenant_id ?? null);
       setLoading(false);
     })();

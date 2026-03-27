@@ -80,11 +80,11 @@ export default function SuperAdminBillingPage() {
       {msg ? <p style={{ margin: 0, color: "#1e3a8a" }}>{msg}</p> : null}
 
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, background: "#fff", padding: 12 }}>
-        <h2 style={{ marginTop: 0, fontSize: 18 }}>Tenant billing dashboard</h2>
+        <h2 style={{ marginTop: 0, fontSize: 18 }}>Organization billing dashboard</h2>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr>
-              {["Tenant", "Plan", "Trial", "Outstanding"].map((h) => (
+              {["Organization", "Plan", "Trial", "Outstanding"].map((h) => (
                 <th key={h} style={{ textAlign: "left", padding: 6, borderBottom: "1px solid #e5e7eb" }}>{h}</th>
               ))}
             </tr>
@@ -126,7 +126,7 @@ export default function SuperAdminBillingPage() {
         <h2 style={{ marginTop: 0, fontSize: 18 }}>Pricing calculator</h2>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <select value={calcTenantId} onChange={(e) => setCalcTenantId(e.target.value)}>
-            <option value="">Select tenant…</option>
+            <option value="">Select organization…</option>
             {(data.tenants ?? []).map((t) => (
               <option key={t.id} value={t.id}>{t.name}</option>
             ))}
