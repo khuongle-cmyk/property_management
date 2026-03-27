@@ -172,6 +172,9 @@ export default function AppNav() {
             <Link href="/contact" style={linkStyle(pathname === "/contact")}>
               Contact
             </Link>
+            <Link href="/profile" style={linkStyle(pathname === "/profile")}>
+              Profile
+            </Link>
             <Link href="/book/public" style={linkStyle(pathname === "/book/public")}>
               Visitor booking
             </Link>

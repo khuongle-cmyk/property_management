@@ -59,17 +59,23 @@ export type LeadFormModalProps = {
     preferred_move_in_date?: string | null;
     notes?: string | null;
     business_id?: string | null;
+    company_registration?: string | null;
     vat_number?: string | null;
     company_type?: string | null;
     industry_sector?: string | null;
+    industry?: string | null;
     company_size?: string | null;
     company_website?: string | null;
+    website?: string | null;
     billing_street?: string | null;
+    billing_address?: string | null;
     billing_postal_code?: string | null;
     billing_city?: string | null;
     billing_email?: string | null;
     e_invoice_address?: string | null;
     e_invoice_operator_code?: string | null;
+    e_invoice_operator?: string | null;
+    contact_phone_direct?: string | null;
   };
   onClose: () => void;
   onSaved: () => void;
@@ -135,18 +141,18 @@ export function LeadFormModal({ open, mode, leadId, tenantId, properties, initia
     if (!open) return;
     setError(null);
     setCompanyName(initial?.company_name ?? "");
-    setBusinessId(initial?.business_id ?? "");
+    setBusinessId(initial?.company_registration ?? initial?.business_id ?? "");
     setVatNumber(initial?.vat_number ?? "");
     setCompanyType(initial?.company_type ?? "");
-    setIndustrySector(initial?.industry_sector ?? "");
+    setIndustrySector(initial?.industry ?? initial?.industry_sector ?? "");
     setCompanySize(initial?.company_size ?? "");
-    setCompanyWebsite(initial?.company_website ?? "");
-    setBillingStreet(initial?.billing_street ?? "");
+    setCompanyWebsite(initial?.website ?? initial?.company_website ?? "");
+    setBillingStreet(initial?.billing_address ?? initial?.billing_street ?? "");
     setBillingPostal(initial?.billing_postal_code ?? "");
     setBillingCity(initial?.billing_city ?? "");
     setBillingEmail(initial?.billing_email ?? "");
     setEInvoiceAddress(initial?.e_invoice_address ?? "");
-    setEInvoiceOperator(initial?.e_invoice_operator_code ?? "");
+    setEInvoiceOperator(initial?.e_invoice_operator ?? initial?.e_invoice_operator_code ?? "");
 
     let fn = initial?.contact_first_name ?? "";
     let ln = initial?.contact_last_name ?? "";
@@ -160,7 +166,7 @@ export function LeadFormModal({ open, mode, leadId, tenantId, properties, initia
     setContactTitle(initial?.contact_title ?? "");
     setEmail(initial?.email ?? "");
     setPhone(initial?.phone ?? "");
-    setDirectPhone(initial?.contact_direct_phone ?? "");
+    setDirectPhone(initial?.contact_phone_direct ?? initial?.contact_direct_phone ?? "");
     setSource(initial?.source ?? "other");
     setPropertyId(initial?.property_id ?? "");
     setSpaceType(initial?.interested_space_type ?? "");
@@ -194,17 +200,23 @@ export function LeadFormModal({ open, mode, leadId, tenantId, properties, initia
       preferred_move_in_date: moveIn.trim() || null,
       notes: notes.trim() || null,
       business_id: businessId.trim() || null,
+      company_registration: businessId.trim() || null,
       vat_number: vatNumber.trim() || null,
       company_type: companyType.trim() || null,
       industry_sector: industrySector.trim() || null,
+      industry: industrySector.trim() || null,
       company_size: companySize.trim() || null,
       company_website: companyWebsite.trim() || null,
+      website: companyWebsite.trim() || null,
       billing_street: billingStreet.trim() || null,
+      billing_address: billingStreet.trim() || null,
       billing_postal_code: billingPostal.trim() || null,
       billing_city: billingCity.trim() || null,
       billing_email: billingEmail.trim() || null,
       e_invoice_address: eInvoiceAddress.trim() || null,
       e_invoice_operator_code: eInvoiceOperator.trim() || null,
+      e_invoice_operator: eInvoiceOperator.trim() || null,
+      contact_phone_direct: directPhone.trim() || null,
     };
   }
 
@@ -270,13 +282,13 @@ export function LeadFormModal({ open, mode, leadId, tenantId, properties, initia
         </p>
         {error ? <p style={{ color: "#b91c1c" }}>{error}</p> : null}
         <form onSubmit={onSubmit} style={{ display: "grid", gap: 10 }}>
-          <h3 style={{ ...sectionTitle, marginTop: 0 }}>Company details</h3>
+          <h3 style={{ ...sectionTitle, marginTop: 0 }}>1. Company information</h3>
           <label style={label}>
             Company name *
             <input value={companyName} onChange={(e) => setCompanyName(e.target.value)} required style={{ padding: 8 }} />
           </label>
           <label style={label}>
-            Business ID (Y-tunnus)
+            Company registration (Y-tunnus)
             <input
               value={businessId}
               onChange={(e) => setBusinessId(e.target.value)}
@@ -307,7 +319,7 @@ export function LeadFormModal({ open, mode, leadId, tenantId, properties, initia
             </select>
           </label>
           <label style={label}>
-            Industry / sector
+            Industry
             <input value={industrySector} onChange={(e) => setIndustrySector(e.target.value)} style={{ padding: 8 }} />
           </label>
           <label style={label}>
@@ -330,39 +342,7 @@ export function LeadFormModal({ open, mode, leadId, tenantId, properties, initia
               style={{ padding: 8 }}
             />
           </label>
-          <h3 style={sectionTitle}>Billing address</h3>
-          <label style={label}>
-            Street
-            <input value={billingStreet} onChange={(e) => setBillingStreet(e.target.value)} style={{ padding: 8 }} />
-          </label>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10 }}>
-            <label style={label}>
-              Postal code
-              <input value={billingPostal} onChange={(e) => setBillingPostal(e.target.value)} style={{ padding: 8 }} />
-            </label>
-            <label style={label}>
-              City
-              <input value={billingCity} onChange={(e) => setBillingCity(e.target.value)} style={{ padding: 8 }} />
-            </label>
-          </div>
-          <label style={label}>
-            Billing email (if different from contact)
-            <input type="email" value={billingEmail} onChange={(e) => setBillingEmail(e.target.value)} style={{ padding: 8 }} />
-          </label>
-          <h3 style={sectionTitle}>E-invoice (verkkolasku)</h3>
-          <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>
-            Finvoice routing address and operator / intermediary ID for Finnish B2B invoicing.
-          </p>
-          <label style={label}>
-            E-invoice address (verkkolaskuosoite)
-            <input value={eInvoiceAddress} onChange={(e) => setEInvoiceAddress(e.target.value)} style={{ padding: 8 }} />
-          </label>
-          <label style={label}>
-            Operator code (operaattorin välittäjätunnus)
-            <input value={eInvoiceOperator} onChange={(e) => setEInvoiceOperator(e.target.value)} style={{ padding: 8 }} />
-          </label>
-
-          <h3 style={sectionTitle}>Contact person</h3>
+          <h3 style={sectionTitle}>2. Contact person</h3>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <label style={label}>
               First name *
@@ -386,11 +366,11 @@ export function LeadFormModal({ open, mode, leadId, tenantId, properties, initia
             <input value={phone} onChange={(e) => setPhone(e.target.value)} style={{ padding: 8 }} />
           </label>
           <label style={label}>
-            Direct phone
+            Contact phone (direct)
             <input value={directPhone} onChange={(e) => setDirectPhone(e.target.value)} style={{ padding: 8 }} />
           </label>
 
-          <h3 style={sectionTitle}>Lead</h3>
+          <h3 style={sectionTitle}>3. Space requirements</h3>
           <label style={label}>
             Source
             <select value={source} onChange={(e) => setSource(e.target.value)} style={{ padding: 8 }}>
@@ -434,6 +414,35 @@ export function LeadFormModal({ open, mode, leadId, tenantId, properties, initia
             Preferred move-in date
             <input type="date" value={moveIn} onChange={(e) => setMoveIn(e.target.value)} style={{ padding: 8 }} />
           </label>
+          <h3 style={sectionTitle}>4. Billing details</h3>
+          <label style={label}>
+            Billing address
+            <input value={billingStreet} onChange={(e) => setBillingStreet(e.target.value)} style={{ padding: 8 }} />
+          </label>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10 }}>
+            <label style={label}>
+              Billing postal code
+              <input value={billingPostal} onChange={(e) => setBillingPostal(e.target.value)} style={{ padding: 8 }} />
+            </label>
+            <label style={label}>
+              Billing city
+              <input value={billingCity} onChange={(e) => setBillingCity(e.target.value)} style={{ padding: 8 }} />
+            </label>
+          </div>
+          <label style={label}>
+            Billing email
+            <input type="email" value={billingEmail} onChange={(e) => setBillingEmail(e.target.value)} style={{ padding: 8 }} />
+          </label>
+          <label style={label}>
+            E-invoice address (verkkolaskuosoite)
+            <input value={eInvoiceAddress} onChange={(e) => setEInvoiceAddress(e.target.value)} style={{ padding: 8 }} />
+          </label>
+          <label style={label}>
+            E-invoice operator
+            <input value={eInvoiceOperator} onChange={(e) => setEInvoiceOperator(e.target.value)} style={{ padding: 8 }} />
+          </label>
+
+          <h3 style={sectionTitle}>5. Notes</h3>
           <label style={label}>
             Notes
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} style={{ padding: 8 }} />

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import AppNav from "@/components/AppNav";
 import LeadChatbotWidget from "@/components/LeadChatbotWidget";
+import VoiceAssistantWidget from "@/components/VoiceAssistantWidget";
 
 export const metadata: Metadata = {
   title: "Property Management",
@@ -24,6 +25,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           {children}
         </div>
         <LeadChatbotWidget />
+        <VoiceAssistantWidget />
       </body>
     </html>
   );
