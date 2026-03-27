@@ -30,6 +30,22 @@ create table if not exists public.leads (
   property_id uuid references public.properties(id) on delete set null,
   company_name text not null,
   contact_person_name text not null,
+  business_id text,
+  vat_number text,
+  company_type text,
+  industry_sector text,
+  company_size text,
+  company_website text,
+  billing_street text,
+  billing_postal_code text,
+  billing_city text,
+  billing_email text,
+  e_invoice_address text,
+  e_invoice_operator_code text,
+  contact_first_name text,
+  contact_last_name text,
+  contact_title text,
+  contact_direct_phone text,
   email text not null,
   phone text,
   source text not null default 'other',
@@ -49,6 +65,8 @@ create table if not exists public.leads (
   won_room_id uuid references public.bookable_spaces(id) on delete set null,
   won_proposal_id uuid references public.room_proposals(id) on delete set null,
   won_at timestamptz,
+  archived boolean not null default false,
+  won_client_tenant_id uuid references public.tenants(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint leads_source_check check (
@@ -69,6 +87,12 @@ create table if not exists public.leads (
   ),
   constraint leads_space_type_check check (
     interested_space_type is null or interested_space_type in ('office', 'meeting_room', 'venue', 'hot_desk')
+  ),
+  constraint leads_company_type_check check (
+    company_type is null or company_type in ('oy', 'oyj', 'ky', 'ay', 'toiminimi', 'other')
+  ),
+  constraint leads_company_size_check check (
+    company_size is null or company_size in ('1-10', '11-50', '51-200', '200+')
   ),
   constraint leads_pipeline_owner_check check (
     pipeline_owner = 'platform' or pipeline_owner = tenant_id::text
@@ -196,8 +220,6 @@ set search_path = public
 as $$
 declare
   v_actor uuid;
-  v_proposal_id uuid;
-  v_property_id uuid;
 begin
   v_actor := coalesce(auth.uid(), new.created_by_user_id, old.created_by_user_id);
 
@@ -218,52 +240,6 @@ begin
       format('Stage changed to %s', new.stage),
       coalesce(new.stage_notes, '')
     );
-  end if;
-
-  -- Auto-create proposal when marked won and room selected.
-  if new.stage = 'won' and (old.stage is distinct from 'won') and new.won_room_id is not null then
-    select bs.property_id into v_property_id
-    from public.bookable_spaces bs
-    where bs.id = new.won_room_id;
-
-    if v_property_id is not null then
-      insert into public.room_proposals (
-        room_id,
-        property_id,
-        tenant_company_name,
-        contact_person,
-        proposed_rent,
-        proposed_start_date,
-        valid_until,
-        status
-      )
-      values (
-        new.won_room_id,
-        v_property_id,
-        new.company_name,
-        new.contact_person_name,
-        coalesce(new.approx_budget_eur_month, 0),
-        coalesce(new.preferred_move_in_date, current_date),
-        current_date + interval '30 days',
-        'accepted'
-      )
-      returning id into v_proposal_id;
-
-      update public.leads
-      set won_proposal_id = v_proposal_id,
-          won_at = coalesce(new.won_at, now())
-      where id = new.id;
-
-      insert into public.lead_activities (lead_id, activity_type, actor_user_id, summary, details, metadata)
-      values (
-        new.id,
-        'offer_sent',
-        v_actor,
-        'Lead won: proposal created automatically',
-        format('Created proposal %s for room %s', v_proposal_id, new.won_room_id),
-        jsonb_build_object('proposal_id', v_proposal_id, 'room_id', new.won_room_id)
-      );
-    end if;
   end if;
 
   return new;

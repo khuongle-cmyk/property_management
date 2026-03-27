@@ -7,6 +7,7 @@ import { getSupabaseClient } from "@/lib/supabase/browser";
 import LogoutButton from "./LogoutButton";
 
 type PropertyRow = {
+  id: string;
   tenant_id: string | null;
   name: string | null;
   address: string | null;
@@ -113,7 +114,7 @@ export default function DashboardPage() {
       let propertiesQuery = supabase
         .from("properties")
         .select(
-          "tenant_id,name,address,postal_code,city,total_units,occupied_units,status"
+          "id,tenant_id,name,address,postal_code,city,total_units,occupied_units,status"
         );
 
       if (!isSuperAdmin) {
@@ -262,8 +263,9 @@ export default function DashboardPage() {
           <p style={{ margin: 0, color: "#555" }}>
             Occupancy across your subscribed properties.
           </p>
-          <p style={{ margin: "10px 0 0", fontSize: 14 }}>
+          <p style={{ margin: "10px 0 0", fontSize: 14, display: "flex", flexWrap: "wrap", gap: 12 }}>
             <Link href="/bookings">Meeting rooms, offices &amp; desks</Link>
+            <Link href="/reports">Create report</Link>
           </p>
         </div>
         <LogoutButton />
@@ -481,6 +483,9 @@ export default function DashboardPage() {
                 <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #ddd" }}>
                   Status
                 </th>
+                <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #ddd" }}>
+                  Reports
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -497,7 +502,7 @@ export default function DashboardPage() {
                       : { bg: "#fbe8ea", fg: "#b00020", bd: "#f3b7be" };
 
                 return (
-                  <tr key={`${p.tenant_id ?? "t"}-${idx}`}>
+                  <tr key={p.id ?? `${p.tenant_id ?? "t"}-${idx}`}>
                     <td style={{ padding: "10px", borderBottom: "1px solid #f0f0f0" }}>
                       {p.name ?? "(no name)"}
                     </td>
@@ -530,6 +535,16 @@ export default function DashboardPage() {
                       >
                         {p.status ?? "inactive"}
                       </span>
+                    </td>
+                    <td style={{ padding: "10px", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}>
+                      {p.id ? (
+                        <span style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <Link href={`/reports/rent-roll?propertyId=${encodeURIComponent(p.id)}`}>Rent roll</Link>
+                          <Link href={`/reports/net-income?propertyId=${encodeURIComponent(p.id)}`}>Net income</Link>
+                        </span>
+                      ) : (
+                        "—"
+                      )}
                     </td>
                   </tr>
                 );

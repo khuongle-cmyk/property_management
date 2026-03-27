@@ -10,38 +10,54 @@
 
 create extension if not exists pgcrypto;
 
--- ---- room_proposals (one open proposal per room: draft or sent) ----
+-- ---- room_proposals (parent: one offer may bundle many spaces via line items) ----
 create table if not exists public.room_proposals (
   id uuid primary key default gen_random_uuid(),
-  room_id uuid not null references public.bookable_spaces(id) on delete cascade,
   property_id uuid not null references public.properties(id) on delete cascade,
   tenant_company_name text not null,
   contact_person text not null,
-  proposed_rent numeric(12, 2) not null,
   proposed_start_date date not null,
   valid_until date not null,
   status text not null default 'draft',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint room_proposals_status_check check (
-    status in ('draft', 'sent', 'accepted', 'rejected')
-  ),
-  constraint room_proposals_rent_nonneg check (proposed_rent >= 0)
+    status in ('draft', 'sent', 'negotiating', 'accepted', 'rejected')
+  )
 );
 
-create index if not exists room_proposals_room_id_idx on public.room_proposals (room_id);
 create index if not exists room_proposals_property_id_idx on public.room_proposals (property_id);
 create index if not exists room_proposals_status_idx on public.room_proposals (status);
 
--- At most one non-terminal proposal per room (draft or sent).
-create unique index if not exists room_proposals_one_open_per_room_idx
-  on public.room_proposals (room_id)
-  where status in ('draft', 'sent');
+-- ---- room_proposal_items (per-space pricing on a proposal) ----
+create table if not exists public.room_proposal_items (
+  id uuid primary key default gen_random_uuid(),
+  proposal_id uuid not null references public.room_proposals(id) on delete cascade,
+  space_id uuid not null references public.bookable_spaces(id) on delete cascade,
+  proposed_monthly_rent numeric(12, 2),
+  proposed_hourly_rate numeric(12, 2),
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint room_proposal_items_rent_nonneg check (
+    (proposed_monthly_rent is null or proposed_monthly_rent >= 0)
+    and (proposed_hourly_rate is null or proposed_hourly_rate >= 0)
+  ),
+  constraint room_proposal_items_proposal_space_uq unique (proposal_id, space_id)
+);
 
--- ---- room_contracts (one active contract per room) ----
+create index if not exists room_proposal_items_proposal_idx on public.room_proposal_items (proposal_id);
+create index if not exists room_proposal_items_space_idx on public.room_proposal_items (space_id);
+
+drop trigger if exists trg_room_proposal_items_touch on public.room_proposal_items;
+create trigger trg_room_proposal_items_touch
+before update on public.room_proposal_items
+for each row execute procedure public.touch_updated_at();
+
+-- ---- room_contracts (lease header; monthly_rent = sum of line items for invoicing) ----
 create table if not exists public.room_contracts (
   id uuid primary key default gen_random_uuid(),
-  room_id uuid not null references public.bookable_spaces(id) on delete restrict,
+  room_id uuid references public.bookable_spaces(id) on delete restrict,
   property_id uuid not null references public.properties(id) on delete cascade,
   tenant_id uuid not null references public.tenants(id) on delete cascade,
   monthly_rent numeric(12, 2) not null,
@@ -66,9 +82,29 @@ create index if not exists room_contracts_tenant_id_idx on public.room_contracts
 create index if not exists room_contracts_status_idx on public.room_contracts (status);
 create index if not exists room_contracts_proposal_idx on public.room_contracts (source_proposal_id);
 
-create unique index if not exists room_contracts_one_active_per_room_idx
-  on public.room_contracts (room_id)
-  where status = 'active';
+-- ---- room_contract_items (spaces covered by one contract) ----
+create table if not exists public.room_contract_items (
+  id uuid primary key default gen_random_uuid(),
+  contract_id uuid not null references public.room_contracts(id) on delete cascade,
+  space_id uuid not null references public.bookable_spaces(id) on delete restrict,
+  monthly_rent numeric(12, 2) not null default 0,
+  hourly_rate numeric(12, 2),
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint room_contract_items_amounts_nonneg check (
+    monthly_rent >= 0 and (hourly_rate is null or hourly_rate >= 0)
+  ),
+  constraint room_contract_items_contract_space_uq unique (contract_id, space_id)
+);
+
+create index if not exists room_contract_items_contract_idx on public.room_contract_items (contract_id);
+create index if not exists room_contract_items_space_idx on public.room_contract_items (space_id);
+
+drop trigger if exists trg_room_contract_items_touch on public.room_contract_items;
+create trigger trg_room_contract_items_touch
+before update on public.room_contract_items
+for each row execute procedure public.touch_updated_at();
 
 -- ---- lease_invoices (monthly billing; one row per contract per billing month) ----
 create table if not exists public.lease_invoices (
@@ -162,7 +198,9 @@ for each row execute procedure public.touch_updated_at();
 
 -- ---- RLS ----
 alter table public.room_proposals enable row level security;
+alter table public.room_proposal_items enable row level security;
 alter table public.room_contracts enable row level security;
+alter table public.room_contract_items enable row level security;
 alter table public.lease_invoices enable row level security;
 alter table public.additional_services enable row level security;
 
@@ -217,6 +255,51 @@ with check (
   )
 );
 
+drop policy if exists "room_proposal_items_select" on public.room_proposal_items;
+create policy "room_proposal_items_select"
+on public.room_proposal_items
+for select
+to authenticated
+using (
+  exists (select 1 from public.memberships m where m.user_id = auth.uid() and lower(m.role) = 'super_admin')
+  or exists (
+    select 1
+    from public.room_proposals p
+    join public.properties pr on pr.id = p.property_id
+    join public.memberships m on m.tenant_id = pr.tenant_id and m.user_id = auth.uid()
+    where p.id = room_proposal_items.proposal_id
+      and lower(m.role) in ('owner', 'manager', 'viewer', 'accounting', 'maintenance')
+  )
+);
+
+drop policy if exists "room_proposal_items_write" on public.room_proposal_items;
+create policy "room_proposal_items_write"
+on public.room_proposal_items
+for all
+to authenticated
+using (
+  exists (select 1 from public.memberships m where m.user_id = auth.uid() and lower(m.role) = 'super_admin')
+  or exists (
+    select 1
+    from public.room_proposals p
+    join public.properties pr on pr.id = p.property_id
+    join public.memberships m on m.tenant_id = pr.tenant_id and m.user_id = auth.uid()
+    where p.id = room_proposal_items.proposal_id
+      and lower(m.role) in ('owner', 'manager')
+  )
+)
+with check (
+  exists (select 1 from public.memberships m where m.user_id = auth.uid() and lower(m.role) = 'super_admin')
+  or exists (
+    select 1
+    from public.room_proposals p
+    join public.properties pr on pr.id = p.property_id
+    join public.memberships m on m.tenant_id = pr.tenant_id and m.user_id = auth.uid()
+    where p.id = room_proposal_items.proposal_id
+      and lower(m.role) in ('owner', 'manager')
+  )
+);
+
 -- room_contracts
 drop policy if exists "room_contracts_select" on public.room_contracts;
 create policy "room_contracts_select"
@@ -255,6 +338,51 @@ with check (
     select 1 from public.memberships m
     where m.user_id = auth.uid()
       and m.tenant_id = room_contracts.tenant_id
+      and lower(m.role) in ('owner', 'manager', 'accounting')
+  )
+);
+
+drop policy if exists "room_contract_items_select" on public.room_contract_items;
+create policy "room_contract_items_select"
+on public.room_contract_items
+for select
+to authenticated
+using (
+  exists (select 1 from public.memberships m where m.user_id = auth.uid() and lower(m.role) = 'super_admin')
+  or exists (
+    select 1
+    from public.room_contracts c
+    join public.properties pr on pr.id = c.property_id
+    join public.memberships m on m.tenant_id = pr.tenant_id and m.user_id = auth.uid()
+    where c.id = room_contract_items.contract_id
+      and lower(m.role) in ('owner', 'manager', 'viewer', 'accounting', 'maintenance')
+  )
+);
+
+drop policy if exists "room_contract_items_write" on public.room_contract_items;
+create policy "room_contract_items_write"
+on public.room_contract_items
+for all
+to authenticated
+using (
+  exists (select 1 from public.memberships m where m.user_id = auth.uid() and lower(m.role) = 'super_admin')
+  or exists (
+    select 1
+    from public.room_contracts c
+    join public.properties pr on pr.id = c.property_id
+    join public.memberships m on m.tenant_id = pr.tenant_id and m.user_id = auth.uid()
+    where c.id = room_contract_items.contract_id
+      and lower(m.role) in ('owner', 'manager', 'accounting')
+  )
+)
+with check (
+  exists (select 1 from public.memberships m where m.user_id = auth.uid() and lower(m.role) = 'super_admin')
+  or exists (
+    select 1
+    from public.room_contracts c
+    join public.properties pr on pr.id = c.property_id
+    join public.memberships m on m.tenant_id = pr.tenant_id and m.user_id = auth.uid()
+    where c.id = room_contract_items.contract_id
       and lower(m.role) in ('owner', 'manager', 'accounting')
   )
 );
@@ -342,9 +470,13 @@ with check (
 );
 
 comment on table public.room_proposals is
-  'Lease/proposal for a bookable space; at most one draft/sent per room. On acceptance, create room_contracts and set proposal status to accepted.';
+  'Commercial offer header for a lead; spaces and prices live in room_proposal_items.';
+comment on table public.room_proposal_items is
+  'Line items: one proposal bundles many bookable_spaces with optional monthly and hourly pricing.';
 comment on table public.room_contracts is
-  'Active lease for a room; at most one active contract per room. tenant_id is the landlord org (properties.tenant_id). Use application logic or jobs to generate lease_invoices monthly.';
+  'Lease header; tenant_id is the landlord org. monthly_rent should match sum(room_contract_items.monthly_rent) for base recurring rent.';
+comment on table public.room_contract_items is
+  'Spaces covered by the lease; lease_invoices.base_rent aligns with summed monthly_rent on the parent contract.';
 comment on table public.additional_services is
   'Per-use add-ons per property and billing month; link to lease_invoices via invoice_id when included in a bill.';
 comment on table public.lease_invoices is

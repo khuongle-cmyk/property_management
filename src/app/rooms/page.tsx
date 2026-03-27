@@ -173,6 +173,8 @@ function statusDotColor(status: string): string {
       return "#e65100"; // amber/orange
     case "under_maintenance":
       return "#b00020"; // red
+    case "reserved":
+      return "#1565c0"; // blue (CRM hold)
     default:
       return "#999";
   }
@@ -185,7 +187,7 @@ function StatusDropdown({
 }: {
   value: string;
   disabled?: boolean;
-  onChange: (next: "available" | "occupied" | "under_maintenance") => void;
+  onChange: (next: "available" | "occupied" | "under_maintenance" | "reserved") => void;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -201,13 +203,14 @@ function StatusDropdown({
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  const options: Array<{ value: "available" | "occupied" | "under_maintenance"; label: string }> = [
+  const options: Array<{ value: "available" | "occupied" | "under_maintenance" | "reserved"; label: string }> = [
     { value: "available", label: "Available" },
+    { value: "reserved", label: "Reserved" },
     { value: "occupied", label: "Occupied" },
     { value: "under_maintenance", label: "Under maintenance" },
   ];
 
-  const selected = options.find((o) => o.value === value) ?? options[0];
+  const selectedLabel = options.find((o) => o.value === value)?.label ?? formatSpaceStatusLabel(value);
 
   return (
     <div ref={rootRef} style={{ position: "relative", display: "inline-block" }}>
@@ -233,7 +236,7 @@ function StatusDropdown({
             display: "inline-block",
           }}
         />
-        {selected.label}
+        {selectedLabel}
       </button>
 
       {open ? (
@@ -841,7 +844,7 @@ export default function RoomsDashboardPage() {
     }
   };
 
-  const setRoomStatus = async (r: RoomRow, next: "available" | "occupied" | "under_maintenance") => {
+  const setRoomStatus = async (r: RoomRow, next: "available" | "occupied" | "under_maintenance" | "reserved") => {
     if (!canManageRoom(r, properties, memberships, isSuperAdmin)) return;
     const supabase = getSupabaseClient();
     const { error: uErr } = await supabase
@@ -1060,7 +1063,19 @@ export default function RoomsDashboardPage() {
         {selectedProperty ? (
           <p style={{ margin: "12px 0 0", fontSize: 13, color: "#666" }}>
             Showing data for <strong>{selectedProperty.name}</strong>
-            {selectedProperty.city ? ` · ${selectedProperty.city}` : ""}.
+            {selectedProperty.city ? ` · ${selectedProperty.city}` : ""}.{" "}
+            <Link
+              href={`/properties/${encodeURIComponent(selectedProperty.id)}`}
+              style={{ marginLeft: 8, whiteSpace: "nowrap" }}
+            >
+              Property &amp; costs →
+            </Link>
+            <Link
+              href={`/reports/rent-roll?propertyId=${encodeURIComponent(selectedProperty.id)}`}
+              style={{ marginLeft: 8, whiteSpace: "nowrap" }}
+            >
+              Reports →
+            </Link>
           </p>
         ) : null}
       </section>
@@ -1191,6 +1206,7 @@ export default function RoomsDashboardPage() {
             >
               <option value="">Any</option>
               <option value="available">Available</option>
+              <option value="reserved">Reserved</option>
               <option value="occupied">Occupied</option>
               <option value="under_maintenance">Under maintenance</option>
             </select>
@@ -1507,7 +1523,7 @@ function RoomCard({
   selected: boolean;
   onToggleSelect: () => void;
   onEdit: () => void;
-  onSetStatus: (next: "available" | "occupied" | "under_maintenance") => void;
+  onSetStatus: (next: "available" | "occupied" | "under_maintenance" | "reserved") => void;
   onSeparate: () => void;
 }) {
   const tStyle = spaceTypeBadgeStyle(r.space_type);
@@ -1637,7 +1653,7 @@ function RoomListTable({
   selectedIds: Set<string>;
   onToggleSelect: (id: string) => void;
   onEdit: (r: RoomRow) => void;
-  onSetStatus: (r: RoomRow, next: "available" | "occupied" | "under_maintenance") => void;
+  onSetStatus: (r: RoomRow, next: "available" | "occupied" | "under_maintenance" | "reserved") => void;
   onSeparate: (id: string) => void;
 }) {
   return (
@@ -1904,6 +1920,7 @@ function EditModal({
             style={{ padding: 8 }}
           >
             <option value="available">Available</option>
+            <option value="reserved">Reserved</option>
             <option value="occupied">Occupied</option>
             <option value="under_maintenance">Under maintenance</option>
             <option value="merged" disabled>

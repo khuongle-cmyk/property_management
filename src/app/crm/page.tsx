@@ -1,15 +1,36 @@
 "use client";
 
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getSupabaseClient } from "@/lib/supabase/browser";
-import { LEAD_STAGE_LABEL, LEAD_STAGES, type LeadStage, LOST_REASONS } from "@/lib/crm";
+import { LEAD_STAGE_LABEL, LEAD_STAGES, type LeadStage } from "@/lib/crm";
+import { CustomerImportModal } from "@/components/crm/CustomerImportModal";
+import { LeadFormModal } from "@/components/crm/LeadFormModal";
 
 type LeadRow = {
   id: string;
   tenant_id: string;
+  pipeline_owner: string;
   property_id: string | null;
   company_name: string;
   contact_person_name: string;
+  business_id?: string | null;
+  vat_number?: string | null;
+  company_type?: string | null;
+  industry_sector?: string | null;
+  company_size?: string | null;
+  company_website?: string | null;
+  billing_street?: string | null;
+  billing_postal_code?: string | null;
+  billing_city?: string | null;
+  billing_email?: string | null;
+  e_invoice_address?: string | null;
+  e_invoice_operator_code?: string | null;
+  contact_first_name?: string | null;
+  contact_last_name?: string | null;
+  contact_title?: string | null;
+  contact_direct_phone?: string | null;
   email: string;
   phone: string | null;
   source: string;
@@ -20,24 +41,14 @@ type LeadRow = {
   notes: string | null;
   assigned_agent_user_id: string | null;
   stage: LeadStage;
-  stage_notes: string | null;
-  stage_changed_at: string;
-  next_action: string | null;
-  next_action_date: string | null;
-  lost_reason: string | null;
-  won_room_id: string | null;
-  won_proposal_id: string | null;
+  archived?: boolean;
   created_at: string;
 };
 
 type PropertyRow = { id: string; name: string | null; city: string | null };
 type MembershipRow = { tenant_id: string | null; role: string | null };
-type TenantUser = { id: string; email: string; display_name: string | null };
-type ActivityRow = { id: string; activity_type: string; summary: string; details: string | null; occurred_at: string };
-type StageHistoryRow = { id: string; from_stage: string | null; to_stage: string; notes: string | null; changed_at: string };
-type RoomRow = { id: string; room_name: string | null; room_number: string | null };
 
-type ViewMode = "kanban" | "list" | "import";
+type ViewMode = "kanban" | "list";
 
 const cardStyle: React.CSSProperties = {
   background: "#fff",
@@ -66,7 +77,14 @@ function stageBadge(stage: LeadStage): React.CSSProperties {
   };
 }
 
+function countOpenProposals(rows: { lead_id: string | null; status: string }[] | null, leadId: string): number {
+  return (rows ?? []).filter(
+    (r) => r.lead_id === leadId && ["draft", "sent", "negotiating"].includes(r.status)
+  ).length;
+}
+
 export default function CRMPage() {
+  const router = useRouter();
   const supabase = useMemo(() => getSupabaseClient(), []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -74,25 +92,37 @@ export default function CRMPage() {
   const [leads, setLeads] = useState<LeadRow[]>([]);
   const [properties, setProperties] = useState<PropertyRow[]>([]);
   const [memberships, setMemberships] = useState<MembershipRow[]>([]);
-  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+  const [proposalIndex, setProposalIndex] = useState<{ lead_id: string | null; status: string }[]>([]);
   const [search, setSearch] = useState("");
   const [propertyFilter, setPropertyFilter] = useState("all");
   const [sortBy, setSortBy] = useState<"created_at" | "company_name" | "stage">("created_at");
-  const [activities, setActivities] = useState<ActivityRow[]>([]);
-  const [history, setHistory] = useState<StageHistoryRow[]>([]);
-  const [tenantUsers, setTenantUsers] = useState<TenantUser[]>([]);
-  const [roomsForLead, setRoomsForLead] = useState<RoomRow[]>([]);
-  const [noteText, setNoteText] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
 
+  const [addLeadOpen, setAddLeadOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [editingLead, setEditingLead] = useState<LeadRow | null>(null);
+
+  const primaryTenantId = useMemo(() => {
+    const prefer = memberships.filter(
+      (m) => m.tenant_id && ["owner", "manager"].includes((m.role ?? "").toLowerCase())
+    );
+    return prefer[0]?.tenant_id ?? memberships.find((m) => m.tenant_id)?.tenant_id ?? null;
+  }, [memberships]);
+
   const myRoles = useMemo(() => new Set(memberships.map((m) => (m.role ?? "").toLowerCase())), [memberships]);
-  const canManage = myRoles.has("super_admin") || myRoles.has("owner") || myRoles.has("manager");
+  const canManageLeads =
+    myRoles.has("super_admin") || myRoles.has("owner") || myRoles.has("manager") || myRoles.has("agent");
 
   const loadAll = useCallback(async () => {
     setLoading(true);
     setError(null);
+    let leadsQuery = supabase.from("leads").select("*").order("created_at", { ascending: false });
+    if (!showArchived) {
+      leadsQuery = leadsQuery.or("archived.eq.false,archived.is.null");
+    }
     const [leadsQ, propertiesQ, membershipsQ] = await Promise.all([
-      supabase.from("leads").select("*").order("created_at", { ascending: false }),
+      leadsQuery,
       supabase.from("properties").select("id,name,city").order("name", { ascending: true }),
       supabase.from("memberships").select("tenant_id,role"),
     ]);
@@ -101,11 +131,20 @@ export default function CRMPage() {
       setLoading(false);
       return;
     }
-    setLeads((leadsQ.data as LeadRow[]) ?? []);
+    const leadRows = (leadsQ.data as LeadRow[]) ?? [];
+    setLeads(leadRows);
     setProperties((propertiesQ.data as PropertyRow[]) ?? []);
     setMemberships((membershipsQ.data as MembershipRow[]) ?? []);
+
+    const ids = leadRows.map((l) => l.id);
+    if (ids.length) {
+      const { data: propRows } = await supabase.from("room_proposals").select("lead_id,status").in("lead_id", ids);
+      setProposalIndex((propRows as { lead_id: string | null; status: string }[]) ?? []);
+    } else {
+      setProposalIndex([]);
+    }
     setLoading(false);
-  }, [supabase]);
+  }, [supabase, showArchived]);
 
   useEffect(() => {
     loadAll();
@@ -135,60 +174,8 @@ export default function CRMPage() {
     return m;
   }, [filteredLeads]);
 
-  const selectedLead = useMemo(
-    () => filteredLeads.find((l) => l.id === selectedLeadId) ?? leads.find((l) => l.id === selectedLeadId) ?? null,
-    [filteredLeads, leads, selectedLeadId]
-  );
-
-  const loadLeadDetails = useCallback(
-    async (leadId: string) => {
-      const [actQ, histQ] = await Promise.all([
-        supabase.from("lead_activities").select("id,activity_type,summary,details,occurred_at").eq("lead_id", leadId).order("occurred_at", { ascending: false }),
-        supabase.from("lead_stage_history").select("id,from_stage,to_stage,notes,changed_at").eq("lead_id", leadId).order("changed_at", { ascending: false }),
-      ]);
-      setActivities((actQ.data as ActivityRow[]) ?? []);
-      setHistory((histQ.data as StageHistoryRow[]) ?? []);
-    },
-    [supabase]
-  );
-
-  useEffect(() => {
-    if (!selectedLeadId) return;
-    loadLeadDetails(selectedLeadId);
-  }, [loadLeadDetails, selectedLeadId]);
-
-  useEffect(() => {
-    const run = async () => {
-      if (!selectedLead?.tenant_id) {
-        setTenantUsers([]);
-        return;
-      }
-      const resp = await fetch(`/api/bookings/tenant-users?tenantId=${encodeURIComponent(selectedLead.tenant_id)}`);
-      if (!resp.ok) return;
-      const data = (await resp.json()) as { users?: TenantUser[] };
-      setTenantUsers(data.users ?? []);
-    };
-    run();
-  }, [selectedLead?.tenant_id]);
-
-  useEffect(() => {
-    const run = async () => {
-      if (!selectedLead?.property_id) {
-        setRoomsForLead([]);
-        return;
-      }
-      const { data } = await supabase
-        .from("bookable_spaces")
-        .select("id,room_name,room_number")
-        .eq("property_id", selectedLead.property_id)
-        .order("room_name", { ascending: true });
-      setRoomsForLead((data as RoomRow[]) ?? []);
-    };
-    run();
-  }, [selectedLead?.property_id, supabase]);
-
   const patchLead = useCallback(
-    async (leadId: string, patch: Partial<LeadRow>) => {
+    async (leadId: string, patch: Record<string, unknown>) => {
       setBusyId(leadId);
       const { error: uErr } = await supabase.from("leads").update(patch).eq("id", leadId);
       setBusyId(null);
@@ -197,38 +184,46 @@ export default function CRMPage() {
         return false;
       }
       await loadAll();
-      await loadLeadDetails(leadId);
       return true;
     },
-    [loadAll, loadLeadDetails, supabase]
+    [loadAll, supabase]
   );
 
   async function onDropLead(leadId: string, toStage: LeadStage) {
     const lead = leads.find((l) => l.id === leadId);
     if (!lead || lead.stage === toStage) return;
+
+    if (toStage === "negotiation") {
+      setBusyId(leadId);
+      const res = await fetch("/api/crm/leads/negotiation-drafts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadId }),
+      });
+      const j = (await res.json()) as { error?: string };
+      setBusyId(null);
+      if (!res.ok) {
+        setError(j.error ?? "Could not start negotiation");
+        router.push(`/crm/leads/${leadId}?focus=negotiation`);
+        return;
+      }
+      await loadAll();
+      router.push(`/crm/leads/${leadId}`);
+      return;
+    }
+
+    if (["offer_sent", "won", "lost"].includes(toStage)) {
+      const focus = toStage === "offer_sent" ? "offer" : toStage === "won" ? "won" : "lost";
+      router.push(`/crm/leads/${leadId}?focus=${focus}`);
+      return;
+    }
+
     const stageNote = window.prompt(`Optional note for moving ${lead.company_name} to ${LEAD_STAGE_LABEL[toStage]}`, "") ?? "";
     await patchLead(leadId, {
       stage: toStage,
       stage_notes: stageNote || null,
       stage_changed_at: new Date().toISOString(),
-      lost_reason: toStage === "lost" ? lead.lost_reason ?? "other" : null,
     });
-  }
-
-  async function addNoteActivity() {
-    if (!selectedLead || !noteText.trim()) return;
-    const { error: aErr } = await supabase.from("lead_activities").insert({
-      lead_id: selectedLead.id,
-      activity_type: "note_added",
-      summary: "Note added",
-      details: noteText.trim(),
-    });
-    if (aErr) {
-      setError(aErr.message);
-      return;
-    }
-    setNoteText("");
-    await loadLeadDetails(selectedLead.id);
   }
 
   if (loading) return <p>Loading CRM...</p>;
@@ -239,16 +234,65 @@ export default function CRMPage() {
       <section style={{ ...cardStyle, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <h1 style={{ margin: 0, fontSize: 22 }}>CRM & Sales Pipeline</h1>
         <span style={{ flex: 1 }} />
-        <button onClick={() => setViewMode("kanban")} style={{ padding: "8px 10px" }}>Kanban</button>
-        <button onClick={() => setViewMode("list")} style={{ padding: "8px 10px" }}>List</button>
-        <button onClick={() => setViewMode("import")} style={{ padding: "8px 10px" }}>Marketing import</button>
+        {canManageLeads ? (
+          <>
+            <button
+              type="button"
+              onClick={() => setAddLeadOpen(true)}
+              disabled={!primaryTenantId}
+              style={{
+                padding: "10px 16px",
+                fontWeight: 700,
+                background: primaryTenantId ? "#15803d" : "#94a3b8",
+                color: "#fff",
+                border: "none",
+                borderRadius: 10,
+                cursor: primaryTenantId ? "pointer" : "not-allowed",
+              }}
+            >
+              + Add lead
+            </button>
+            <button
+              type="button"
+              onClick={() => setImportOpen(true)}
+              disabled={!primaryTenantId}
+              style={{
+                padding: "10px 16px",
+                fontWeight: 600,
+                background: primaryTenantId ? "#1d4ed8" : "#94a3b8",
+                color: "#fff",
+                border: "none",
+                borderRadius: 10,
+                cursor: primaryTenantId ? "pointer" : "not-allowed",
+              }}
+            >
+              Import customers
+            </button>
+          </>
+        ) : null}
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14 }}>
+          <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
+          Show archived (lost)
+        </label>
+        <button type="button" onClick={() => setViewMode("kanban")} style={{ padding: "8px 10px" }}>
+          Kanban
+        </button>
+        <button type="button" onClick={() => setViewMode("list")} style={{ padding: "8px 10px" }}>
+          List
+        </button>
       </section>
 
-      <section style={{ ...cardStyle, display: "flex", gap: 10, flexWrap: "wrap" }}>
+      {!primaryTenantId && canManageLeads ? (
+        <p style={{ margin: 0, fontSize: 14, color: "#b45309" }}>
+          Add lead / import requires a membership with an organization. Ask an admin to add you to a tenant.
+        </p>
+      ) : null}
+
+      <section style={{ ...cardStyle, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search company, contact, email..."
+          placeholder="Search company, contact name, email, phone…"
           style={{ padding: 8, minWidth: 280 }}
         />
         <select value={propertyFilter} onChange={(e) => setPropertyFilter(e.target.value)} style={{ padding: 8 }}>
@@ -264,6 +308,9 @@ export default function CRMPage() {
           <option value="company_name">Sort: company</option>
           <option value="stage">Sort: pipeline stage</option>
         </select>
+        <span style={{ fontSize: 13, color: "#64748b" }}>
+          Search applies to both Kanban and List. Drag to Offer / Negotiation / Won / Lost opens the lead detail to complete the step.
+        </span>
       </section>
 
       {viewMode === "kanban" ? (
@@ -273,10 +320,10 @@ export default function CRMPage() {
               key={stage}
               style={{ ...cardStyle, minHeight: 380, background: "#fafafa" }}
               onDragOver={(e) => e.preventDefault()}
-              onDrop={async (e) => {
+              onDrop={(e) => {
                 e.preventDefault();
                 const leadId = e.dataTransfer.getData("text/plain");
-                if (leadId) await onDropLead(leadId, stage);
+                if (leadId) void onDropLead(leadId, stage);
               }}
             >
               <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
@@ -284,29 +331,72 @@ export default function CRMPage() {
                 <span style={{ marginLeft: "auto", color: "#666", fontSize: 12 }}>{(leadsByStage.get(stage) ?? []).length}</span>
               </div>
               <div style={{ display: "grid", gap: 8 }}>
-                {(leadsByStage.get(stage) ?? []).map((lead) => (
-                  <div
-                    key={lead.id}
-                    draggable
-                    onDragStart={(e) => e.dataTransfer.setData("text/plain", lead.id)}
-                    onClick={() => setSelectedLeadId(lead.id)}
-                    style={{
-                      border: selectedLeadId === lead.id ? "2px solid #111" : "1px solid #e2e8f0",
-                      borderRadius: 10,
-                      background: "#fff",
-                      padding: 10,
-                      cursor: "pointer",
-                      opacity: busyId === lead.id ? 0.6 : 1,
-                    }}
-                  >
-                    <div style={{ fontWeight: 600 }}>{lead.company_name}</div>
-                    <div style={{ fontSize: 13, color: "#374151" }}>{lead.contact_person_name}</div>
-                    <div style={{ fontSize: 12, color: "#666", marginTop: 6 }}>{lead.email}</div>
-                    <div style={{ marginTop: 8, display: "flex", gap: 6, alignItems: "center" }}>
-                      <span style={stageBadge(lead.stage)}>{LEAD_STAGE_LABEL[lead.stage]}</span>
+                {(leadsByStage.get(stage) ?? []).map((lead) => {
+                  const n = countOpenProposals(proposalIndex, lead.id);
+                  return (
+                    <div
+                      key={lead.id}
+                      draggable
+                      onDragStart={(e) => e.dataTransfer.setData("text/plain", lead.id)}
+                      style={{
+                        border: "1px solid #e2e8f0",
+                        borderRadius: 10,
+                        background: "#fff",
+                        padding: 10,
+                        cursor: "grab",
+                        opacity: busyId === lead.id ? 0.6 : 1,
+                      }}
+                    >
+                      <Link
+                        href={`/crm/leads/${lead.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        style={{ color: "#111", textDecoration: "none", fontWeight: 600 }}
+                      >
+                        {lead.company_name}
+                      </Link>
+                      <div style={{ fontSize: 13, color: "#374151" }}>{lead.contact_person_name}</div>
+                      <div style={{ fontSize: 12, color: "#666", marginTop: 6 }}>{lead.email}</div>
+                      {lead.phone ? <div style={{ fontSize: 12, color: "#666" }}>{lead.phone}</div> : null}
+                      <div style={{ marginTop: 8, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                        <span style={stageBadge(lead.stage)}>{LEAD_STAGE_LABEL[lead.stage]}</span>
+                        {n > 0 ? (
+                          <span
+                            style={{
+                              fontSize: 11,
+                              padding: "2px 8px",
+                              borderRadius: 999,
+                              background: "#e0f2fe",
+                              color: "#0369a1",
+                            }}
+                          >
+                            {n} proposal{n === 1 ? "" : "s"}
+                          </span>
+                        ) : null}
+                        {canManageLeads ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setEditingLead(lead);
+                            }}
+                            style={{
+                              marginLeft: "auto",
+                              fontSize: 12,
+                              padding: "4px 8px",
+                              borderRadius: 6,
+                              border: "1px solid #cbd5e1",
+                              background: "#fff",
+                              cursor: "pointer",
+                            }}
+                          >
+                            Edit
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ))}
@@ -319,274 +409,103 @@ export default function CRMPage() {
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  {["Company", "Contact", "Email", "Source", "Stage", "Next action"].map((h) => (
-                    <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "8px 6px" }}>{h}</th>
+                  {["Company", "Contact", "Email", "Phone", "Proposals", "Stage", "Actions"].map((h) => (
+                    <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "8px 6px" }}>
+                      {h}
+                    </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {filteredLeads.map((lead) => (
-                  <tr key={lead.id} onClick={() => setSelectedLeadId(lead.id)} style={{ cursor: "pointer" }}>
-                    <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{lead.company_name}</td>
-                    <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{lead.contact_person_name}</td>
-                    <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{lead.email}</td>
-                    <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{lead.source}</td>
-                    <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}><span style={stageBadge(lead.stage)}>{LEAD_STAGE_LABEL[lead.stage]}</span></td>
-                    <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{lead.next_action ?? "-"}</td>
-                  </tr>
-                ))}
+                {filteredLeads.map((lead) => {
+                  const n = countOpenProposals(proposalIndex, lead.id);
+                  return (
+                    <tr key={lead.id}>
+                      <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{lead.company_name}</td>
+                      <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{lead.contact_person_name}</td>
+                      <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{lead.email}</td>
+                      <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{lead.phone ?? "—"}</td>
+                      <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{n}</td>
+                      <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>
+                        <span style={stageBadge(lead.stage)}>{LEAD_STAGE_LABEL[lead.stage]}</span>
+                      </td>
+                      <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>
+                        <Link href={`/crm/leads/${lead.id}`} style={{ marginRight: 10 }}>
+                          Open
+                        </Link>
+                        {canManageLeads ? (
+                          <button type="button" onClick={() => setEditingLead(lead)} style={{ fontSize: 13 }}>
+                            Edit
+                          </button>
+                        ) : null}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         </section>
       ) : null}
 
-      {viewMode === "import" ? <MarketingImportCard onImported={loadAll} /> : null}
-
-      {selectedLead ? (
-        <section style={{ ...cardStyle, display: "grid", gap: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <h2 style={{ margin: 0 }}>{selectedLead.company_name}</h2>
-            <span style={stageBadge(selectedLead.stage)}>{LEAD_STAGE_LABEL[selectedLead.stage]}</span>
-          </div>
-          <p style={{ margin: 0, color: "#374151" }}>
-            {selectedLead.contact_person_name} · {selectedLead.email} {selectedLead.phone ? `· ${selectedLead.phone}` : ""}
-          </p>
-
-          <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-            <label style={{ display: "grid", gap: 4 }}>
-              Stage
-              <select
-                value={selectedLead.stage}
-                onChange={(e) => patchLead(selectedLead.id, { stage: e.target.value as LeadStage, stage_changed_at: new Date().toISOString() })}
-                style={{ padding: 8 }}
-              >
-                {LEAD_STAGES.map((s) => (
-                  <option key={s} value={s}>{LEAD_STAGE_LABEL[s]}</option>
-                ))}
-              </select>
-            </label>
-            <label style={{ display: "grid", gap: 4 }}>
-              Lost reason
-              <select
-                value={selectedLead.lost_reason ?? ""}
-                onChange={(e) => patchLead(selectedLead.id, { lost_reason: e.target.value || null })}
-                style={{ padding: 8 }}
-                disabled={selectedLead.stage !== "lost"}
-              >
-                <option value="">Select reason</option>
-                {LOST_REASONS.map((r) => (
-                  <option key={r} value={r}>{r}</option>
-                ))}
-              </select>
-            </label>
-            <label style={{ display: "grid", gap: 4 }}>
-              Next action
-              <input
-                value={selectedLead.next_action ?? ""}
-                onChange={(e) => patchLead(selectedLead.id, { next_action: e.target.value || null })}
-                style={{ padding: 8 }}
-              />
-            </label>
-            <label style={{ display: "grid", gap: 4 }}>
-              Next action date
-              <input
-                type="date"
-                value={selectedLead.next_action_date ?? ""}
-                onChange={(e) => patchLead(selectedLead.id, { next_action_date: e.target.value || null })}
-                style={{ padding: 8 }}
-              />
-            </label>
-            {canManage ? (
-              <label style={{ display: "grid", gap: 4 }}>
-                Assigned agent
-                <select
-                  value={selectedLead.assigned_agent_user_id ?? ""}
-                  onChange={(e) => patchLead(selectedLead.id, { assigned_agent_user_id: e.target.value || null })}
-                  style={{ padding: 8 }}
-                >
-                  <option value="">Unassigned</option>
-                  {tenantUsers.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.display_name?.trim() || u.email}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            <label style={{ display: "grid", gap: 4 }}>
-              Won room (for auto proposal)
-              <select
-                value={selectedLead.won_room_id ?? ""}
-                onChange={(e) => patchLead(selectedLead.id, { won_room_id: e.target.value || null })}
-                style={{ padding: 8 }}
-              >
-                <option value="">No room selected</option>
-                {roomsForLead.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {(r.room_name ?? "Room") + (r.room_number ? ` (${r.room_number})` : "")}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <label style={{ display: "grid", gap: 4 }}>
-            Stage notes
-            <textarea
-              rows={3}
-              value={selectedLead.stage_notes ?? ""}
-              onChange={(e) => patchLead(selectedLead.id, { stage_notes: e.target.value || null })}
-              style={{ padding: 8 }}
-            />
-          </label>
-
-          <div style={{ display: "grid", gap: 8 }}>
-            <h3 style={{ margin: 0, fontSize: 16 }}>Activity timeline</h3>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input value={noteText} onChange={(e) => setNoteText(e.target.value)} placeholder="Add note..." style={{ padding: 8, flex: 1 }} />
-              <button onClick={addNoteActivity} style={{ padding: "8px 12px" }}>Add note</button>
-            </div>
-            {activities.length === 0 ? <p style={{ margin: 0, color: "#666" }}>No activities yet.</p> : null}
-            {activities.map((a) => (
-              <div key={a.id} style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 8 }}>
-                <div style={{ fontSize: 12, color: "#666" }}>{new Date(a.occurred_at).toLocaleString()} · {a.activity_type}</div>
-                <div style={{ fontWeight: 600 }}>{a.summary}</div>
-                {a.details ? <div style={{ whiteSpace: "pre-wrap" }}>{a.details}</div> : null}
-              </div>
-            ))}
-          </div>
-
-          <div style={{ display: "grid", gap: 8 }}>
-            <h3 style={{ margin: 0, fontSize: 16 }}>Stage history</h3>
-            {history.length === 0 ? <p style={{ margin: 0, color: "#666" }}>No stage changes yet.</p> : null}
-            {history.map((h) => (
-              <div key={h.id} style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 8 }}>
-                <div style={{ fontSize: 12, color: "#666" }}>{new Date(h.changed_at).toLocaleString()}</div>
-                <div>
-                  {(h.from_stage ? LEAD_STAGE_LABEL[h.from_stage as LeadStage] : "Start")} {" -> "} {LEAD_STAGE_LABEL[h.to_stage as LeadStage] ?? h.to_stage}
-                </div>
-                {h.notes ? <div style={{ color: "#374151" }}>{h.notes}</div> : null}
-              </div>
-            ))}
-          </div>
-        </section>
+      {primaryTenantId ? (
+        <LeadFormModal
+          open={addLeadOpen}
+          mode="create"
+          tenantId={primaryTenantId}
+          properties={properties}
+          onClose={() => setAddLeadOpen(false)}
+          onSaved={loadAll}
+        />
       ) : null}
+
+      {editingLead ? (
+        <LeadFormModal
+          open={!!editingLead}
+          mode="edit"
+          leadId={editingLead.id}
+          tenantId={editingLead.tenant_id}
+          properties={properties}
+          initial={{
+            company_name: editingLead.company_name,
+            contact_person_name: editingLead.contact_person_name,
+            contact_first_name: editingLead.contact_first_name,
+            contact_last_name: editingLead.contact_last_name,
+            contact_title: editingLead.contact_title,
+            contact_direct_phone: editingLead.contact_direct_phone,
+            email: editingLead.email,
+            phone: editingLead.phone,
+            source: editingLead.source,
+            property_id: editingLead.property_id,
+            interested_space_type: editingLead.interested_space_type,
+            approx_size_m2: editingLead.approx_size_m2,
+            approx_budget_eur_month: editingLead.approx_budget_eur_month,
+            preferred_move_in_date: editingLead.preferred_move_in_date,
+            notes: editingLead.notes,
+            business_id: editingLead.business_id,
+            vat_number: editingLead.vat_number,
+            company_type: editingLead.company_type,
+            industry_sector: editingLead.industry_sector,
+            company_size: editingLead.company_size,
+            company_website: editingLead.company_website,
+            billing_street: editingLead.billing_street,
+            billing_postal_code: editingLead.billing_postal_code,
+            billing_city: editingLead.billing_city,
+            billing_email: editingLead.billing_email,
+            e_invoice_address: editingLead.e_invoice_address,
+            e_invoice_operator_code: editingLead.e_invoice_operator_code,
+          }}
+          onClose={() => setEditingLead(null)}
+          onSaved={loadAll}
+        />
+      ) : null}
+
+      <CustomerImportModal
+        open={importOpen}
+        tenantId={primaryTenantId}
+        onClose={() => setImportOpen(false)}
+        onImported={loadAll}
+      />
     </div>
   );
 }
-
-function MarketingImportCard({ onImported }: { onImported: () => Promise<void> }) {
-  const [tenantId, setTenantId] = useState("");
-  const [rows, setRows] = useState<Record<string, string>[]>([]);
-  const [mappedRows, setMappedRows] = useState<Array<Record<string, unknown>>>([]);
-  const [results, setResults] = useState<Array<{ rowNumber: number; success: boolean; error?: string }>>([]);
-  const [loading, setLoading] = useState(false);
-
-  function parseCsv(text: string): Record<string, string>[] {
-    const lines = text.split(/\r?\n/).filter((l) => l.trim().length);
-    if (!lines.length) return [];
-    const headers = lines[0].split(",").map((h) => h.trim());
-    return lines.slice(1).map((line) => {
-      const cols = line.split(",");
-      const out: Record<string, string> = {};
-      headers.forEach((h, i) => {
-        out[h] = (cols[i] ?? "").trim();
-      });
-      return out;
-    });
-  }
-
-  function mapRows(inputRows: Record<string, string>[]) {
-    const mapped = inputRows.map((r) => ({
-      company_name: r.company_name ?? r.company ?? "",
-      contact_person_name: r.contact_person_name ?? r.contact_name ?? r.name ?? "",
-      email: r.email ?? "",
-      phone: r.phone ?? "",
-      source: r.source ?? "social_media",
-      interested_space_type: r.interested_space_type ?? r.space_type ?? null,
-      approx_size_m2: r.approx_size_m2 ? Number(r.approx_size_m2) : null,
-      approx_budget_eur_month: r.approx_budget_eur_month ? Number(r.approx_budget_eur_month) : null,
-      preferred_move_in_date: r.preferred_move_in_date ?? null,
-      notes: r.notes ?? null,
-      property_id: r.property_id ?? null,
-    }));
-    setMappedRows(mapped);
-  }
-
-  async function onPickFile(file: File) {
-    const text = await file.text();
-    const parsed = parseCsv(text);
-    setRows(parsed);
-    mapRows(parsed);
-  }
-
-  async function importRows() {
-    if (!tenantId.trim() || mappedRows.length === 0) return;
-    setLoading(true);
-    const resp = await fetch("/api/leads/marketing-import", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tenantId: tenantId.trim(), rows: mappedRows }),
-    });
-    const data = (await resp.json()) as { results?: Array<{ rowNumber: number; success: boolean; error?: string }> };
-    setLoading(false);
-    setResults(data.results ?? []);
-    await onImported();
-  }
-
-  return (
-    <section style={{ ...cardStyle, display: "grid", gap: 10 }}>
-      <h2 style={{ margin: 0, fontSize: 18 }}>Marketing CSV import</h2>
-      <label style={{ display: "grid", gap: 4 }}>
-        Tenant ID (target tenant)
-        <input value={tenantId} onChange={(e) => setTenantId(e.target.value)} placeholder="tenant uuid" style={{ padding: 8 }} />
-      </label>
-      <input
-        type="file"
-        accept=".csv,text/csv"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) void onPickFile(file);
-        }}
-      />
-      {rows.length ? <p style={{ margin: 0, color: "#374151" }}>Preview rows: {rows.length}</p> : null}
-      {mappedRows.length ? (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                {["company_name", "contact_person_name", "email", "source"].map((h) => (
-                  <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: 6 }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {mappedRows.slice(0, 10).map((r, idx) => (
-                <tr key={idx}>
-                  <td style={{ borderBottom: "1px solid #f1f5f9", padding: 6 }}>{String(r.company_name ?? "")}</td>
-                  <td style={{ borderBottom: "1px solid #f1f5f9", padding: 6 }}>{String(r.contact_person_name ?? "")}</td>
-                  <td style={{ borderBottom: "1px solid #f1f5f9", padding: 6 }}>{String(r.email ?? "")}</td>
-                  <td style={{ borderBottom: "1px solid #f1f5f9", padding: 6 }}>{String(r.source ?? "")}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : null}
-      <button onClick={importRows} style={{ padding: "10px 12px", width: 170 }} disabled={loading || !mappedRows.length}>
-        {loading ? "Importing..." : "Import mapped rows"}
-      </button>
-      {results.length ? (
-        <div style={{ display: "grid", gap: 4 }}>
-          {results.map((r) => (
-            <div key={r.rowNumber} style={{ color: r.success ? "#166534" : "#b91c1c" }}>
-              Row {r.rowNumber}: {r.success ? "Success" : r.error ?? "Error"}
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </section>
-  );
-}
-

@@ -27,6 +27,7 @@ export default function AppNav() {
   const [showOwnerDashboard, setShowOwnerDashboard] = useState(false);
   const [showRoomsNav, setShowRoomsNav] = useState(false);
   const [showCrmNav, setShowCrmNav] = useState(false);
+  const [showReportsNav, setShowReportsNav] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -43,6 +44,7 @@ export default function AppNav() {
         setShowOwnerDashboard(false);
         setShowRoomsNav(false);
         setShowCrmNav(false);
+        setShowReportsNav(false);
         setReady(true);
         return;
       }
@@ -52,6 +54,11 @@ export default function AppNav() {
       const roles = (memberships ?? []).map((m) => (m.role ?? "").toLowerCase());
       if (cancelled) return;
 
+      setShowReportsNav(
+        roles.some((r) =>
+          ["super_admin", "owner", "manager", "accounting", "viewer"].includes(r),
+        ),
+      );
       setShowManageBookings(roles.some(canSeeManageBookingsNav));
       setShowOwnerDashboard(roles.some((r) => ["owner", "super_admin"].includes(r)));
       setShowRoomsNav(
@@ -132,6 +139,11 @@ export default function AppNav() {
             {showRoomsNav ? (
               <Link href="/rooms" style={linkStyle(pathname === "/rooms" || pathname.startsWith("/rooms/"))}>
                 Rooms
+              </Link>
+            ) : null}
+            {showReportsNav ? (
+              <Link href="/reports" style={linkStyle(pathname === "/reports" || pathname.startsWith("/reports/"))}>
+                Reports
               </Link>
             ) : null}
             {showCrmNav ? (

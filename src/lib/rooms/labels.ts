@@ -7,7 +7,7 @@ export const SPACE_TYPES = [
 
 export type SpaceType = (typeof SPACE_TYPES)[number];
 
-export const ROOM_STATUSES = ["available", "occupied", "under_maintenance", "merged"] as const;
+export const ROOM_STATUSES = ["available", "occupied", "under_maintenance", "merged", "reserved"] as const;
 export type RoomStatus = (typeof ROOM_STATUSES)[number];
 
 export const AMENITY_KEYS = [
@@ -67,6 +67,8 @@ export function roomStatusBadgeStyle(s: string): { bg: string; fg: string; bd: s
       return { bg: "#fbe8ea", fg: "#b00020", bd: "#f3b7be" };
     case "merged":
       return { bg: "#ede7f6", fg: "#4527a0", bd: "#b39ddb" };
+    case "reserved":
+      return { bg: "#e3f2fd", fg: "#0d47a1", bd: "#90caf9" };
     default:
       return { bg: "#f5f5f5", fg: "#424242", bd: "#e0e0e0" };
   }

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
@@ -14,6 +15,7 @@ type TenantRow = {
 };
 
 type PropertyRow = {
+  id: string;
   tenant_id: string | null;
   name: string | null;
   address: string | null;
@@ -103,7 +105,7 @@ export default function SuperAdminDashboardPage() {
       const { data: propertiesData, error: propertiesError } = await supabase
         .from("properties")
         .select(
-          "tenant_id,name,address,postal_code,city,total_units,occupied_units,status"
+          "id,tenant_id,name,address,postal_code,city,total_units,occupied_units,status"
         )
         .order("name", { ascending: true });
 
@@ -246,6 +248,9 @@ export default function SuperAdminDashboardPage() {
         <div>
           <h1 style={{ margin: "0 0 8px" }}>Super Admin Dashboard</h1>
           <p style={{ margin: 0, color: "#555" }}>All tenants, all properties, system-wide occupancy.</p>
+          <p style={{ margin: "10px 0 0", fontSize: 14 }}>
+            <Link href="/reports">Financial reports (rent roll, net income)</Link>
+          </p>
         </div>
         <LogoutButton />
       </div>
@@ -316,6 +321,7 @@ export default function SuperAdminDashboardPage() {
                     <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #ddd" }}>Address</th>
                     <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #ddd" }}>Occupancy</th>
                     <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #ddd" }}>Status</th>
+                    <th style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid #ddd" }}>Reports</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -331,7 +337,7 @@ export default function SuperAdminDashboardPage() {
                           : { bg: "#fbe8ea", fg: "#b00020", bd: "#f3b7be" };
 
                     return (
-                      <tr key={`${p.tenant_id ?? "t"}-${idx}`}>
+                      <tr key={p.id ?? `${p.tenant_id ?? "t"}-${idx}`}>
                         <td style={{ padding: "10px", borderBottom: "1px solid #f0f0f0" }}>
                           {p.tenant_id ? tenantNameById.get(p.tenant_id) ?? "-" : "-"}
                         </td>
@@ -367,6 +373,16 @@ export default function SuperAdminDashboardPage() {
                           >
                             {p.status ?? "inactive"}
                           </span>
+                        </td>
+                        <td style={{ padding: "10px", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}>
+                          {p.id ? (
+                            <span style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                              <Link href={`/reports/rent-roll?propertyId=${encodeURIComponent(p.id)}`}>Rent roll</Link>
+                              <Link href={`/reports/net-income?propertyId=${encodeURIComponent(p.id)}`}>Net income</Link>
+                            </span>
+                          ) : (
+                            "—"
+                          )}
                         </td>
                       </tr>
                     );
