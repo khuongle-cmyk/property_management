@@ -2,7 +2,6 @@ import { Cms2SpacesList } from "@/components/cms2/Cms2SpacesList";
 import { prepareCmsPublicView } from "@/lib/cms2/cms-public-view";
 import { getOrgPublicSiteCached } from "@/lib/cms2/get-public-org";
 import { buildCmsMarketingLanguageAlternates } from "@/lib/cms2/marketing-alternates";
-import { fetchPublicSpacesFromApi } from "@/lib/spaces/public-api";
 import { notFound } from "next/navigation";
 
 export async function generateMetadata({ params }: { params: Promise<{ orgSlug: string }> }) {
@@ -29,6 +28,5 @@ export default async function OrgSpacesPage({
   const raw = await getOrgPublicSiteCached(orgSlug);
   if (!raw) notFound();
   const { locale, ui, org } = prepareCmsPublicView(raw, sp.lang);
-  const apiSpaces = await fetchPublicSpacesFromApi();
-  return <Cms2SpacesList org={org} basePath={`/${orgSlug}`} locale={locale} ui={ui} apiSpaces={apiSpaces} />;
+  return <Cms2SpacesList org={org} basePath={`/${orgSlug}`} locale={locale} ui={ui} publicBrowse />;
 }

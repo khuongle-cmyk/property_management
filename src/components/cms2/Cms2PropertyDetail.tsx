@@ -13,7 +13,7 @@ import {
   SPACE_TYPE_BUCKETS,
   publicPageQuery,
 } from "@/lib/spaces/public-browse";
-import type { PublicBookableSpaceApiRow } from "@/lib/spaces/public-api";
+import type { PublicBookableSpaceApiRow } from "@/lib/spaces/public-spaces-shared";
 
 function bucketTxKey(b: SpaceTypeBucket): string {
   return `propertyBucket.${b}`;

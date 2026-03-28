@@ -1,7 +1,7 @@
 import { slugify } from "@/lib/cms2/slug";
 import { AMENITY_KEYS } from "@/lib/rooms/labels";
-import type { PublicBookableSpaceApiRow } from "@/lib/spaces/public-api";
-import { apiRowPropertyId, apiRowPropertyName } from "@/lib/spaces/public-api";
+import type { PublicBookableSpaceApiRow } from "@/lib/spaces/public-spaces-shared";
+import { apiRowPropertyId, apiRowPropertyName } from "@/lib/spaces/public-spaces-shared";
 
 /** Tab / badge buckets aligned with marketing copy. */
 export type SpaceTypeBucket = "office" | "meeting_room" | "hot_desk" | "venue";

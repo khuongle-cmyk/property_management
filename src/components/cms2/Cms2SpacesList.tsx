@@ -5,9 +5,7 @@ import { themeFromBrand } from "@/lib/cms2/types";
 import type { CmsPublicUi } from "@/lib/cms2/public-ui";
 import { tx } from "@/lib/cms2/public-ui";
 import { publicSpaceUrlSegment } from "@/lib/cms2/slug";
-import type { PublicBookableSpaceApiRow } from "@/lib/spaces/public-api";
-import { groupPublicSpacesByProperty } from "@/lib/spaces/public-browse";
-import { Cms2PropertyCards } from "./Cms2PropertyCards";
+import { Cms2PublicSpacesFetchClient } from "./Cms2PublicSpacesFetchClient";
 import { Cms2SiteChrome } from "./Cms2SiteChrome";
 
 function spaceTypeLabel(ui: CmsPublicUi, st: string): string {
@@ -21,39 +19,24 @@ export function Cms2SpacesList({
   basePath,
   locale,
   ui,
-  apiSpaces,
+  publicBrowse = false,
 }: {
   org: PublicOrgPayload;
   basePath: string;
   locale: CmsMarketingLocale;
   ui: CmsPublicUi;
-  /** When set, browse-by-property UI from GET /api/spaces/public. */
-  apiSpaces?: PublicBookableSpaceApiRow[] | null;
+  /** When true, browse-by-property UI loads via `fetch('/api/spaces/public')` on the client. */
+  publicBrowse?: boolean;
 }) {
   const t = themeFromBrand(org.primaryColor, org.secondaryColor);
   const p = basePath;
-  const useApi = apiSpaces != null;
-  const groups = useApi ? groupPublicSpacesByProperty(apiSpaces ?? []) : [];
+  const useApi = publicBrowse;
 
   return (
     <Cms2SiteChrome org={org} basePath={basePath} locale={locale} ui={ui}>
       <section style={{ maxWidth: 1120, margin: "0 auto", padding: "36px 22px 56px" }}>
         {useApi ? (
-          groups.length === 0 ? (
-            <p style={{ color: t.muted }}>{tx(ui, "spaces.noSpaces")}</p>
-          ) : (
-            <>
-              <h1 style={{ margin: "0 0 8px", fontSize: "1.75rem", color: t.petrolDark }}>{tx(ui, "spaces.title")}</h1>
-              <p style={{ margin: "0 0 28px", color: t.muted }}>{tx(ui, "spaces.browseByProperty")}</p>
-              <Cms2PropertyCards
-                theme={t}
-                basePath={p}
-                ui={ui}
-                locale={locale}
-                groups={groups}
-              />
-            </>
-          )
+          <Cms2PublicSpacesFetchClient theme={t} basePath={p} locale={locale} ui={ui} variant="spaces" />
         ) : (
           <>
             <h1 style={{ margin: "0 0 8px", fontSize: "1.75rem", color: t.petrolDark }}>{tx(ui, "spaces.title")}</h1>

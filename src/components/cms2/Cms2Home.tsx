@@ -1,13 +1,11 @@
 import Link from "next/link";
 import type { CmsMarketingLocale } from "@/lib/cms2/marketing-locales";
-import type { PublicBookableSpaceApiRow } from "@/lib/spaces/public-api";
-import { groupPublicSpacesByProperty } from "@/lib/spaces/public-browse";
 import type { PublicOrgPayload } from "@/lib/cms2/types";
 import { themeFromBrand } from "@/lib/cms2/types";
 import type { CmsPublicUi } from "@/lib/cms2/public-ui";
 import { resolveCmsPublicUi, tx } from "@/lib/cms2/public-ui";
 import { publicSpaceUrlSegment } from "@/lib/cms2/slug";
-import { Cms2PropertyCards } from "./Cms2PropertyCards";
+import { Cms2PublicSpacesFetchClient } from "./Cms2PublicSpacesFetchClient";
 import { Cms2Hero, Cms2SiteChrome, DEFAULT_CMS2_HERO_IMAGE_URL } from "./Cms2SiteChrome";
 
 function spaceTypeLabel(ui: CmsPublicUi, st: string): string {
@@ -21,24 +19,22 @@ export function Cms2Home({
   basePath,
   locale,
   ui: uiProp,
-  /** When set (root `/` or `/[orgSlug]`), spaces list comes from GET /api/spaces/public instead of org.spaces. */
-  apiSpaces,
+  /** When true (root `/` or `/[orgSlug]`), spaces load in the browser via `fetch('/api/spaces/public')`. */
+  publicBrowse = false,
 }: {
   org: PublicOrgPayload;
   basePath: string;
   locale: CmsMarketingLocale;
   /** Optional: when omitted or null, strings load from `messages/cms-public` via locale (not from DB / page_content). */
   ui?: CmsPublicUi | null;
-  apiSpaces?: PublicBookableSpaceApiRow[] | null;
+  publicBrowse?: boolean;
 }) {
   const ui = resolveCmsPublicUi(uiProp, locale);
   const t = themeFromBrand(org.primaryColor, org.secondaryColor);
   const p = basePath;
 
-  const useApiList = apiSpaces != null;
-  const listFromApi = useApiList ? apiSpaces : null;
+  const useApiList = publicBrowse;
   const listFromOrg = org.spaces;
-  const propertyGroups = useApiList ? groupPublicSpacesByProperty(listFromApi ?? []) : [];
 
   return (
     <Cms2SiteChrome org={org} basePath={basePath} locale={locale} ui={ui}>
@@ -51,19 +47,7 @@ export function Cms2Home({
       />
       <section style={{ maxWidth: 1120, margin: "0 auto", padding: "12px 22px 56px" }}>
         {useApiList ? (
-          propertyGroups.length === 0 ? (
-            <p style={{ color: t.muted }}>{tx(ui, "home.noSpaces")}</p>
-          ) : (
-            <Cms2PropertyCards
-              theme={t}
-              basePath={p}
-              ui={ui}
-              locale={locale}
-              groups={propertyGroups}
-              maxProperties={4}
-              showViewAllLink={propertyGroups.length > 4}
-            />
-          )
+          <Cms2PublicSpacesFetchClient theme={t} basePath={p} locale={locale} ui={ui} variant="home" />
         ) : (
           <>
             <h2 style={{ margin: "0 0 8px", fontSize: "1.35rem", color: t.petrolDark }}>{tx(ui, "home.availableSpaces")}</h2>

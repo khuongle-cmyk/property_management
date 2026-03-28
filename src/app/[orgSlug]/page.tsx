@@ -3,7 +3,6 @@ import { prepareCmsPublicView } from "@/lib/cms2/cms-public-view";
 import { getOrgPublicSiteCached } from "@/lib/cms2/get-public-org";
 import { buildCmsMarketingLanguageAlternates } from "@/lib/cms2/marketing-alternates";
 import { buildLocalBusinessJsonLd } from "@/lib/cms2/seo";
-import { fetchPublicSpacesFromApi } from "@/lib/spaces/public-api";
 import { notFound } from "next/navigation";
 
 export async function generateMetadata({ params }: { params: Promise<{ orgSlug: string }> }) {
@@ -32,12 +31,11 @@ export default async function OrgHomePage({
   if (!raw) notFound();
   const { locale, ui, org } = prepareCmsPublicView(raw, sp.lang);
   const jsonLd = buildLocalBusinessJsonLd(org, `/${orgSlug}`);
-  const apiSpaces = await fetchPublicSpacesFromApi();
 
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
-      <Cms2Home org={org} basePath={`/${orgSlug}`} locale={locale} ui={ui} apiSpaces={apiSpaces} />
+      <Cms2Home org={org} basePath={`/${orgSlug}`} locale={locale} ui={ui} publicBrowse />
     </>
   );
 }

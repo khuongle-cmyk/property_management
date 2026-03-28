@@ -1,56 +1,30 @@
+import { headers } from "next/headers";
 import type { CmsPublicSpace } from "@/lib/cms2/types";
+import type { PublicBookableSpaceApiRow } from "@/lib/spaces/public-spaces-shared";
+import { apiRowPropertyId, apiRowPropertyName } from "@/lib/spaces/public-spaces-shared";
 
-/** Row shape from GET /api/spaces/public (nested `properties` from Supabase). */
-export type PublicBookableSpaceApiRow = {
-  id: string;
-  name: string;
-  space_type: string;
-  capacity: number | null;
-  floor: string | null;
-  room_number: string | null;
-  hourly_price: number | null;
-  size_m2?: number | null;
-  space_status: string;
-  is_published: boolean;
-  requires_approval: boolean | null;
-  amenity_projector?: boolean | null;
-  amenity_whiteboard?: boolean | null;
-  amenity_video_conferencing?: boolean | null;
-  amenity_kitchen_access?: boolean | null;
-  amenity_parking?: boolean | null;
-  amenity_natural_light?: boolean | null;
-  amenity_air_conditioning?: boolean | null;
-  amenity_standing_desk?: boolean | null;
-  amenity_phone_booth?: boolean | null;
-  amenity_reception_service?: boolean | null;
-  properties:
-    | {
-        id: string;
-        name: string;
-        address: string | null;
-        postal_code: string | null;
-        city: string | null;
-      }
-    | {
-        id: string;
-        name: string;
-        address: string | null;
-        postal_code: string | null;
-        city: string | null;
-      }[]
-    | null;
-};
+export type { PublicBookableSpaceApiRow } from "@/lib/spaces/public-spaces-shared";
+export { apiRowPropertyId, apiRowPropertyName } from "@/lib/spaces/public-spaces-shared";
 
-function originForServerFetch(): string {
+/** Base URL for server-side fetch to own `/api/*` (RSC / route handlers). Prefer env, then request Host, then Vercel. */
+async function resolvePublicApiOrigin(): Promise<string> {
   const fromEnv = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "");
   if (fromEnv) return fromEnv;
+  try {
+    const h = await headers();
+    const host = h.get("x-forwarded-host") ?? h.get("host");
+    const proto = h.get("x-forwarded-proto") ?? "https";
+    if (host) return `${proto}://${host}`;
+  } catch {
+    /* not in a request context (e.g. build) */
+  }
   if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
   return "http://localhost:3000";
 }
 
-/** Server-only: calls the public spaces API (same pipeline as the browser). */
+/** Server-only: calls the public spaces API (used by RSC pages that need data before paint). */
 export async function fetchPublicSpacesFromApi(): Promise<PublicBookableSpaceApiRow[]> {
-  const base = originForServerFetch();
+  const base = await resolvePublicApiOrigin();
   try {
     const res = await fetch(`${base}/api/spaces/public`, { cache: "no-store" });
     const json = (await res.json()) as unknown;
@@ -67,20 +41,6 @@ export async function fetchPublicSpacesFromApi(): Promise<PublicBookableSpaceApi
     console.warn("[fetchPublicSpacesFromApi]", e);
     return [];
   }
-}
-
-export function apiRowPropertyName(row: PublicBookableSpaceApiRow): string {
-  const p = row.properties;
-  if (!p) return "";
-  if (Array.isArray(p)) return p[0]?.name?.trim() ?? "";
-  return p.name?.trim() ?? "";
-}
-
-export function apiRowPropertyId(row: PublicBookableSpaceApiRow): string {
-  const p = row.properties;
-  if (!p) return "";
-  if (Array.isArray(p)) return p[0]?.id ?? "";
-  return p.id ?? "";
 }
 
 /** Map API row to the shape expected by booking UI (Cms2SpaceDetailClient). */
