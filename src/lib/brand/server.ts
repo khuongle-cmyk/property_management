@@ -27,7 +27,7 @@ export async function resolveBrandByHost(hostRaw: string | null | undefined): Pr
   const cached = hostCache.get(host);
   if (cached && cached.expiresAt > Date.now()) return cached.brand;
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("brand_settings")
     .select("*")
@@ -43,7 +43,7 @@ export async function resolveBrandByHost(hostRaw: string | null | undefined): Pr
 
 export async function resolveBrandByTenantId(tenantId: string | null | undefined): Promise<BrandSettings> {
   if (!tenantId) return DEFAULT_BRAND;
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("brand_settings")
     .select("*")

@@ -9,7 +9,7 @@ function normalizeDomain(input: unknown): string | null {
 }
 
 async function requireSuperAdmin() {
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

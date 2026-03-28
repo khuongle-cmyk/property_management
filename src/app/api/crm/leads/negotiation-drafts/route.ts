@@ -23,7 +23,7 @@ export async function POST(req: Request) {
   const leadId = body.leadId?.trim();
   if (!leadId) return NextResponse.json({ error: "leadId is required" }, { status: 400 });
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

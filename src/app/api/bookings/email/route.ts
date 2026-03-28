@@ -24,7 +24,7 @@ export async function POST(req: Request) {
   }
   const kind = body.kind ?? "created";
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

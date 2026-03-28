@@ -17,7 +17,7 @@ function normalizeSlug(value: string | null | undefined): string | null {
 }
 
 async function canManageTenant(
-  supabase: ReturnType<typeof createSupabaseServerClient>,
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
   userId: string,
   tenantId: string
 ): Promise<boolean> {
@@ -37,7 +37,7 @@ export async function GET(req: Request) {
   const tenantId = searchParams.get("tenantId")?.trim();
   if (!tenantId) return NextResponse.json({ error: "tenantId is required" }, { status: 400 });
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -60,7 +60,7 @@ export async function POST(req: Request) {
   const tenantId = (body.tenantId ?? "").trim();
   if (!tenantId) return NextResponse.json({ error: "tenantId is required" }, { status: 400 });
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

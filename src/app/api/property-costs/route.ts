@@ -35,7 +35,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "propertyId is required" }, { status: 400 });
   }
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -100,7 +100,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "costDate must be YYYY-MM-DD" }, { status: 400 });
   }
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

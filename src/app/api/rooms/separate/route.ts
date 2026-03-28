@@ -20,7 +20,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "combinedSpaceId is required" }, { status: 400 });
   }
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

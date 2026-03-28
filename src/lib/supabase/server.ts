@@ -12,23 +12,22 @@ type SupabasePropertyRow = {
   tenant_id: string | null;
 };
 
-export function createSupabaseServerClient() {
+/** Next.js 16+: cookies() is async; must be awaited before use. */
+export async function createSupabaseServerClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!url) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL");
   if (!anonKey) throw new Error("Missing NEXT_PUBLIC_SUPABASE_ANON_KEY");
 
-  const cookieStorePromise = cookies();
+  const cookieStore = await cookies();
 
   return createServerClient(url, anonKey, {
     cookies: {
-      async getAll() {
-        const cookieStore = await cookieStorePromise;
+      getAll() {
         return cookieStore.getAll().map((c) => ({ name: c.name, value: c.value }));
       },
-      async setAll(cookiesToSet) {
-        const cookieStore = await cookieStorePromise;
+      setAll(cookiesToSet) {
         cookiesToSet.forEach(({ name, value, options }) => {
           cookieStore.set({ name, value, ...(options ?? {}) });
         });
@@ -38,4 +37,3 @@ export function createSupabaseServerClient() {
 }
 
 export type { SupabasePropertyRow };
-

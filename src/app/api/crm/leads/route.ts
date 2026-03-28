@@ -58,7 +58,7 @@ export async function POST(req: Request) {
   }
   if (!spaceType) spaceType = null;
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

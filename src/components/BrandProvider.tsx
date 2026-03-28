@@ -34,9 +34,22 @@ export default function BrandProvider({ children }: { children: ReactNode }) {
 
   async function loadBrand() {
     try {
-      const r = await fetch("/api/brand/current", { cache: "no-store" });
-      const j = (await r.json()) as { brand?: BrandSettings };
-      if (r.ok && j.brand) setBrand(j.brand);
+      const response = await fetch("/api/brand/current", { cache: "no-store" });
+      let data: { brand?: BrandSettings } | null = null;
+      if (response.ok) {
+        const text = await response.text();
+        if (text.trim()) {
+          try {
+            data = JSON.parse(text) as { brand?: BrandSettings };
+          } catch {
+            data = null;
+          }
+        }
+      }
+      if (data?.brand) setBrand(data.brand);
+      else setBrand(DEFAULT_BRAND);
+    } catch {
+      setBrand(DEFAULT_BRAND);
     } finally {
       setLoading(false);
     }

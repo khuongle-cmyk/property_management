@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isPropertyCostType } from "@/lib/property-costs/constants";
+import { parseFinNumber } from "@/lib/procountor/finnish-number";
 import type { DataSource, DuplicateMode, ImportType, ParsedRow } from "@/lib/historical-import/types";
 
 type Body = {
@@ -16,15 +17,32 @@ type Body = {
 
 function num(v: unknown): number | null {
   if (v == null || v === "") return null;
-  const n = Number(v);
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  const s = String(v).trim();
+  if (!s) return null;
+  if (s.includes(",")) {
+    const n = parseFinNumber(s);
+    return Number.isFinite(n) ? n : null;
+  }
+  const n = Number(s);
   return Number.isFinite(n) ? n : null;
 }
 function str(v: unknown): string {
   return String(v ?? "").trim();
 }
 
+function rowSnapshot(r: ParsedRow): string {
+  try {
+    return JSON.stringify(r).slice(0, 4000);
+  } catch {
+    return "[unserializable row]";
+  }
+}
+
+type ImportErrorLogEntry = { row: number; text: string; error: string };
+
 export async function POST(req: Request) {
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -49,6 +67,11 @@ export async function POST(req: Request) {
   }
   if (!rows.length) return NextResponse.json({ error: "No rows provided" }, { status: 400 });
   const requestedTenantId = str(body.tenantId);
+
+  console.log("[import/commit] Total rows:", rows.length, "importType:", importType, "dataSource:", dataSource);
+  for (let j = 0; j < Math.min(5, rows.length); j++) {
+    console.log("[import/commit] Row sample (index", j, "):", rows[j]);
+  }
 
   const { data: memberships, error: mErr } = await supabase.from("memberships").select("tenant_id, role").eq("user_id", user.id);
   if (mErr) return NextResponse.json({ error: mErr.message }, { status: 500 });
@@ -95,6 +118,7 @@ export async function POST(req: Request) {
 
   let imported = 0;
   let failed = 0;
+  const errors: ImportErrorLogEntry[] = [];
   const rowResults: Array<{ row: number; ok: boolean; message?: string }> = [];
 
   async function resolveProperty(row: ParsedRow): Promise<{ id: string; tenant_id: string } | null> {
@@ -118,7 +142,11 @@ export async function POST(req: Request) {
     const p = await resolveProperty(r);
     if (!p) {
       failed++;
-      rowResults.push({ row: i + 1, ok: false, message: "Property not found / not in scope" });
+      const msg = "Property not found / not in scope";
+      const entry: ImportErrorLogEntry = { row: i + 1, text: rowSnapshot(r), error: msg };
+      errors.push(entry);
+      rowResults.push({ row: i + 1, ok: false, message: msg });
+      console.log("[import/commit] ERROR:", msg, "Row:", i + 1, "payload:", entry.text.slice(0, 500));
       continue;
     }
 
@@ -305,10 +333,52 @@ export async function POST(req: Request) {
       rowResults.push({ row: i + 1, ok: true });
     } catch (e) {
       failed++;
-      rowResults.push({ row: i + 1, ok: false, message: e instanceof Error ? e.message : "Row failed" });
+      let message = "Row failed";
+      if (e instanceof Error) message = e.message;
+      else if (e && typeof e === "object" && "message" in e) {
+        const msg = (e as { message?: unknown }).message;
+        if (msg != null) message = String(msg);
+        const details = (e as { details?: unknown }).details;
+        const hint = (e as { hint?: unknown }).hint;
+        if (details != null) message += ` (${String(details)})`;
+        else if (hint != null) message += ` (${String(hint)})`;
+      }
+      const entry: ImportErrorLogEntry = { row: i + 1, text: rowSnapshot(r), error: message };
+      errors.push(entry);
+      rowResults.push({ row: i + 1, ok: false, message });
+      console.log("[import/commit] ERROR:", message, "Row:", i + 1, "Row payload:", entry.text.slice(0, 800));
     }
   }
 
-  await supabase.from("import_batches").update({ rows_imported: imported, rows_failed: failed }).eq("id", batchId);
-  return NextResponse.json({ ok: true, batchId, rowsImported: imported, rowsFailed: failed, results: rowResults });
+  const { error: batchUpdErr } = await supabase
+    .from("import_batches")
+    .update({
+      rows_imported: imported,
+      rows_failed: failed,
+      error_log: errors.length ? errors : null,
+    })
+    .eq("id", batchId);
+
+  if (batchUpdErr) {
+    console.error("[import/commit] import_batches update failed (error_log may be missing in DB):", batchUpdErr.message, batchUpdErr);
+    const { error: retryErr } = await supabase
+      .from("import_batches")
+      .update({
+        rows_imported: imported,
+        rows_failed: failed,
+      })
+      .eq("id", batchId);
+    if (retryErr) {
+      console.error("[import/commit] Retry update (counts only) failed:", retryErr.message, retryErr);
+    }
+  }
+
+  return NextResponse.json({
+    ok: true,
+    batchId,
+    rowsImported: imported,
+    rowsFailed: failed,
+    errorLog: errors,
+    results: rowResults,
+  });
 }

@@ -11,7 +11,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   const templateId = id?.trim();
   if (!templateId) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

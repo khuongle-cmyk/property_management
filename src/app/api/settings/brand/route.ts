@@ -29,7 +29,7 @@ const OWNER_EDITABLE_FIELDS = new Set([
 type TenantMembership = { tenant_id: string | null; role: string | null };
 
 async function getOwnerTenantAndPlan() {
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

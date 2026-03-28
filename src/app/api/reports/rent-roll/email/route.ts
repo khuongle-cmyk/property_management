@@ -34,7 +34,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid email" }, { status: 400 });
   }
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

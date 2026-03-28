@@ -24,7 +24,7 @@ export async function POST(req: Request) {
   const sourceProposalId = body.sourceProposalId?.trim();
   if (!sourceProposalId) return NextResponse.json({ error: "sourceProposalId is required" }, { status: 400 });
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

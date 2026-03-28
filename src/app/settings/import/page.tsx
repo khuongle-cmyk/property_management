@@ -7,6 +7,7 @@ import type { ImportType } from "@/lib/historical-import/types";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { loadScopedPropertiesForUser } from "@/lib/properties/scoped";
 import { formatPropertyLabel } from "@/lib/properties/label";
+import { parseTuloslaskelmaFromArrayBuffer } from "@/lib/procountor/tuloslaskelma";
 import { formatDateTime } from "@/lib/date/format";
 
 type Software = "generic" | "procountor" | "netvisor" | "visma";
@@ -64,6 +65,7 @@ type Batch = {
   file_name: string | null;
   rows_imported: number;
   rows_failed: number;
+  error_log?: Array<{ row: number; error: string; text?: string }> | null;
   imported_by: string;
   created_at: string;
 };
@@ -151,230 +153,11 @@ function mapRow(row: Record<string, unknown>, software: Software): PreviewRow {
   return out;
 }
 
-const FI_MONTH_PREFIX_TO_NUMBER: Record<string, number> = {
-  tammi: 1,
-  helmi: 2,
-  maalis: 3,
-  huhti: 4,
-  touko: 5,
-  "kesä": 6,
-  kesa: 6,
-  heinä: 7,
-  heina: 7,
-  elo: 8,
-  syys: 9,
-  loka: 10,
-  marras: 11,
-  joulu: 12,
-};
-
-const PROCOUNTOR_REVENUE_ACCOUNT_MAP: Record<string, RevenueCategory> = {
-  "3010": "office_rent",
-  "3020": "hot_desk_revenue",
-  "3030": "virtual_office_revenue",
-  "3040": "meeting_room_revenue",
-  "3050": "venue_revenue",
-  "3060": "furniture_revenue",
-  "3100": "additional_services",
-  // 3101 Komissiomyynti (commission revenue) is temporarily grouped under
-  // additional services until a dedicated commission revenue field exists.
-  "3101": "additional_services",
-  "3590": "other_revenue",
-};
-
-const PROCOUNTOR_COST_ACCOUNT_MAP: Record<string, string> = {
-  "4000": "purchases",
-  "4001": "cleaning_supplies",
-  "4002": "cleaning_equipment",
-  "4003": "catering",
-  "40031": "catering_billable",
-  "4450": "subcontracting",
-  "4451": "subcontracting_admin",
-  "4480": "hired_labor",
-  "4491": "premises_cleaning",
-  "4492": "premises_mats",
-  "4493": "premises_it",
-  "44933": "data_transfer",
-  "4494": "premises_maintenance",
-  "44941": "premises_maintenance_billable",
-  "4495": "postal",
-  "44951": "postal_billable",
-  "4496": "event_costs",
-  "4500": "rent",
-  "4501": "electricity",
-  "4600": "premises_costs",
-  "4601": "printing",
-  "4602": "equipment_costs",
-  "4603": "equipment_rental",
-  "4605": "coffee_machine",
-  "4610": "client_entertainment",
-  "5000": "salaries",
-  "5100": "salary_additions",
-  "5300": "holiday_pay",
-  "5400": "benefits_in_kind",
-  "5990": "benefits_contra",
-  "6130": "pension",
-  "6300": "social_security",
-  "6400": "accident_insurance",
-  "6410": "unemployment_insurance",
-  "7010": "staff_meetings",
-  "7030": "occupational_health",
-  "7070": "meal_benefits",
-  "7160": "staff_gifts",
-  "7170": "other_staff_costs",
-  "7610": "vehicle_costs",
-  "7700": "it_software",
-  "7710": "equipment_leasing",
-  "7770": "other_equipment",
-  "7800": "travel",
-  "8000": "sales_costs",
-  "8050": "marketing",
-  "8380": "accounting",
-  "8451": "unallocated_invoices",
-  "8500": "telecom",
-  "8560": "banking_costs",
-  "8600": "insurance",
-  "8680": "other_admin",
-  "8890": "reconciliation",
-  "9160": "financial_income",
-  "9440": "interest_costs",
-};
-
-function parseFinnishAmount(value: unknown): number {
-  if (value == null) return 0;
-  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
-  const raw = String(value).trim();
-  if (!raw) return 0;
-  const normalized = raw.replace(/\s+/g, "").replace(/\./g, "").replace(",", ".");
-  const n = Number(normalized);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function parseTuloslaskelmaMonthHeader(h: unknown): { year: number; month: number } | null {
-  const text = String(h ?? "").trim().toLowerCase();
-  if (!text) return null;
-  if (/^\d{1,2}\/\d{4}\s*-\s*\d{1,2}\/\d{4}$/.test(text)) return null;
-  const m = text.match(/^([a-zåäö]+)\.?(\d{2})$/i);
-  if (!m) return null;
-  const month = FI_MONTH_PREFIX_TO_NUMBER[m[1]];
-  if (!month) return null;
-  const yy = Number(m[2]);
-  if (!Number.isInteger(yy)) return null;
-  return { year: yy >= 70 ? 1900 + yy : 2000 + yy, month };
-}
-
 async function fileToRowsProcountorIncomeStatement(file: File, propertyId: string | null): Promise<PreviewRow[]> {
   const bytes = await file.arrayBuffer();
-  const text = new TextDecoder("iso-8859-1").decode(bytes);
-  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-
-  const monthByCol: Array<{ colIdx: number; month: number; year: number }> = [];
-  let businessId: string | null = null;
-  let propertyRaw: string | null = null;
-  let year: number | null = null;
-  let rangeFrom: string | null = null;
-  let rangeTo: string | null = null;
-  let foundMonthHeader = false;
-  const out: PreviewRow[] = [];
-
-  for (const line of lines) {
-    const cols = line.split(";").map((c) => c.trim());
-    const first = cols[0] ?? "";
-    const lowerFirst = first.toLowerCase();
-    const second = cols[1] ?? "";
-
-    if (lowerFirst === "y-tunnus") businessId = second || null;
-    if (lowerFirst === "nimikkeet") propertyRaw = second || null;
-    if (lowerFirst === "tositepvm") {
-      const range = second.match(/(\d{2})\.(\d{2})\.(\d{4})\s*-\s*(\d{2})\.(\d{2})\.(\d{4})/);
-      if (range) {
-        rangeFrom = `${range[3]}-${range[2]}-${range[1]}`;
-        rangeTo = `${range[6]}-${range[5]}-${range[4]}`;
-      }
-      const m = second.match(/(\d{4})\s*$/);
-      if (m) year = Number(m[1]);
-    }
-
-    if (!foundMonthHeader) {
-      const candidates: Array<{ colIdx: number; month: number; year: number }> = [];
-      for (let i = 1; i < cols.length; i++) {
-        const c = cols[i];
-        const m = c.match(/^(\d{1,2})\/(\d{4})$/);
-        if (!m) continue;
-        candidates.push({ colIdx: i, month: Number(m[1]), year: Number(m[2]) });
-      }
-      if (candidates.length >= 12) {
-        monthByCol.splice(0, monthByCol.length, ...candidates.slice(0, 12));
-        foundMonthHeader = true;
-      }
-      continue;
-    }
-
-    const accountMatch = first.match(/(\d{4,5})\s*,\s*(.+)$/);
-    if (!accountMatch) continue;
-    const accountCode = accountMatch[1];
-    const accountName = accountMatch[2]?.trim() ?? "";
-
-    for (const mc of monthByCol) {
-      const value = parseFinnishAmount(cols[mc.colIdx] ?? "");
-      if (!value) continue;
-      const revenueCategory = PROCOUNTOR_REVENUE_ACCOUNT_MAP[accountCode];
-      const costType = PROCOUNTOR_COST_ACCOUNT_MAP[accountCode];
-      if (!revenueCategory && !costType) continue;
-      if (revenueCategory) {
-        const amount = Math.abs(value);
-        const row: PreviewRow = {
-          property_id: propertyId ?? null,
-          property: propertyRaw,
-          company_business_id: businessId,
-          account_code: accountCode,
-          account_name: accountName,
-          category: revenueCategory,
-          year: mc.year,
-          month: mc.month,
-          office_rent_revenue: 0,
-          meeting_room_revenue: 0,
-          hot_desk_revenue: 0,
-          venue_revenue: 0,
-          virtual_office_revenue: 0,
-          furniture_revenue: 0,
-          additional_services_revenue: 0,
-          total_revenue: amount,
-        };
-        if (revenueCategory === "office_rent") row.office_rent_revenue = amount;
-        else if (revenueCategory === "meeting_room_revenue") row.meeting_room_revenue = amount;
-        else if (revenueCategory === "hot_desk_revenue") row.hot_desk_revenue = amount;
-        else if (revenueCategory === "venue_revenue") row.venue_revenue = amount;
-        else if (revenueCategory === "virtual_office_revenue") row.virtual_office_revenue = amount;
-        else if (revenueCategory === "furniture_revenue") row.furniture_revenue = amount;
-        else row.additional_services_revenue = amount;
-        out.push(row);
-      } else if (costType) {
-        const amountAbs = Math.abs(value);
-        const lastDay = new Date(Date.UTC(mc.year, mc.month, 0)).toISOString().slice(0, 10);
-        out.push({
-          property_id: propertyId ?? null,
-          property: propertyRaw,
-          company_business_id: businessId,
-          account_code: accountCode,
-          account_name: accountName,
-          cost_type: costType,
-          description: accountName,
-          date: lastDay,
-          year: mc.year,
-          month: mc.month,
-          amount_ex_vat: amountAbs,
-          vat_amount: 0,
-          total_amount: amountAbs,
-        });
-      }
-    }
-  }
-  return out.map((r) => ({
-    ...r,
-    __detected_range_from: rangeFrom,
-    __detected_range_to: rangeTo,
-  }));
+  return parseTuloslaskelmaFromArrayBuffer(bytes, propertyId, {
+    debug: process.env.NODE_ENV === "development",
+  });
 }
 
 async function fileToRows(file: File, software: Software): Promise<PreviewRow[]> {
@@ -727,6 +510,8 @@ export default function SettingsImportPage() {
       let failedRev = 0;
       let importedCost = 0;
       let failedCost = 0;
+      let revenueErrorSample = "";
+      let costErrorSample = "";
       if (revenueRows.length) {
         const rr = await fetch("/api/settings/import/commit", {
           method: "POST",
@@ -742,14 +527,26 @@ export default function SettingsImportPage() {
             procountorExportType,
           }),
         });
-        const rj = (await rr.json()) as { error?: string; rowsImported?: number; rowsFailed?: number };
+        const rj = (await rr.json()) as {
+          error?: string;
+          rowsImported?: number;
+          rowsFailed?: number;
+          errorLog?: Array<{ row: number; error: string }>;
+        };
         if (!rr.ok) {
           setLoading(false);
-          setMsg(rj.error ?? "Revenue import failed");
+          const errTail =
+            rj.errorLog?.length && rj.errorLog.length > 0
+              ? ` — ${rj.errorLog.slice(0, 8).map((e) => `#${e.row}: ${e.error}`).join(" | ")}`
+              : "";
+          setMsg(`${rj.error ?? "Revenue import failed"}${errTail}`);
           return;
         }
         importedRev = rj.rowsImported ?? 0;
         failedRev = rj.rowsFailed ?? 0;
+        if (failedRev > 0 && rj.errorLog?.length) {
+          revenueErrorSample = ` Revenue errors (sample): ${rj.errorLog.slice(0, 6).map((e) => `#${e.row}: ${e.error}`).join(" | ")}`;
+        }
       }
       if (costRows.length) {
         const cr = await fetch("/api/settings/import/commit", {
@@ -766,18 +563,30 @@ export default function SettingsImportPage() {
             procountorExportType,
           }),
         });
-        const cj = (await cr.json()) as { error?: string; rowsImported?: number; rowsFailed?: number };
+        const cj = (await cr.json()) as {
+          error?: string;
+          rowsImported?: number;
+          rowsFailed?: number;
+          errorLog?: Array<{ row: number; error: string }>;
+        };
         if (!cr.ok) {
           setLoading(false);
-          setMsg(cj.error ?? "Cost import failed");
+          const errTail =
+            cj.errorLog?.length && cj.errorLog.length > 0
+              ? ` — ${cj.errorLog.slice(0, 8).map((e) => `#${e.row}: ${e.error}`).join(" | ")}`
+              : "";
+          setMsg(`${cj.error ?? "Cost import failed"}${errTail}`);
           return;
         }
         importedCost = cj.rowsImported ?? 0;
         failedCost = cj.rowsFailed ?? 0;
+        if (failedCost > 0 && cj.errorLog?.length) {
+          costErrorSample = ` Cost errors (sample): ${cj.errorLog.slice(0, 6).map((e) => `#${e.row}: ${e.error}`).join(" | ")}`;
+        }
       }
       setLoading(false);
       setMsg(
-        `Import summary: Revenue records ${importedRev} (failed ${failedRev}), Cost records ${importedCost} (failed ${failedCost}), Matched property ${propertyName || pid}.`,
+        `Import summary: Revenue records ${importedRev} (failed ${failedRev}), Cost records ${importedCost} (failed ${failedCost}), Matched property ${propertyName || pid}.${revenueErrorSample}${costErrorSample}`,
       );
       await loadHistory();
       return;
@@ -943,13 +752,26 @@ export default function SettingsImportPage() {
         procountorExportType,
       }),
     });
-    const j = (await r.json()) as { error?: string; rowsImported?: number; rowsFailed?: number };
+    const j = (await r.json()) as {
+      error?: string;
+      rowsImported?: number;
+      rowsFailed?: number;
+      errorLog?: Array<{ row: number; error: string }>;
+    };
     setLoading(false);
     if (!r.ok) {
-      setMsg(j.error ?? "Import failed");
+      const errTail =
+        j.errorLog?.length && j.errorLog.length > 0
+          ? ` — ${j.errorLog.slice(0, 8).map((e) => `#${e.row}: ${e.error}`).join(" | ")}`
+          : "";
+      setMsg(`${j.error ?? "Import failed"}${errTail}`);
       return;
     }
-    setMsg(`Import complete: ${j.rowsImported ?? 0} imported, ${j.rowsFailed ?? 0} failed.`);
+    const failTail =
+      (j.rowsFailed ?? 0) > 0 && j.errorLog?.length
+        ? ` Sample: ${j.errorLog.slice(0, 6).map((e) => `#${e.row}: ${e.error}`).join(" | ")}`
+        : "";
+    setMsg(`Import complete: ${j.rowsImported ?? 0} imported, ${j.rowsFailed ?? 0} failed.${failTail}`);
     await loadHistory();
   }
 
@@ -1474,7 +1296,7 @@ export default function SettingsImportPage() {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr>
-                  {["Date", "Type", "Source", "File", "Imported", "Failed", "By", "Actions"].map((h) => (
+                  {["Date", "Type", "Source", "File", "Imported", "Failed", "Errors", "By", "Actions"].map((h) => (
                     <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: 6 }}>{h}</th>
                   ))}
                 </tr>
@@ -1488,6 +1310,32 @@ export default function SettingsImportPage() {
                     <td style={{ borderBottom: "1px solid #f1f5f9", padding: 6 }}>{b.file_name ?? "—"}</td>
                     <td style={{ borderBottom: "1px solid #f1f5f9", padding: 6 }}>{b.rows_imported}</td>
                     <td style={{ borderBottom: "1px solid #f1f5f9", padding: 6 }}>{b.rows_failed}</td>
+                    <td
+                      style={{
+                        borderBottom: "1px solid #f1f5f9",
+                        padding: 6,
+                        maxWidth: 280,
+                        wordBreak: "break-word",
+                        fontSize: 11,
+                        color: "#64748b",
+                      }}
+                      title={
+                        Array.isArray(b.error_log) && b.error_log.length
+                          ? b.error_log
+                              .map((e) => `#${e.row}: ${e.error}${e.text ? `\n${String(e.text).slice(0, 2000)}` : ""}`)
+                              .join("\n\n---\n\n")
+                          : undefined
+                      }
+                    >
+                      {Array.isArray(b.error_log) && b.error_log.length ? (
+                        <>
+                          {b.error_log.length} — {String(b.error_log[0]?.error ?? "").slice(0, 120)}
+                          {b.error_log.length > 1 ? "…" : ""}
+                        </>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                     <td style={{ borderBottom: "1px solid #f1f5f9", padding: 6 }}>{b.imported_by.slice(0, 8)}…</td>
                     <td style={{ borderBottom: "1px solid #f1f5f9", padding: 6 }}>
                       <button type="button" onClick={() => void rollback(b.id)}>Rollback</button>

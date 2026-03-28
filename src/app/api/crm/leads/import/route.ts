@@ -50,7 +50,7 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 async function resolvePropertyId(
-  supabase: ReturnType<typeof createSupabaseServerClient>,
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
   tenantId: string,
   raw: string | null | undefined
 ): Promise<string | null> {
@@ -100,7 +100,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "duplicateMode must be skip, update, or error" }, { status: 400 });
   }
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

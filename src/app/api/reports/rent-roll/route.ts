@@ -51,7 +51,7 @@ export async function POST(req: Request) {
       ? Number(body.revenueTargetMonthly)
       : null;
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

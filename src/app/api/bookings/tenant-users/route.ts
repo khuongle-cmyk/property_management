@@ -3,7 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 
 async function canListTenantUsers(
-  supabase: ReturnType<typeof createSupabaseServerClient>,
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
   userId: string,
   tenantId: string
 ): Promise<boolean> {
@@ -31,7 +31,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "tenantId is required" }, { status: 400 });
   }
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

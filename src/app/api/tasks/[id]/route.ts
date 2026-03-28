@@ -12,7 +12,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const { id } = await params;
   const taskId = id?.trim();
   if (!taskId) return NextResponse.json({ error: "Missing task id" }, { status: 400 });
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

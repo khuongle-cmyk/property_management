@@ -31,7 +31,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -101,7 +101,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   const entryId = id?.trim();
   if (!entryId) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export async function GET() {
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -10,7 +10,9 @@ export async function GET() {
 
   const { data: rows, error } = await supabase
     .from("import_batches")
-    .select("id, tenant_id, property_id, import_type, source_software, file_name, rows_imported, rows_failed, imported_by, created_at")
+    .select(
+      "id, tenant_id, property_id, import_type, source_software, file_name, rows_imported, rows_failed, error_log, imported_by, created_at",
+    )
     .order("created_at", { ascending: false })
     .limit(200);
 

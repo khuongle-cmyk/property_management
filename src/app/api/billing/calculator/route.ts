@@ -4,7 +4,7 @@ import { canViewTenant, firstManageableTenant, getMembershipScope } from "@/lib/
 import { computePricingBreakdown, countTenantUsage, loadPlan, monthStartIso } from "@/lib/billing/pricing";
 
 export async function POST(req: Request) {
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const scope = await getMembershipScope(supabase);
   if (!scope) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

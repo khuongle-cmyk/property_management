@@ -13,7 +13,7 @@ function nextInvoiceNumber(now = new Date()): string {
 }
 
 export async function POST(req: Request) {
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const scope = await getMembershipScope(supabase);
   if (!scope) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const body = (await req.json()) as { tenantId?: string; billingMonth?: string; dueDate?: string; notes?: string; recipientEmail?: string; action?: "create" | "send" };

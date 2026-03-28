@@ -4,7 +4,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 type Body = { batchId?: string };
 
 export async function POST(req: Request) {
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

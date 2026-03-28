@@ -213,7 +213,7 @@ async function anthropicIntent(
 }
 
 async function actionCheckAvailability(
-  supabase: ReturnType<typeof createSupabaseServerClient>,
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
   allowedPropertyIds: string[],
   propertiesById: Map<string, PropertyRow>,
   parameters: Record<string, unknown>,
@@ -277,7 +277,7 @@ async function actionCheckAvailability(
 }
 
 async function actionCreateBooking(
-  supabase: ReturnType<typeof createSupabaseServerClient>,
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
   userId: string,
   allowedPropertyIds: string[],
   propertiesById: Map<string, PropertyRow>,
@@ -340,7 +340,7 @@ async function actionCreateBooking(
 }
 
 async function actionOpenInvoices(
-  supabase: ReturnType<typeof createSupabaseServerClient>,
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
   tenantIds: string[],
   allowedPropertyIds: string[],
 ) {
@@ -372,7 +372,7 @@ async function actionOpenInvoices(
 }
 
 export async function POST(req: Request) {
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
