@@ -40,13 +40,30 @@ export const FEE_CALC_MODE_LABELS: Record<string, string> = {
 export const FIXED_PERIODS = ["monthly", "annual"] as const;
 export type FixedPeriod = (typeof FIXED_PERIODS)[number];
 
-export const PERCENTAGE_BASES = ["total_revenue", "office_rent_only", "total_costs"] as const;
+/** Stored in administration_cost_settings.percentage_basis — aligned with net-income revenue/cost lines */
+export const PERCENTAGE_BASES = [
+  "total_revenue",
+  "total_costs",
+  "office_rent_only",
+  "meeting_room_revenue",
+  "hot_desk_revenue",
+  "virtual_office_revenue",
+  "furniture_revenue",
+  "additional_services_revenue",
+  "hr_costs",
+] as const;
 export type PercentageBasis = (typeof PERCENTAGE_BASES)[number];
 
 export const PERCENTAGE_BASIS_LABELS: Record<string, string> = {
   total_revenue: "Total revenue",
-  office_rent_only: "Office rent only",
   total_costs: "Total costs",
+  office_rent_only: "Office rent only",
+  meeting_room_revenue: "Meeting room revenue",
+  hot_desk_revenue: "Hot desk revenue",
+  virtual_office_revenue: "Virtual office revenue",
+  furniture_revenue: "Furniture revenue",
+  additional_services_revenue: "Additional services revenue",
+  hr_costs: "HR costs (staff only)",
 };
 
 const LEGACY_CATEGORY = new Set<string>(ADMIN_FEE_TYPES);

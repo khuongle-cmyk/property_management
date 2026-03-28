@@ -21,8 +21,64 @@ export type AdministrationCostSettingRow = {
   is_active: boolean | null;
 };
 
-export type AdminFeeBasis = { rev: number; office: number; costs: number };
+/**
+ * Numeric inputs for percentage fees — mirrors net-income row aggregates (historical_revenue + costs total).
+ */
+export type AdminFeeBasis = {
+  rev: number;
+  office: number;
+  meeting: number;
+  hotDesk: number;
+  virtualOffice: number;
+  furniture: number;
+  additionalServices: number;
+  costs: number;
+  /** historical_costs staff rows — percentage_basis hr_costs */
+  hrStaffCosts: number;
+};
+
 type Basis = AdminFeeBasis;
+
+export function adminFeeBasisFromNetRow(row: NetIncomeMonthRow): AdminFeeBasis {
+  return {
+    rev: row.revenue.total,
+    office: row.revenue.office,
+    meeting: row.revenue.meeting,
+    hotDesk: row.revenue.hotDesk,
+    virtualOffice: row.revenue.virtualOffice,
+    furniture: row.revenue.furniture,
+    additionalServices: row.revenue.additionalServices,
+    costs: row.costs.total,
+    hrStaffCosts: row.hrStaffCosts ?? 0,
+  };
+}
+
+/** Amount (€) for a given percentage_basis key */
+export function basisAmountFromAdminFeeBasis(basis: AdminFeeBasis, percentage_basis: string | null | undefined): number {
+  const b = String(percentage_basis ?? "total_revenue");
+  switch (b) {
+    case "total_revenue":
+      return basis.rev;
+    case "total_costs":
+      return basis.costs;
+    case "office_rent_only":
+      return basis.office;
+    case "meeting_room_revenue":
+      return basis.meeting;
+    case "hot_desk_revenue":
+      return basis.hotDesk;
+    case "virtual_office_revenue":
+      return basis.virtualOffice;
+    case "furniture_revenue":
+      return basis.furniture;
+    case "additional_services_revenue":
+      return basis.additionalServices;
+    case "hr_costs":
+      return basis.hrStaffCosts;
+    default:
+      return basis.rev;
+  }
+}
 
 export function clampAdminFeeAmount(raw: number, min: number | null | undefined, max: number | null | undefined): number {
   let x = raw;
@@ -39,14 +95,11 @@ function fixedMonthlyPart(setting: AdministrationCostSettingRow): number {
   return fixed;
 }
 
-/** Percentage part using percentage_basis on revenue-side bases (total revenue, office, or costs as basis) */
+/** Percentage part using percentage_basis (any known revenue/cost line) */
 function percentagePartFromBasis(setting: AdministrationCostSettingRow, basis: Basis): number {
   const pct = Number(setting.percentage_value);
   if (!Number.isFinite(pct) || pct <= 0 || !setting.percentage_basis) return 0;
-  const b = setting.percentage_basis;
-  let base = basis.rev;
-  if (b === "office_rent_only") base = basis.office;
-  else if (b === "total_costs") base = basis.costs;
+  const base = basisAmountFromAdminFeeBasis(basis, setting.percentage_basis);
   return (pct / 100) * base;
 }
 
@@ -108,11 +161,7 @@ export function computeRawAdminFee(setting: AdministrationCostSettingRow, basis:
 }
 
 function basisFromRow(row: NetIncomeMonthRow): Basis {
-  return {
-    rev: row.revenue.total,
-    office: row.revenue.office,
-    costs: row.costs.total,
-  };
+  return adminFeeBasisFromNetRow(row);
 }
 
 function aggregateBasis(rows: NetIncomeMonthRow[]): Basis {
@@ -120,27 +169,39 @@ function aggregateBasis(rows: NetIncomeMonthRow[]): Basis {
     (acc, r) => ({
       rev: acc.rev + r.revenue.total,
       office: acc.office + r.revenue.office,
+      meeting: acc.meeting + r.revenue.meeting,
+      hotDesk: acc.hotDesk + r.revenue.hotDesk,
+      virtualOffice: acc.virtualOffice + r.revenue.virtualOffice,
+      furniture: acc.furniture + r.revenue.furniture,
+      additionalServices: acc.additionalServices + r.revenue.additionalServices,
       costs: acc.costs + r.costs.total,
+      hrStaffCosts: acc.hrStaffCosts + (r.hrStaffCosts ?? 0),
     }),
-    { rev: 0, office: 0, costs: 0 },
+    {
+      rev: 0,
+      office: 0,
+      meeting: 0,
+      hotDesk: 0,
+      virtualOffice: 0,
+      furniture: 0,
+      additionalServices: 0,
+      costs: 0,
+      hrStaffCosts: 0,
+    },
   );
 }
 
+function rowWeightForAllocation(row: NetIncomeMonthRow, percentageBasisKey: string): number {
+  return basisAmountFromAdminFeeBasis(adminFeeBasisFromNetRow(row), percentageBasisKey);
+}
+
 /**
- * Split total portfolio fee across rows using revenue, office, or cost share.
+ * Split total portfolio fee across rows using the same basis as the percentage (or total revenue for fixed-only).
  */
-function allocateByWeights(
-  rows: NetIncomeMonthRow[],
-  totalFee: number,
-  mode: "revenue" | "office" | "costs",
-): Map<string, number> {
+function allocateByWeights(rows: NetIncomeMonthRow[], totalFee: number, percentageBasisKey: string): Map<string, number> {
   const out = new Map<string, number>();
   if (rows.length === 0 || totalFee === 0) return out;
-  const weights = rows.map((r) => {
-    if (mode === "office") return r.revenue.office;
-    if (mode === "costs") return r.costs.total;
-    return r.revenue.total;
-  });
+  const weights = rows.map((r) => rowWeightForAllocation(r, percentageBasisKey));
   const sumW = weights.reduce((a, b) => a + b, 0);
   if (sumW <= 0) {
     const each = totalFee / rows.length;
@@ -161,16 +222,14 @@ function allocateByWeights(
   return out;
 }
 
-function allocationModeForSetting(setting: AdministrationCostSettingRow): "revenue" | "office" | "costs" {
+/** Which percentage_basis key to use when splitting portfolio fees across properties */
+function allocationWeightKeyForSetting(setting: AdministrationCostSettingRow): string {
   const mode = getEffectiveCalculationMode(setting);
-  if (mode === "fixed") return "revenue";
+  if (mode === "fixed") return "total_revenue";
 
-  if (setting.fee_type === "percentage_of_costs") return "costs";
+  if (setting.fee_type === "percentage_of_costs") return "total_costs";
 
-  const b = String(setting.percentage_basis ?? "total_revenue");
-  if (b === "office_rent_only") return "office";
-  if (b === "total_costs") return "costs";
-  return "revenue";
+  return String(setting.percentage_basis ?? "total_revenue");
 }
 
 function portfolioFeeTotal(setting: AdministrationCostSettingRow, rowsInMonth: NetIncomeMonthRow[]): number {
@@ -267,8 +326,8 @@ export function mergeAdministrationCostSettingsIntoReport(
     for (const setting of portfolioSettings) {
       const total = portfolioFeeTotal(setting, rowsInGroup);
       if (total === 0) continue;
-      const mode = allocationModeForSetting(setting);
-      const alloc = allocateByWeights(rowsInGroup, total, mode);
+      const weightKey = allocationWeightKeyForSetting(setting);
+      const alloc = allocateByWeights(rowsInGroup, total, weightKey);
       for (const r of rowsInGroup) {
         const amt = alloc.get(`${r.propertyId}|${r.monthKey}`) ?? 0;
         amountByKey.set(`${r.propertyId}|${r.monthKey}|${setting.id}`, amt);
@@ -356,6 +415,63 @@ export function mergeAdministrationCostSettingsIntoReport(
   };
 }
 
+function monthKeyFromHistoricalYm(year: number, month: number): string {
+  return `${year}-${String(month).padStart(2, "0")}`;
+}
+
+/**
+ * Sum historical_costs.amount_ex_vat where cost_type = 'staff', keyed `${propertyId}|${monthKey}` (monthKey = YYYY-MM).
+ */
+async function loadHrStaffCostsByPropertyMonth(
+  supabase: SupabaseClient,
+  propertyIds: string[],
+  monthKeys: string[],
+): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  if (propertyIds.length === 0 || monthKeys.length === 0) return map;
+
+  const keySet = new Set(monthKeys);
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const mk of monthKeys) {
+    const parts = mk.split("-");
+    if (parts.length < 2) continue;
+    const y = Number(parts[0]);
+    const mo = Number(parts[1]);
+    if (!Number.isFinite(y) || !Number.isFinite(mo)) continue;
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+  }
+  if (!Number.isFinite(minY) || !Number.isFinite(maxY)) return map;
+
+  const { data, error } = await supabase
+    .from("historical_costs")
+    .select("property_id, year, month, amount_ex_vat")
+    .eq("cost_type", "staff")
+    .in("property_id", propertyIds)
+    .gte("year", minY)
+    .lte("year", maxY);
+
+  if (error) {
+    if (error.code === "42P01") return map;
+    console.warn("loadHrStaffCostsByPropertyMonth:", error.message);
+    return map;
+  }
+
+  for (const r of data ?? []) {
+    const pid = r.property_id as string | null;
+    if (!pid) continue;
+    const y = Number(r.year);
+    const mo = Number(r.month);
+    if (!Number.isFinite(y) || !Number.isFinite(mo)) continue;
+    const mk = monthKeyFromHistoricalYm(y, mo);
+    if (!keySet.has(mk)) continue;
+    const k = `${pid}|${mk}`;
+    map.set(k, (map.get(k) ?? 0) + (Number(r.amount_ex_vat) || 0));
+  }
+  return map;
+}
+
 export async function attachAdministrationCostFees(
   supabase: SupabaseClient,
   report: NetIncomeReportModel,
@@ -397,5 +513,15 @@ export async function attachAdministrationCostFees(
   }
 
   const settings = (settingRows ?? []) as AdministrationCostSettingRow[];
-  return mergeAdministrationCostSettingsIntoReport(report, settings, propertyTenantMap);
+
+  const staffMap = await loadHrStaffCostsByPropertyMonth(supabase, allowedPropertyIds, report.monthKeys);
+  const reportWithStaff: NetIncomeReportModel = {
+    ...report,
+    rows: report.rows.map((row) => ({
+      ...row,
+      hrStaffCosts: staffMap.get(`${row.propertyId}|${row.monthKey}`) ?? 0,
+    })),
+  };
+
+  return mergeAdministrationCostSettingsIntoReport(reportWithStaff, settings, propertyTenantMap);
 }

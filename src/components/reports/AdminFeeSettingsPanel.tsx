@@ -15,6 +15,7 @@ import {
   listColumnCalculationLabel,
 } from "@/lib/reports/admin-fee-constants";
 import {
+  basisAmountFromAdminFeeBasis,
   computeClampedAdminFeeForBasis,
   computeRawAdminFee,
   formatAdminFeeAmountOrPercent,
@@ -27,7 +28,8 @@ type TenantOpt = { id: string; name: string | null };
 type PropertyOpt = { id: string; name: string | null; label: string; tenantName?: string | null };
 
 type Props = {
-  dateRange: { start: string; end: string };
+  /** Report scope end date (YYYY-MM-DD from date input); preview uses this month as `month_key`. */
+  endDate: string;
 };
 
 type FormDraft = {
@@ -116,7 +118,14 @@ function draftToPseudoSetting(d: FormDraft, tenantId: string): AdministrationCos
   };
 }
 
-export function AdminFeeSettingsPanel({ dateRange: _dateRange }: Props) {
+export function AdminFeeSettingsPanel({ endDate }: Props) {
+  /** YYYY-MM for preview-basis (same calendar month as report end date). */
+  const previewMonthKey = useMemo(() => {
+    const d = endDate.trim();
+    if (d.length >= 7 && /^\d{4}-\d{2}/.test(d)) return d.substring(0, 7);
+    return "";
+  }, [endDate]);
+
   const [tenants, setTenants] = useState<TenantOpt[]>([]);
   const [tenantId, setTenantId] = useState("");
   const [properties, setProperties] = useState<PropertyOpt[]>([]);
@@ -128,8 +137,12 @@ export function AdminFeeSettingsPanel({ dateRange: _dateRange }: Props) {
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<FormDraft>(() => emptyDraft());
 
+  /** Property scope for preview API — must match dropdown (non-empty = single property). */
+  const selectedPropertyId = useMemo(() => (draft.property_id ?? "").trim(), [draft.property_id]);
+
   const [previewBasis, setPreviewBasis] = useState<{
     monthKey: string | null;
+    basisAmounts: Record<string, number>;
     revenueTotal: number;
     officeRent: number;
     totalCosts: number;
@@ -195,9 +208,13 @@ export function AdminFeeSettingsPanel({ dateRange: _dateRange }: Props) {
   const loadPreviewBasis = useCallback(async () => {
     if (!tenantId) return;
     try {
-      const res = await fetch(`/api/admin-fees/preview-basis?tenant_id=${encodeURIComponent(tenantId)}`);
+      const params = new URLSearchParams({ tenant_id: tenantId });
+      if (previewMonthKey) params.set("month_key", previewMonthKey);
+      if (selectedPropertyId !== "") params.set("property_id", selectedPropertyId);
+      const res = await fetch(`/api/admin-fees/preview-basis?${params.toString()}`);
       const json = (await res.json()) as {
         monthKey?: string | null;
+        basisAmounts?: Record<string, number>;
         revenueTotal?: number;
         officeRent?: number;
         totalCosts?: number;
@@ -205,17 +222,46 @@ export function AdminFeeSettingsPanel({ dateRange: _dateRange }: Props) {
         error?: string;
       };
       if (!res.ok) throw new Error(json.error ?? "Preview failed");
+      const basisAmounts = json.basisAmounts ?? {
+        total_revenue: json.revenueTotal ?? 0,
+        total_costs: json.totalCosts ?? 0,
+        office_rent_only: json.officeRent ?? 0,
+        meeting_room_revenue: 0,
+        hot_desk_revenue: 0,
+        virtual_office_revenue: 0,
+        furniture_revenue: 0,
+        additional_services_revenue: 0,
+        hr_costs: 0,
+      };
       setPreviewBasis({
         monthKey: json.monthKey ?? null,
-        revenueTotal: json.revenueTotal ?? 0,
-        officeRent: json.officeRent ?? 0,
-        totalCosts: json.totalCosts ?? 0,
+        basisAmounts,
+        revenueTotal: json.revenueTotal ?? basisAmounts.total_revenue ?? 0,
+        officeRent: json.officeRent ?? basisAmounts.office_rent_only ?? 0,
+        totalCosts: json.totalCosts ?? basisAmounts.total_costs ?? 0,
         note: json.note,
       });
     } catch {
-      setPreviewBasis({ monthKey: null, revenueTotal: 100000, officeRent: 40000, totalCosts: 35000, note: "Illustrative" });
+      setPreviewBasis({
+        monthKey: null,
+        basisAmounts: {
+          total_revenue: 100000,
+          total_costs: 35000,
+          office_rent_only: 40000,
+          meeting_room_revenue: 5000,
+          hot_desk_revenue: 3000,
+          virtual_office_revenue: 2000,
+          furniture_revenue: 1500,
+          additional_services_revenue: 800,
+          hr_costs: 18500,
+        },
+        revenueTotal: 100000,
+        officeRent: 40000,
+        totalCosts: 35000,
+        note: "Illustrative",
+      });
     }
-  }, [tenantId]);
+  }, [tenantId, selectedPropertyId, previewMonthKey]);
 
   useEffect(() => {
     void loadProperties(tenantId);
@@ -230,7 +276,17 @@ export function AdminFeeSettingsPanel({ dateRange: _dateRange }: Props) {
   }, [loadPreviewBasis]);
 
   const previewBasisAgg: AdminFeeBasis | null = previewBasis
-    ? { rev: previewBasis.revenueTotal, office: previewBasis.officeRent, costs: previewBasis.totalCosts }
+    ? {
+        rev: previewBasis.basisAmounts.total_revenue ?? previewBasis.revenueTotal,
+        office: previewBasis.basisAmounts.office_rent_only ?? previewBasis.officeRent,
+        meeting: previewBasis.basisAmounts.meeting_room_revenue ?? 0,
+        hotDesk: previewBasis.basisAmounts.hot_desk_revenue ?? 0,
+        virtualOffice: previewBasis.basisAmounts.virtual_office_revenue ?? 0,
+        furniture: previewBasis.basisAmounts.furniture_revenue ?? 0,
+        additionalServices: previewBasis.basisAmounts.additional_services_revenue ?? 0,
+        costs: previewBasis.basisAmounts.total_costs ?? previewBasis.totalCosts,
+        hrStaffCosts: previewBasis.basisAmounts.hr_costs ?? 0,
+      }
     : null;
 
   const pseudoSetting = useMemo(
@@ -240,49 +296,29 @@ export function AdminFeeSettingsPanel({ dateRange: _dateRange }: Props) {
 
   const previewAmount = useMemo(() => {
     if (!previewBasisAgg || !pseudoSetting) return null;
-    const scopePortfolio = !draft.property_id;
-    if (scopePortfolio) {
-      return computeClampedAdminFeeForBasis(pseudoSetting, previewBasisAgg);
-    }
-    const n = Math.max(1, properties.length);
-    const propBasis: AdminFeeBasis = {
-      rev: previewBasisAgg.rev / n,
-      office: previewBasisAgg.office / n,
-      costs: previewBasisAgg.costs / n,
-    };
-    return computeClampedAdminFeeForBasis(pseudoSetting, propBasis);
-  }, [draft.property_id, previewBasisAgg, pseudoSetting, properties.length]);
+    return computeClampedAdminFeeForBasis(pseudoSetting, previewBasisAgg);
+  }, [previewBasisAgg, pseudoSetting]);
 
   const rawPreviewFee = useMemo(() => {
     if (!previewBasisAgg || !pseudoSetting) return null;
-    const scopePortfolio = !draft.property_id;
-    const basis = scopePortfolio
-      ? previewBasisAgg
-      : (() => {
-          const n = Math.max(1, properties.length);
-          return {
-            rev: previewBasisAgg.rev / n,
-            office: previewBasisAgg.office / n,
-            costs: previewBasisAgg.costs / n,
-          };
-        })();
-    return computeRawAdminFee(pseudoSetting, basis);
-  }, [draft.property_id, previewBasisAgg, pseudoSetting, properties.length]);
+    return computeRawAdminFee(pseudoSetting, previewBasisAgg);
+  }, [previewBasisAgg, pseudoSetting]);
 
   const basisAmountForPreview = useMemo(() => {
-    if (!previewBasisAgg || !draft.percentage_basis) return 0;
-    const b = draft.percentage_basis;
-    if (b === "office_rent_only") return previewBasisAgg.office;
-    if (b === "total_costs") return previewBasisAgg.costs;
-    return previewBasisAgg.rev;
+    if (!previewBasisAgg) return 0;
+    return basisAmountFromAdminFeeBasis(previewBasisAgg, draft.percentage_basis);
   }, [draft.percentage_basis, previewBasisAgg]);
 
   const monthLabelForPreview = useMemo(() => formatMonthLabel(previewBasis?.monthKey ?? null), [previewBasis?.monthKey]);
 
-  const basisPhraseForPreview = useMemo(() => {
+  /** e.g. "Dec 2025 Total revenue" or "Dec 2025 HR costs" for the preview line in parentheses */
+  const basisLabelPhraseForPreview = useMemo(() => {
     const b = draft.percentage_basis;
-    const label = PERCENTAGE_BASIS_LABELS[b] ?? b ?? "basis";
-    return `(${monthLabelForPreview} ${label.toLowerCase()})`;
+    if (b === "hr_costs") {
+      return `${monthLabelForPreview} HR costs`;
+    }
+    const name = PERCENTAGE_BASIS_LABELS[b] ?? b ?? "basis";
+    return `${monthLabelForPreview} ${name}`;
   }, [draft.percentage_basis, monthLabelForPreview]);
 
   const previewLines = useMemo(() => {
@@ -304,27 +340,19 @@ export function AdminFeeSettingsPanel({ dateRange: _dateRange }: Props) {
     }
     if (m === "percentage") {
       return [
-        `${Number.isFinite(pct) ? pct : 0}% of ${moneyFmt(basisAmountForPreview)} (${basisPhraseForPreview}) = ${moneyFmt(pctPart)}`,
+        `${Number.isFinite(pct) ? pct : 0}% of ${moneyFmt(basisAmountForPreview)} (${basisLabelPhraseForPreview}) = ${moneyFmt(pctPart)}`,
         `= Total: ${moneyFmt(previewAmount)}/month${hasClamp && rawPreviewFee !== previewAmount ? ` (after min/max)` : ""}`,
       ];
     }
     if (m === "combination") {
       return [
         `Fixed: ${moneyFmt(fixedMo)}`,
-        `+ ${Number.isFinite(pct) ? pct : 0}% of ${moneyFmt(basisAmountForPreview)} (${basisPhraseForPreview}) = ${moneyFmt(pctPart)}`,
+        `+ ${Number.isFinite(pct) ? pct : 0}% of ${moneyFmt(basisAmountForPreview)} (${basisLabelPhraseForPreview}) = ${moneyFmt(pctPart)}`,
         `= Total: ${moneyFmt(previewAmount)}/month${hasClamp && rawPreviewFee !== previewAmount ? ` (after min/max)` : ""}`,
       ];
     }
     return [];
-  }, [
-    basisAmountForPreview,
-    basisPhraseForPreview,
-    draft,
-    previewAmount,
-    previewBasisAgg,
-    pseudoSetting,
-    rawPreviewFee,
-  ]);
+  }, [basisAmountForPreview, basisLabelPhraseForPreview, draft, previewAmount, previewBasisAgg, pseudoSetting, rawPreviewFee]);
 
   const resetDraft = () => {
     setEditingId(null);
@@ -581,7 +609,10 @@ export function AdminFeeSettingsPanel({ dateRange: _dateRange }: Props) {
           <span>Property (empty = portfolio-wide)</span>
           <select
             value={draft.property_id ?? ""}
-            onChange={(e) => setDraft((d) => ({ ...d, property_id: e.target.value || null }))}
+            onChange={(e) => {
+              const v = e.target.value.trim();
+              setDraft((d) => ({ ...d, property_id: v || null }));
+            }}
             style={inputStyle}
           >
             <option value="">— All properties (portfolio) —</option>
@@ -721,12 +752,34 @@ export function AdminFeeSettingsPanel({ dateRange: _dateRange }: Props) {
               fontSize: 13,
             }}
           >
-            <strong>Preview</strong> (last month with data: {previewBasis.monthKey ?? "—"})
+            <strong>Preview</strong> — net income report figures for{" "}
+            <strong>{previewBasis.monthKey ?? "—"}</strong>
+            {draft.property_id ? " (selected property)" : " (portfolio)"}
             {previewBasis.note ? ` — ${previewBasis.note}` : ""}
-            <div style={{ marginTop: 8, color: "#444" }}>
-              Basis: revenue {moneyFmt(previewBasis.revenueTotal)}, office {moneyFmt(previewBasis.officeRent)}, costs{" "}
-              {moneyFmt(previewBasis.totalCosts)}
-            </div>
+            <ul
+              style={{
+                margin: "8px 0 0",
+                paddingLeft: 18,
+                color: "#444",
+                fontSize: 12,
+                lineHeight: 1.45,
+              }}
+            >
+              {PERCENTAGE_BASES.map((key) => (
+                <li key={key}>
+                  {key === "total_costs" ? (
+                    <>
+                      Total costs: {moneyFmt(previewBasis.basisAmounts[key] ?? 0)} (
+                      {formatMonthLabel(previewBasis.monthKey ?? null)})
+                    </>
+                  ) : (
+                    <>
+                      {PERCENTAGE_BASIS_LABELS[key]}: {moneyFmt(previewBasis.basisAmounts[key] ?? 0)}
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
             <div style={{ marginTop: 10, fontFamily: "system-ui", lineHeight: 1.5, whiteSpace: "pre-line" }}>
               {previewLines.map((line, i) => (
                 <div key={i}>{line}</div>

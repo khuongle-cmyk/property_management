@@ -281,17 +281,21 @@ function NetIncomeInner() {
           </label>
         </div>
         <div className="no-print" style={{ marginTop: 14, display: "grid", gap: 10, maxWidth: 560 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={includeAdministration}
-              onChange={(e) => {
-                setIncludeAdministration(e.target.checked);
-                if (!e.target.checked) setAllocateAdminByRevenue(false);
-              }}
-            />
-            Include administration costs (org-central / HQ from historical imports,{" "}
-            <code>cost_scope=administration</code> or <code>property_id</code> null)
+          <label style={{ display: "grid", gap: 4, fontSize: 14, cursor: "pointer", maxWidth: 520 }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input
+                type="checkbox"
+                checked={includeAdministration}
+                onChange={(e) => {
+                  setIncludeAdministration(e.target.checked);
+                  if (!e.target.checked) setAllocateAdminByRevenue(false);
+                }}
+              />
+              Include central administration costs
+            </span>
+            <span style={{ fontSize: 12, color: "#666", paddingLeft: 24 }}>
+              Costs not assigned to a specific property
+            </span>
           </label>
           <label
             style={{
@@ -312,34 +316,42 @@ function NetIncomeInner() {
             Allocate administration to properties by revenue share (shows per-property &quot;after admin&quot; column)
           </label>
         </div>
-        <div className="no-print" style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 14, alignItems: "center" }}>
-          <button type="button" disabled={generating || !!proExport} onClick={() => void runGenerate()} style={btnPrimary}>
-            {generating ? "Building…" : "Generate report"}
-          </button>
-          <button
-            type="button"
-            disabled={generating || !!proExport}
-            onClick={() => void downloadProfessionalPack("pdf")}
-            style={btnGhost}
-          >
-            {proExport === "pdf" ? "Preparing PDF…" : "Professional PDF"}
-          </button>
-          <button
-            type="button"
-            disabled={generating || !!proExport}
-            onClick={() => void downloadProfessionalPack("excel")}
-            style={btnGhost}
-          >
-            {proExport === "excel" ? "Preparing Excel…" : "Professional Excel"}
-          </button>
-        </div>
-        <p className="no-print" style={{ fontSize: 12, color: "#666", marginTop: 10, maxWidth: 640 }}>
-          <strong>Professional</strong> packs include VAT (FI 25.5% / 10%), P&amp;L with ex- and incl.-VAT columns, data
-          provenance, and indicative net VAT. Set <code>REPORT_BRAND_NAME</code> and <code>REPORT_LOGO_URL</code> for
-          branded covers.
-        </p>
-        {isSuperAdmin ? <AdminFeeSettingsPanel dateRange={range} /> : null}
       </section>
+
+      {isSuperAdmin ? <AdminFeeSettingsPanel endDate={range.end} /> : null}
+
+      <div
+        className="no-print"
+        style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 20, alignItems: "center", maxWidth: 900 }}
+      >
+        <button type="button" disabled={generating || !!proExport} onClick={() => void runGenerate()} style={btnPrimary}>
+          {generating ? "Building…" : "Generate report"}
+        </button>
+        <button type="button" disabled={!report || !!proExport} onClick={() => window.print()} style={btnGhost}>
+          Print / Save as PDF
+        </button>
+        <button
+          type="button"
+          disabled={generating || !!proExport}
+          onClick={() => void downloadProfessionalPack("pdf")}
+          style={btnGhost}
+        >
+          {proExport === "pdf" ? "Preparing PDF…" : "Professional PDF"}
+        </button>
+        <button
+          type="button"
+          disabled={generating || !!proExport}
+          onClick={() => void downloadProfessionalPack("excel")}
+          style={btnGhost}
+        >
+          {proExport === "excel" ? "Preparing Excel…" : "Professional Excel"}
+        </button>
+      </div>
+      <p className="no-print" style={{ fontSize: 12, color: "#666", marginTop: 10, maxWidth: 640 }}>
+        <strong>Professional</strong> packs include VAT (FI 25.5% / 10%), P&amp;L with ex- and incl.-VAT columns, data
+        provenance, and indicative net VAT. Set <code>REPORT_BRAND_NAME</code> and <code>REPORT_LOGO_URL</code> for
+        branded covers.
+      </p>
 
       {genError ? (
         <p className="no-print" style={{ color: "#b00020", marginTop: 16 }}>
@@ -349,23 +361,6 @@ function NetIncomeInner() {
 
       {report ? (
         <div id="net-income-print" style={{ marginTop: 24 }}>
-          <div className="no-print" style={{ marginBottom: 12, display: "flex", flexWrap: "wrap", gap: 8 }}>
-            <button type="button" onClick={() => window.print()} style={btnGhost}>
-              Print / Save as PDF
-            </button>
-            <button type="button" disabled={!!proExport} onClick={() => void downloadProfessionalPack("pdf")} style={btnGhost}>
-              {proExport === "pdf" ? "Preparing…" : "Professional PDF"}
-            </button>
-            <button
-              type="button"
-              disabled={!!proExport}
-              onClick={() => void downloadProfessionalPack("excel")}
-              style={btnGhost}
-            >
-              {proExport === "excel" ? "Preparing…" : "Professional Excel"}
-            </button>
-          </div>
-
           <h2 style={{ fontSize: 16 }}>Portfolio by month (property NOI — property costs only)</h2>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
