@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { Suspense, useState } from "react";
+import { Suspense, useState, type CSSProperties } from "react";
 import type { CmsMarketingLocale } from "@/lib/cms2/marketing-locales";
 import type { CmsPublicUi } from "@/lib/cms2/public-ui";
 import { tx } from "@/lib/cms2/public-ui";
@@ -13,14 +13,24 @@ import { Cms2LanguageSwitcher } from "./Cms2LanguageSwitcher";
 /** Breakpoint: below this width, primary nav collapses into hamburger (single-row bar). */
 const NAV_MOBILE_MAX = 1099;
 
-const NAV_LINK_COLOR = "#2c3e3e";
 const NAV_LINK_HOVER = "#1a4a4a";
-const BTN_TYPO = {
-  fontFamily: "var(--font-dm-sans), sans-serif",
+
+/** Public header nav link (Etusivu, Tilat, …) */
+const NAV_LINK_STYLE: CSSProperties = {
+  fontFamily: "'DM Sans', sans-serif",
+  fontSize: "14px",
+  fontWeight: 400,
+  letterSpacing: "-0.01em",
+  color: "#2c3e3e",
+};
+
+/** Kirjaudu / Varaa tila */
+const NAV_BTN_STYLE: CSSProperties = {
+  fontFamily: "'DM Sans', sans-serif",
   fontSize: "14px",
   fontWeight: 500,
   letterSpacing: "-0.01em",
-} as const;
+};
 
 export function Cms2HeaderClient({
   org,
@@ -116,11 +126,10 @@ export function Cms2HeaderClient({
               key={item.href}
               href={item.href}
               onClick={() => setOpen(false)}
+              className="cms2-nav-link"
               style={{
-                color: theme.muted,
+                ...NAV_LINK_STYLE,
                 textDecoration: "none",
-                fontSize: "0.92rem",
-                fontWeight: 500,
                 padding: "8px 10px",
                 borderRadius: 10,
                 whiteSpace: "nowrap",
@@ -178,7 +187,7 @@ export function Cms2HeaderClient({
               color: NAV_LINK_HOVER,
               border: `1px solid ${theme.border}`,
               whiteSpace: "nowrap",
-              ...BTN_TYPO,
+              ...NAV_BTN_STYLE,
             }}
           >
             {tx(ui, "header.login")}
@@ -197,7 +206,7 @@ export function Cms2HeaderClient({
               color: "#fff",
               boxShadow: "0 4px 14px rgba(26, 92, 90, 0.35)",
               whiteSpace: "nowrap",
-              ...BTN_TYPO,
+              ...NAV_BTN_STYLE,
             }}
           >
             {tx(ui, "header.bookRoom")}

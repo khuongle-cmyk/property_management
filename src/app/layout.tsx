@@ -32,13 +32,21 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500&family=Instrument+Serif:ital@0;1&display=swap"
+          rel="stylesheet"
+        />
+      </head>
       <body
         className={`${dmSans.variable} ${instrumentSerif.variable}`}
         style={{
           margin: 0,
           background: "var(--warm-white, #faf9f6)",
           color: "var(--brand-text)",
-          fontFamily: "var(--font-dm-sans), sans-serif",
+          fontFamily: "'DM Sans', sans-serif",
         }}
       >
         <BrandProvider>

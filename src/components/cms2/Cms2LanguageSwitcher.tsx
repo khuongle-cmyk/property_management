@@ -9,15 +9,15 @@ import { tx } from "@/lib/cms2/public-ui";
 import type { CmsTheme } from "@/lib/cms2/types";
 
 const PETROL = "#1a4a4a";
-const TEXT_MUTED = "#2c3e3e";
 const CREAM_HOVER = "#f4f1ec";
 
-const LANG_TYPO = {
-  fontFamily: "var(--font-dm-sans), sans-serif",
-  fontSize: 14,
-  fontWeight: 400 as const,
-  color: TEXT_MUTED,
-};
+/** Language dropdown rows (matches public header typography) */
+const LANG_ITEM_STYLE = {
+  fontFamily: "'DM Sans', sans-serif",
+  fontSize: "14px",
+  fontWeight: 400,
+  color: "#2c3e3e",
+} as const;
 
 export function Cms2LanguageSwitcher({
   theme,
@@ -109,6 +109,7 @@ export function Cms2LanguageSwitcher({
           boxShadow: open ? "0 4px 14px rgba(13, 61, 59, 0.12)" : "none",
           minWidth: 40,
           minHeight: 40,
+          fontFamily: "'DM Sans', sans-serif",
         }}
       >
         <span className={`fi fi-${current.flagIconSuffix}`} aria-hidden />
@@ -145,9 +146,9 @@ export function Cms2LanguageSwitcher({
                     padding: "10px 16px",
                     borderRadius: 8,
                     textDecoration: "none",
-                    ...LANG_TYPO,
+                    ...LANG_ITEM_STYLE,
                     fontWeight: active ? 500 : 400,
-                    color: active ? PETROL : TEXT_MUTED,
+                    color: active ? PETROL : LANG_ITEM_STYLE.color,
                   }}
                 >
                   <span className={`fi fi-${opt.flagIconSuffix}`} aria-hidden />
