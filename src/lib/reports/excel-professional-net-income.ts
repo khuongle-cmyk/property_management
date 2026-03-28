@@ -58,10 +58,10 @@ export async function buildProfessionalNetIncomeExcel(
     if (typeof v === "number") r.getCell(2).numFmt = k.includes("%") ? "0.0" : EUR_FMT;
   });
 
-  const showPlatformFee = pack.monthlyRows.some((r) => r.platformManagementFeeExVat != null && r.platformManagementFeeExVat > 0);
+  const showAdminFees = pack.monthlyRows.some((r) => r.administrationFeesExVat != null && r.administrationFeesExVat > 0);
   const monthly = wb.addWorksheet("02_Monthly_P_L");
   monthly.addRow(
-    showPlatformFee
+    showAdminFees
       ? [
           "Month",
           "Basis",
@@ -72,8 +72,8 @@ export async function buildProfessionalNetIncomeExcel(
           "Cost VAT",
           "Cost gross",
           "NOI ex-VAT",
-          "Platform mgmt fee",
-          "Net after fee",
+          "Admin fees",
+          "Net after fees",
         ]
       : [
           "Month",
@@ -90,7 +90,7 @@ export async function buildProfessionalNetIncomeExcel(
   styleHeaderRow(monthly.getRow(1));
   pack.monthlyRows.forEach((m, i) => {
     const r = monthly.getRow(i + 2);
-    if (showPlatformFee) {
+    if (showAdminFees) {
       r.values = [
         m.monthKey,
         m.basis,
@@ -101,8 +101,8 @@ export async function buildProfessionalNetIncomeExcel(
         m.costs.vat,
         m.costs.gross,
         m.netOperatingExVat,
-        m.platformManagementFeeExVat ?? 0,
-        m.netAfterPlatformFeeExVat ?? m.netOperatingExVat,
+        m.administrationFeesExVat ?? 0,
+        m.netAfterAdminFeesExVat ?? m.netOperatingExVat,
       ];
       for (let c = 3; c <= 11; c++) r.getCell(c).numFmt = EUR_FMT;
     } else {

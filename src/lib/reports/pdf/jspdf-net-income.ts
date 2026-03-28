@@ -74,9 +74,9 @@ export async function buildNetIncomePdf(
   }
   y += 4;
 
-  const showPlatformFee = pack.monthlyRows.some((r) => r.platformManagementFeeExVat != null && r.platformManagementFeeExVat > 0);
-  const monthHead = showPlatformFee
-    ? ["Month", "Basis", "Rev net", "Rev VAT", "Cost net", "Cost VAT", "NOI ex-VAT", "Mgmt fee", "Net after fee"]
+  const showAdminFees = pack.monthlyRows.some((r) => r.administrationFeesExVat != null && r.administrationFeesExVat > 0);
+  const monthHead = showAdminFees
+    ? ["Month", "Basis", "Rev net", "Rev VAT", "Cost net", "Cost VAT", "NOI ex-VAT", "Admin fees", "Net after fees"]
     : ["Month", "Basis", "Rev net", "Rev VAT", "Cost net", "Cost VAT", "Net ex-VAT"];
   const monthBody = pack.monthlyRows.map((r) => {
     const base = [
@@ -88,10 +88,10 @@ export async function buildNetIncomePdf(
       eurPdf(r.costs.vat),
       eurPdf(r.netOperatingExVat),
     ];
-    if (showPlatformFee) {
+    if (showAdminFees) {
       base.push(
-        eurPdf(r.platformManagementFeeExVat ?? 0),
-        eurPdf(r.netAfterPlatformFeeExVat ?? r.netOperatingExVat),
+        eurPdf(r.administrationFeesExVat ?? 0),
+        eurPdf(r.netAfterAdminFeesExVat ?? r.netOperatingExVat),
       );
     }
     return base;

@@ -103,9 +103,29 @@ function NetIncomeInner() {
     [allProperties, selectedPropertyIds, range, includeAdministration, allocateAdminByRevenue],
   );
 
-  const hasPlatformFees = useMemo(() => {
+  const hasAdminFees = useMemo(() => {
     if (!report) return false;
-    return report.rows.some((r) => (r.platformManagementFee ?? 0) > 0);
+    return report.rows.some((r) => (r.administrationFeesTotal ?? 0) > 0);
+  }, [report]);
+
+  const portfolioAdminFeeLines = useMemo(() => {
+    if (!report) return new Map<string, { name: string; amount: number }[]>();
+    const byMonth = new Map<string, Map<string, number>>();
+    for (const r of report.rows) {
+      if (!byMonth.has(r.monthKey)) byMonth.set(r.monthKey, new Map());
+      const m = byMonth.get(r.monthKey)!;
+      for (const line of r.administrationFees ?? []) {
+        m.set(line.name, (m.get(line.name) ?? 0) + line.amount);
+      }
+    }
+    const out = new Map<string, { name: string; amount: number }[]>();
+    for (const [mk, agg] of byMonth) {
+      out.set(
+        mk,
+        [...agg.entries()].map(([name, amount]) => ({ name, amount })),
+      );
+    }
+    return out;
   }, [report]);
 
   const runGenerate = useCallback(async () => {
@@ -356,11 +376,11 @@ function NetIncomeInner() {
                   <th style={thR}>Property costs</th>
                   <th style={thR}>NOI</th>
                   <th style={thR}>Margin</th>
-                  {hasPlatformFees ? (
+                  {hasAdminFees ? (
                     <>
-                      <th style={thR}>{isSuperAdmin ? "Platform mgmt fee" : "Management fee (set by platform)"}</th>
-                      <th style={thR}>{isSuperAdmin ? "Net after platform fee" : "Net after fee"}</th>
-                      <th style={thR}>Margin (after fee)</th>
+                      <th style={thR}>Administration fees</th>
+                      <th style={thR}>Net after fees</th>
+                      <th style={thR}>Margin (after fees)</th>
                     </>
                   ) : null}
                 </tr>
@@ -375,13 +395,30 @@ function NetIncomeInner() {
                       <strong>{money(r.netIncome)}</strong>
                     </td>
                     <td style={tdR}>{pct(r.netMarginPct)}</td>
-                    {hasPlatformFees ? (
+                    {hasAdminFees ? (
                       <>
-                        <td style={tdR}>{money(r.platformManagementFee ?? 0)}</td>
                         <td style={tdR}>
-                          <strong>{money(r.netIncomeAfterPlatformFee ?? r.netIncome)}</strong>
+                          {isSuperAdmin ? (
+                            <div style={{ fontSize: 12 }}>
+                              {(portfolioAdminFeeLines.get(r.monthKey) ?? []).map((line, i) => (
+                                <div key={`${line.name}-${i}`}>
+                                  {line.name}: {money(line.amount)}
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div>
+                              <div>{money(r.administrationFeesTotal ?? 0)}</div>
+                              <div style={{ fontSize: 11, color: "#666", marginTop: 2 }}>
+                                Set by platform administrator
+                              </div>
+                            </div>
+                          )}
                         </td>
-                        <td style={tdR}>{pct(r.netMarginPctAfterPlatformFee ?? null)}</td>
+                        <td style={tdR}>
+                          <strong>{money(r.netIncomeAfterAdminFees ?? r.netIncome)}</strong>
+                        </td>
+                        <td style={tdR}>{pct(r.netMarginPctAfterAdminFees ?? null)}</td>
                       </>
                     ) : null}
                   </tr>
@@ -539,11 +576,11 @@ function NetIncomeInner() {
                       <th style={thR}>Net after admin</th>
                     </>
                   ) : null}
-                  {hasPlatformFees ? (
+                  {hasAdminFees ? (
                     <>
-                      <th style={thR}>{isSuperAdmin ? "Platform mgmt fee" : "Management fee (set by platform)"}</th>
-                      <th style={thR}>{isSuperAdmin ? "Net after platform fee" : "Net after fee"}</th>
-                      <th style={thR}>Margin (after fee)</th>
+                      <th style={thR}>Administration fees</th>
+                      <th style={thR}>Net after fees</th>
+                      <th style={thR}>Margin (after fees)</th>
                     </>
                   ) : null}
                   <th style={thR}>Sched.</th>
@@ -569,26 +606,36 @@ function NetIncomeInner() {
                         </td>
                       </>
                     ) : null}
-                    {hasPlatformFees ? (
+                    {hasAdminFees ? (
                       <>
                         <td style={tdR}>
                           {isSuperAdmin ? (
-                            money(r.platformManagementFee ?? 0)
+                            <div style={{ fontSize: 12 }}>
+                              {(r.administrationFees ?? []).map((line) => (
+                                <div key={line.settingId}>
+                                  {line.name}: {money(line.amount)}
+                                </div>
+                              ))}
+                            </div>
                           ) : (
-                            <>
-                              <div>Management fee: {money(r.platformManagementFee ?? 0)}</div>
-                              {(r.platformManagementFee ?? 0) > 0 ? (
-                                <div style={{ fontSize: 11, color: "#666", marginTop: 2 }}>
-                                  Calculated by platform administrator
+                            <div>
+                              {(r.administrationFees ?? []).map((line) => (
+                                <div key={line.settingId}>
+                                  {line.name}: {money(line.amount)}
+                                </div>
+                              ))}
+                              {(r.administrationFees?.length ?? 0) > 0 ? (
+                                <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>
+                                  Set by platform administrator
                                 </div>
                               ) : null}
-                            </>
+                            </div>
                           )}
                         </td>
                         <td style={tdR}>
-                          <strong>{money(r.netIncomeAfterPlatformFee ?? r.netIncome)}</strong>
+                          <strong>{money(r.netIncomeAfterAdminFees ?? r.netIncome)}</strong>
                         </td>
-                        <td style={tdR}>{pct(r.netMarginPctAfterPlatformFee ?? null)}</td>
+                        <td style={tdR}>{pct(r.netMarginPctAfterAdminFees ?? null)}</td>
                       </>
                     ) : null}
                     <td style={tdR}>{money(r.costsScheduled)}</td>
@@ -599,9 +646,9 @@ function NetIncomeInner() {
             </table>
           </div>
 
-          {!isSuperAdmin && hasPlatformFees ? (
+          {!isSuperAdmin && hasAdminFees ? (
             <p style={{ fontSize: 12, color: "#666", marginTop: 8, maxWidth: 640 }}>
-              Management fees are set by the platform and appear in your P&amp;L as shown. You cannot change them here.
+              Administration fees are configured by the platform. They reduce net income after property operating costs.
             </p>
           ) : null}
 

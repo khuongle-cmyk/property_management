@@ -1,22 +1,47 @@
 "use client";
 
-import { useCallback, useEffect, useState, type CSSProperties, type FormEvent } from "react";
-import { getSupabaseClient } from "@/lib/supabase/browser";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from "react";
+import {
+  ADMIN_FEE_TYPE_LABELS,
+  ADMIN_FEE_TYPES,
+  FEE_CALC_MODE_LABELS,
+  FEE_CALC_MODES,
+  FIXED_PERIODS,
+  PERCENTAGE_BASIS_LABELS,
+  PERCENTAGE_BASES,
+  type FeeCalcMode,
+  displayNameForSetting,
+  isLegacyFeeCategory,
+  listColumnCalculationLabel,
+} from "@/lib/reports/admin-fee-constants";
+import {
+  computeClampedAdminFeeForBasis,
+  computeRawAdminFee,
+  formatAdminFeeAmountOrPercent,
+  getEffectiveCalculationMode,
+  type AdminFeeBasis,
+  type AdministrationCostSettingRow,
+} from "@/lib/reports/administration-cost-fees-report";
 
 type TenantOpt = { id: string; name: string | null };
-type PropertyOpt = { id: string; name: string | null };
-type FeeRow = {
-  id: string;
-  tenant_id: string;
-  property_id: string | null;
-  year: number;
-  month: number;
-  amount_eur: number;
-  calculation_notes?: string | null;
-};
+type PropertyOpt = { id: string; name: string | null; label: string; tenantName?: string | null };
 
 type Props = {
   dateRange: { start: string; end: string };
+};
+
+type FormDraft = {
+  calculationMode: FeeCalcMode;
+  feeCategory: string;
+  feeNameOther: string;
+  property_id: string | null;
+  fixed_amount: number | null;
+  fixed_period: string;
+  percentage_value: number | null;
+  percentage_basis: string;
+  minimum_fee: number | null;
+  maximum_fee: number | null;
+  is_active: boolean;
 };
 
 const inputStyle: CSSProperties = { padding: 8, borderRadius: 8, border: "1px solid #ccc", width: "100%" };
@@ -31,22 +56,85 @@ const btn: CSSProperties = {
 };
 const btnGhost: CSSProperties = { ...btn, background: "#fff", color: "#111" };
 
-export function AdminFeeSettingsPanel({ dateRange }: Props) {
+function formatMonthLabel(monthKey: string | null): string {
+  if (!monthKey) return "last month";
+  const parts = monthKey.split("-");
+  const y = Number(parts[0]);
+  const m = Number(parts[1]);
+  if (!Number.isFinite(y) || !Number.isFinite(m)) return monthKey;
+  return new Date(y, m - 1, 1).toLocaleString("en-GB", { month: "short", year: "numeric" });
+}
+
+function feeCategoryFromRow(s: AdministrationCostSettingRow): string {
+  const ft = (s.fee_type ?? "").trim();
+  if (isLegacyFeeCategory(ft)) return ft || "management_fee";
+  const legacyCalc = new Set(["fixed_amount", "percentage_of_revenue", "percentage_of_costs", "fixed_plus_percentage"]);
+  if (legacyCalc.has(ft)) {
+    const c = (s.custom_name ?? "").trim();
+    return c || "management_fee";
+  }
+  return ((s.custom_name ?? ft) || "management_fee").trim() || "management_fee";
+}
+
+function emptyDraft(): FormDraft {
+  return {
+    calculationMode: "fixed",
+    feeCategory: "management_fee",
+    feeNameOther: "",
+    property_id: null,
+    fixed_amount: null,
+    fixed_period: "monthly",
+    percentage_value: null,
+    percentage_basis: "total_revenue",
+    minimum_fee: null,
+    maximum_fee: null,
+    is_active: true,
+  };
+}
+
+function resolvedFeeName(d: FormDraft): string {
+  if (d.feeCategory === "other") return d.feeNameOther.trim();
+  return (ADMIN_FEE_TYPE_LABELS[d.feeCategory] ?? d.feeNameOther.trim()) || "Fee";
+}
+
+function draftToPseudoSetting(d: FormDraft, tenantId: string): AdministrationCostSettingRow {
+  return {
+    id: "draft",
+    tenant_id: tenantId,
+    property_id: d.property_id,
+    name: resolvedFeeName(d),
+    fee_type: d.feeCategory,
+    custom_name: d.feeCategory,
+    calculation_mode: d.calculationMode,
+    fixed_amount: d.fixed_amount,
+    fixed_period: d.fixed_period,
+    percentage_value: d.percentage_value,
+    percentage_basis: d.percentage_basis,
+    minimum_fee: d.minimum_fee,
+    maximum_fee: d.maximum_fee,
+    is_active: d.is_active,
+  };
+}
+
+export function AdminFeeSettingsPanel({ dateRange: _dateRange }: Props) {
   const [tenants, setTenants] = useState<TenantOpt[]>([]);
   const [tenantId, setTenantId] = useState("");
   const [properties, setProperties] = useState<PropertyOpt[]>([]);
-  const [fees, setFees] = useState<FeeRow[]>([]);
+  const [settings, setSettings] = useState<AdministrationCostSettingRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [listLoading, setListLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
-
-  const [year, setYear] = useState(new Date().getUTCFullYear());
-  const [month, setMonth] = useState(new Date().getUTCMonth() + 1);
-  const [amount, setAmount] = useState("");
-  const [propertyId, setPropertyId] = useState<string>("");
-  const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  const [draft, setDraft] = useState<FormDraft>(() => emptyDraft());
+
+  const [previewBasis, setPreviewBasis] = useState<{
+    monthKey: string | null;
+    revenueTotal: number;
+    officeRent: number;
+    totalCosts: number;
+    note?: string;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,101 +164,221 @@ export function AdminFeeSettingsPanel({ dateRange }: Props) {
       setProperties([]);
       return;
     }
-    const supabase = getSupabaseClient();
-    const { data, error: pErr } = await supabase
-      .from("properties")
-      .select("id, name")
-      .eq("tenant_id", tid)
-      .order("name", { ascending: true });
-    if (pErr) {
-      setError(pErr.message);
+    try {
+      const res = await fetch(`/api/admin-fees/properties?tenant_id=${encodeURIComponent(tid)}`);
+      const json = (await res.json()) as { properties?: PropertyOpt[]; error?: string };
+      if (!res.ok) throw new Error(json.error ?? "Failed to load properties");
+      setProperties(json.properties ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load properties");
       setProperties([]);
-      return;
     }
-    setProperties((data ?? []) as PropertyOpt[]);
   }, []);
 
-  const loadFees = useCallback(async () => {
+  const loadSettings = useCallback(async () => {
     if (!tenantId) return;
     setListLoading(true);
     setError(null);
     try {
-      const q = new URLSearchParams({
-        tenantId,
-        startDate: dateRange.start,
-        endDate: dateRange.end,
-      });
-      const res = await fetch(`/api/platform-management-fees?${q.toString()}`);
-      const json = (await res.json()) as { fees?: FeeRow[]; error?: string };
-      if (!res.ok) throw new Error(json.error ?? "Failed to load fees");
-      setFees(json.fees ?? []);
+      const q = new URLSearchParams({ tenant_id: tenantId });
+      const res = await fetch(`/api/admin-fees?${q.toString()}`);
+      const json = (await res.json()) as { settings?: AdministrationCostSettingRow[]; error?: string };
+      if (!res.ok) throw new Error(json.error ?? "Failed to load settings");
+      setSettings(json.settings ?? []);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load fees");
+      setError(e instanceof Error ? e.message : "Failed to load settings");
     } finally {
       setListLoading(false);
     }
-  }, [tenantId, dateRange.start, dateRange.end]);
+  }, [tenantId]);
+
+  const loadPreviewBasis = useCallback(async () => {
+    if (!tenantId) return;
+    try {
+      const res = await fetch(`/api/admin-fees/preview-basis?tenant_id=${encodeURIComponent(tenantId)}`);
+      const json = (await res.json()) as {
+        monthKey?: string | null;
+        revenueTotal?: number;
+        officeRent?: number;
+        totalCosts?: number;
+        note?: string;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(json.error ?? "Preview failed");
+      setPreviewBasis({
+        monthKey: json.monthKey ?? null,
+        revenueTotal: json.revenueTotal ?? 0,
+        officeRent: json.officeRent ?? 0,
+        totalCosts: json.totalCosts ?? 0,
+        note: json.note,
+      });
+    } catch {
+      setPreviewBasis({ monthKey: null, revenueTotal: 100000, officeRent: 40000, totalCosts: 35000, note: "Illustrative" });
+    }
+  }, [tenantId]);
 
   useEffect(() => {
     void loadProperties(tenantId);
   }, [tenantId, loadProperties]);
 
   useEffect(() => {
-    if (tenantId) void loadFees();
-  }, [tenantId, loadFees]);
+    void loadSettings();
+  }, [loadSettings]);
 
-  const resetForm = () => {
+  useEffect(() => {
+    void loadPreviewBasis();
+  }, [loadPreviewBasis]);
+
+  const previewBasisAgg: AdminFeeBasis | null = previewBasis
+    ? { rev: previewBasis.revenueTotal, office: previewBasis.officeRent, costs: previewBasis.totalCosts }
+    : null;
+
+  const pseudoSetting = useMemo(
+    () => (tenantId ? draftToPseudoSetting(draft, tenantId) : null),
+    [draft, tenantId],
+  );
+
+  const previewAmount = useMemo(() => {
+    if (!previewBasisAgg || !pseudoSetting) return null;
+    const scopePortfolio = !draft.property_id;
+    if (scopePortfolio) {
+      return computeClampedAdminFeeForBasis(pseudoSetting, previewBasisAgg);
+    }
+    const n = Math.max(1, properties.length);
+    const propBasis: AdminFeeBasis = {
+      rev: previewBasisAgg.rev / n,
+      office: previewBasisAgg.office / n,
+      costs: previewBasisAgg.costs / n,
+    };
+    return computeClampedAdminFeeForBasis(pseudoSetting, propBasis);
+  }, [draft.property_id, previewBasisAgg, pseudoSetting, properties.length]);
+
+  const rawPreviewFee = useMemo(() => {
+    if (!previewBasisAgg || !pseudoSetting) return null;
+    const scopePortfolio = !draft.property_id;
+    const basis = scopePortfolio
+      ? previewBasisAgg
+      : (() => {
+          const n = Math.max(1, properties.length);
+          return {
+            rev: previewBasisAgg.rev / n,
+            office: previewBasisAgg.office / n,
+            costs: previewBasisAgg.costs / n,
+          };
+        })();
+    return computeRawAdminFee(pseudoSetting, basis);
+  }, [draft.property_id, previewBasisAgg, pseudoSetting, properties.length]);
+
+  const basisAmountForPreview = useMemo(() => {
+    if (!previewBasisAgg || !draft.percentage_basis) return 0;
+    const b = draft.percentage_basis;
+    if (b === "office_rent_only") return previewBasisAgg.office;
+    if (b === "total_costs") return previewBasisAgg.costs;
+    return previewBasisAgg.rev;
+  }, [draft.percentage_basis, previewBasisAgg]);
+
+  const monthLabelForPreview = useMemo(() => formatMonthLabel(previewBasis?.monthKey ?? null), [previewBasis?.monthKey]);
+
+  const basisPhraseForPreview = useMemo(() => {
+    const b = draft.percentage_basis;
+    const label = PERCENTAGE_BASIS_LABELS[b] ?? b ?? "basis";
+    return `(${monthLabelForPreview} ${label.toLowerCase()})`;
+  }, [draft.percentage_basis, monthLabelForPreview]);
+
+  const previewLines = useMemo(() => {
+    if (!previewBasisAgg || previewAmount == null || rawPreviewFee == null || !pseudoSetting) return [];
+    const m = draft.calculationMode;
+    const pct = Number(draft.percentage_value);
+    const fixedMo = (() => {
+      const f = Number(draft.fixed_amount);
+      if (!Number.isFinite(f) || f <= 0) return 0;
+      return String(draft.fixed_period).toLowerCase() === "annual" ? f / 12 : f;
+    })();
+    const pctPart = Number.isFinite(pct) && pct > 0 ? (pct / 100) * basisAmountForPreview : 0;
+    const hasClamp =
+      (draft.minimum_fee != null && Number.isFinite(Number(draft.minimum_fee))) ||
+      (draft.maximum_fee != null && Number.isFinite(Number(draft.maximum_fee)));
+
+    if (m === "fixed") {
+      return [`Fixed: ${moneyFmt(fixedMo)}`, `= Total: ${moneyFmt(previewAmount)}/month${hasClamp && rawPreviewFee !== previewAmount ? ` (after min/max)` : ""}`];
+    }
+    if (m === "percentage") {
+      return [
+        `${Number.isFinite(pct) ? pct : 0}% of ${moneyFmt(basisAmountForPreview)} (${basisPhraseForPreview}) = ${moneyFmt(pctPart)}`,
+        `= Total: ${moneyFmt(previewAmount)}/month${hasClamp && rawPreviewFee !== previewAmount ? ` (after min/max)` : ""}`,
+      ];
+    }
+    if (m === "combination") {
+      return [
+        `Fixed: ${moneyFmt(fixedMo)}`,
+        `+ ${Number.isFinite(pct) ? pct : 0}% of ${moneyFmt(basisAmountForPreview)} (${basisPhraseForPreview}) = ${moneyFmt(pctPart)}`,
+        `= Total: ${moneyFmt(previewAmount)}/month${hasClamp && rawPreviewFee !== previewAmount ? ` (after min/max)` : ""}`,
+      ];
+    }
+    return [];
+  }, [
+    basisAmountForPreview,
+    basisPhraseForPreview,
+    draft,
+    previewAmount,
+    previewBasisAgg,
+    pseudoSetting,
+    rawPreviewFee,
+  ]);
+
+  const resetDraft = () => {
     setEditingId(null);
-    setPropertyId("");
-    setNotes("");
-    setAmount("");
-    setYear(new Date().getUTCFullYear());
-    setMonth(new Date().getUTCMonth() + 1);
+    setDraft(emptyDraft());
   };
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!tenantId) return;
-    const amt = Number(amount);
-    if (!Number.isFinite(amt) || amt < 0) {
-      setError("Enter a valid amount (≥ 0).");
+    const name = resolvedFeeName(draft);
+    if (!name) {
+      setError("Enter a fee name (choose a type or enter custom text for Other).");
       return;
     }
     setSaving(true);
     setError(null);
     try {
+      const body = {
+        tenant_id: tenantId,
+        property_id: draft.property_id || null,
+        fee_name: name,
+        fee_category: draft.feeCategory,
+        calculation_mode: draft.calculationMode,
+        fixed_amount: draft.fixed_amount != null ? Number(draft.fixed_amount) : null,
+        fixed_period: draft.fixed_period ?? "monthly",
+        percentage_value: draft.percentage_value != null ? Number(draft.percentage_value) : null,
+        percentage_basis: draft.percentage_basis ?? null,
+        minimum_fee:
+          draft.minimum_fee != null && Number.isFinite(Number(draft.minimum_fee)) ? Number(draft.minimum_fee) : null,
+        maximum_fee:
+          draft.maximum_fee != null && Number.isFinite(Number(draft.maximum_fee)) ? Number(draft.maximum_fee) : null,
+        is_active: draft.is_active !== false,
+      };
+
       if (editingId) {
-        const res = await fetch(`/api/platform-management-fees/${editingId}`, {
-          method: "PATCH",
+        const res = await fetch(`/api/admin-fees/${editingId}`, {
+          method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            property_id: propertyId || null,
-            year,
-            month,
-            amount_eur: amt,
-            calculation_notes: notes.trim() || null,
-          }),
+          body: JSON.stringify(body),
         });
         const json = (await res.json()) as { error?: string };
         if (!res.ok) throw new Error(json.error ?? "Save failed");
       } else {
-        const res = await fetch("/api/platform-management-fees", {
+        const res = await fetch("/api/admin-fees", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            tenant_id: tenantId,
-            property_id: propertyId || null,
-            year,
-            month,
-            amount_eur: amt,
-            calculation_notes: notes.trim() || null,
-          }),
+          body: JSON.stringify(body),
         });
         const json = (await res.json()) as { error?: string };
         if (!res.ok) throw new Error(json.error ?? "Create failed");
       }
-      resetForm();
-      await loadFees();
+      resetDraft();
+      await loadSettings();
+      await loadPreviewBasis();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed");
     } finally {
@@ -178,30 +386,46 @@ export function AdminFeeSettingsPanel({ dateRange }: Props) {
     }
   };
 
-  const onEdit = (f: FeeRow) => {
-    setEditingId(f.id);
-    setPropertyId(f.property_id ?? "");
-    setYear(f.year);
-    setMonth(f.month);
-    setAmount(String(f.amount_eur));
-    setNotes(f.calculation_notes ?? "");
+  const onEdit = (s: AdministrationCostSettingRow) => {
+    setEditingId(s.id);
+    const feeCat = feeCategoryFromRow(s);
+    const otherText = feeCat === "other" ? (s.name ?? "").trim() : "";
+
+    setDraft({
+      calculationMode: getEffectiveCalculationMode(s),
+      feeCategory: feeCat,
+      feeNameOther: otherText,
+      property_id: s.property_id,
+      fixed_amount: s.fixed_amount,
+      fixed_period: s.fixed_period ?? "monthly",
+      percentage_value: s.percentage_value,
+      percentage_basis: s.percentage_basis ?? "total_revenue",
+      minimum_fee: s.minimum_fee,
+      maximum_fee: s.maximum_fee,
+      is_active: s.is_active !== false,
+    });
   };
 
   const onDelete = async (id: string) => {
-    if (!globalThis.confirm("Delete this fee line?")) return;
+    if (!globalThis.confirm("Delete this fee setting?")) return;
     setError(null);
     try {
-      const res = await fetch(`/api/platform-management-fees/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/admin-fees/${id}`, { method: "DELETE" });
       const json = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(json.error ?? "Delete failed");
-      if (editingId === id) resetForm();
-      await loadFees();
+      if (editingId === id) resetDraft();
+      await loadSettings();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Delete failed");
     }
   };
 
-  if (loading) return <p style={{ color: "#666", fontSize: 14 }}>Loading platform fee settings…</p>;
+  const showFixedBlock = draft.calculationMode === "fixed" || draft.calculationMode === "combination";
+  const showPctBlock = draft.calculationMode === "percentage" || draft.calculationMode === "combination";
+  const showBasis = showPctBlock;
+  const showMinMax = true;
+
+  if (loading) return <p style={{ color: "#666", fontSize: 14 }}>Loading administration fee settings…</p>;
 
   return (
     <section
@@ -212,150 +436,323 @@ export function AdminFeeSettingsPanel({ dateRange }: Props) {
         border: "1px solid #e0e0e0",
         borderRadius: 12,
         background: "#fafafa",
-        maxWidth: 720,
+        maxWidth: 860,
       }}
     >
-      <h2 style={{ fontSize: 16, margin: "0 0 8px" }}>Platform management fees (super admin)</h2>
+      <h2 style={{ fontSize: 16, margin: "0 0 8px" }}>Platform administration fees (super admin)</h2>
       <p style={{ margin: "0 0 12px", fontSize: 13, color: "#555" }}>
-        Set fees per organization. Leave property empty for a portfolio-wide fee (allocated by revenue share in the net
-        income report). Tenants see amounts only — not your internal notes.
+        Set how fees are calculated. They reduce net income in the report after property operating costs. Portfolio scope
+        splits combined fees across properties using the same basis as the percentage (or revenue share for fixed-only).
       </p>
 
       {error ? (
         <p style={{ color: "#b00020", fontSize: 13, marginBottom: 10 }}>{error}</p>
       ) : null}
 
-      <div style={{ display: "grid", gap: 10, marginBottom: 14 }}>
-        <label style={{ display: "grid", gap: 4, fontSize: 13 }}>
-          <span>Organization</span>
-          <select value={tenantId} onChange={(e) => setTenantId(e.target.value)} style={inputStyle}>
-            {tenants.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name ?? t.id}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+      <label style={{ display: "grid", gap: 4, fontSize: 13, marginBottom: 12 }}>
+        <span>Organization</span>
+        <select value={tenantId} onChange={(e) => setTenantId(e.target.value)} style={inputStyle}>
+          {tenants.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name ?? t.id}
+            </option>
+          ))}
+        </select>
+      </label>
 
       <div style={{ overflowX: "auto", marginBottom: 16 }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
             <tr>
+              <th style={th}>Name</th>
+              <th style={th}>Type</th>
+              <th style={th}>Amount / %</th>
               <th style={th}>Scope</th>
               <th style={th}>Month</th>
-              <th style={thR}>Amount</th>
-              <th style={th}>Notes (internal)</th>
               <th style={th} />
             </tr>
           </thead>
           <tbody>
             {listLoading ? (
               <tr>
-                <td colSpan={5} style={td}>
+                <td colSpan={6} style={td}>
                   Loading…
                 </td>
               </tr>
-            ) : fees.length === 0 ? (
+            ) : settings.length === 0 ? (
               <tr>
-                <td colSpan={5} style={{ ...td, color: "#666" }}>
-                  No fee lines in this date range.
+                <td colSpan={6} style={{ ...td, color: "#666" }}>
+                  No fee rules yet. Add one below.
                 </td>
               </tr>
             ) : (
-              fees.map((f) => {
-                const propName = f.property_id ? properties.find((p) => p.id === f.property_id)?.name : null;
-                const scope = f.property_id ? (propName ?? f.property_id) : "Portfolio (all properties)";
-                return (
-                  <tr key={f.id}>
-                    <td style={td}>{scope}</td>
-                    <td style={td}>
-                      {f.year}-{String(f.month).padStart(2, "0")}
-                    </td>
-                    <td style={tdR}>
-                      {new Intl.NumberFormat("en-IE", { style: "currency", currency: "EUR" }).format(f.amount_eur)}
-                    </td>
-                    <td style={{ ...td, maxWidth: 200, wordBreak: "break-word" }}>{f.calculation_notes ?? "—"}</td>
-                    <td style={td}>
-                      <button type="button" onClick={() => onEdit(f)} style={{ ...btnGhost, padding: "4px 8px", fontSize: 12 }}>
-                        Edit
-                      </button>{" "}
-                      <button
-                        type="button"
-                        onClick={() => void onDelete(f.id)}
-                        style={{
-                          ...btnGhost,
-                          padding: "4px 8px",
-                          fontSize: 12,
-                          borderColor: "#c00",
-                          color: "#c00",
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })
+              settings.map((s) => (
+                <tr key={s.id}>
+                  <td style={td}>{displayNameForSetting(s)}</td>
+                  <td style={td}>{listColumnCalculationLabel(s)}</td>
+                  <td style={{ ...td, whiteSpace: "nowrap" }}>{formatAdminFeeAmountOrPercent(s)}</td>
+                  <td style={td}>
+                    {s.property_id ? properties.find((p) => p.id === s.property_id)?.label ?? properties.find((p) => p.id === s.property_id)?.name ?? "—" : "Portfolio"}
+                  </td>
+                  <td style={td}>All months</td>
+                  <td style={td}>
+                    <button type="button" onClick={() => onEdit(s)} style={{ ...btnGhost, padding: "4px 8px", fontSize: 12 }}>
+                      Edit
+                    </button>{" "}
+                    <button
+                      type="button"
+                      onClick={() => void onDelete(s.id)}
+                      style={{ ...btnGhost, padding: "4px 8px", fontSize: 12, borderColor: "#c00", color: "#c00" }}
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              ))
             )}
           </tbody>
         </table>
       </div>
 
-      <form onSubmit={(e) => void onSubmit(e)} style={{ display: "grid", gap: 10 }}>
+      <form onSubmit={(e) => void onSubmit(e)} style={{ display: "grid", gap: 12 }}>
         <p style={{ margin: 0, fontSize: 13, fontWeight: 600 }}>{editingId ? "Edit fee line" : "Add fee line"}</p>
+
         <label style={{ display: "grid", gap: 4, fontSize: 13 }}>
-          <span>Property (optional — empty = portfolio-wide)</span>
-          <select value={propertyId} onChange={(e) => setPropertyId(e.target.value)} style={inputStyle}>
-            <option value="">— Portfolio-wide —</option>
-            {properties.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name ?? p.id}
+          <span>Fee name</span>
+          <select
+            value={draft.feeCategory}
+            onChange={(e) => setDraft((d) => ({ ...d, feeCategory: e.target.value }))}
+            style={inputStyle}
+          >
+            {ADMIN_FEE_TYPES.map((ft) => (
+              <option key={ft} value={ft}>
+                {ADMIN_FEE_TYPE_LABELS[ft] ?? ft}
               </option>
             ))}
           </select>
         </label>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+        {draft.feeCategory === "other" ? (
           <label style={{ display: "grid", gap: 4, fontSize: 13 }}>
-            <span>Year</span>
-            <input type="number" min={2000} max={2100} value={year} onChange={(e) => setYear(Number(e.target.value))} style={inputStyle} />
-          </label>
-          <label style={{ display: "grid", gap: 4, fontSize: 13 }}>
-            <span>Month</span>
-            <input type="number" min={1} max={12} value={month} onChange={(e) => setMonth(Number(e.target.value))} style={inputStyle} />
-          </label>
-          <label style={{ display: "grid", gap: 4, fontSize: 13 }}>
-            <span>Amount (EUR)</span>
+            <span>Custom name</span>
             <input
               type="text"
-              inputMode="decimal"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder="0.00"
+              value={draft.feeNameOther}
+              onChange={(e) => setDraft((d) => ({ ...d, feeNameOther: e.target.value }))}
+              placeholder="e.g. Special service fee"
               style={inputStyle}
             />
           </label>
+        ) : null}
+
+        <div style={{ display: "grid", gap: 8, fontSize: 13 }}>
+          <span style={{ fontWeight: 600 }}>Calculation mode</span>
+          <div
+            role="radiogroup"
+            aria-label="Calculation mode"
+            style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}
+          >
+            {FEE_CALC_MODES.map((cm) => (
+              <label
+                key={cm}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: draft.calculationMode === cm ? "2px solid #111" : "1px solid #ccc",
+                  background: draft.calculationMode === cm ? "#f0f0f0" : "#fff",
+                  cursor: "pointer",
+                }}
+              >
+                <input
+                  type="radio"
+                  name="fee_calc_mode"
+                  checked={draft.calculationMode === cm}
+                  onChange={() => setDraft((d) => ({ ...d, calculationMode: cm }))}
+                />
+                {FEE_CALC_MODE_LABELS[cm] ?? cm}
+              </label>
+            ))}
+          </div>
         </div>
+
         <label style={{ display: "grid", gap: 4, fontSize: 13 }}>
-          <span>Calculation notes (super admin only — not shown to tenants)</span>
-          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical" }} />
+          <span>Property (empty = portfolio-wide)</span>
+          <select
+            value={draft.property_id ?? ""}
+            onChange={(e) => setDraft((d) => ({ ...d, property_id: e.target.value || null }))}
+            style={inputStyle}
+          >
+            <option value="">— All properties (portfolio) —</option>
+            {properties.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label ?? `${p.name ?? p.id}`}
+              </option>
+            ))}
+          </select>
         </label>
+
+        {showFixedBlock ? (
+          <fieldset style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12, margin: 0 }}>
+            <legend style={{ fontSize: 13 }}>Fixed amount (€)</legend>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <label style={{ display: "grid", gap: 4, fontSize: 13 }}>
+                <span>{draft.calculationMode === "combination" ? "Fixed (€) per month" : "Amount (€)"}</span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={draft.fixed_amount ?? ""}
+                  onChange={(e) =>
+                    setDraft((d) => ({
+                      ...d,
+                      fixed_amount: e.target.value === "" ? null : Number(e.target.value),
+                    }))
+                  }
+                  style={inputStyle}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 13 }}>
+                <span>Period</span>
+                <select
+                  value={draft.fixed_period}
+                  onChange={(e) => setDraft((d) => ({ ...d, fixed_period: e.target.value }))}
+                  style={inputStyle}
+                >
+                  {FIXED_PERIODS.map((p) => (
+                    <option key={p} value={p}>
+                      {p === "monthly" ? "Monthly" : "Annual"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </fieldset>
+        ) : null}
+
+        {showPctBlock ? (
+          <fieldset style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12, margin: 0 }}>
+            <legend style={{ fontSize: 13 }}>Percentage (%)</legend>
+            <label style={{ display: "grid", gap: 4, fontSize: 13 }}>
+              <span>Percent (%)</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={draft.percentage_value ?? ""}
+                onChange={(e) =>
+                  setDraft((d) => ({
+                    ...d,
+                    percentage_value: e.target.value === "" ? null : Number(e.target.value),
+                  }))
+                }
+                style={inputStyle}
+              />
+            </label>
+            {showBasis ? (
+              <label style={{ display: "grid", gap: 4, fontSize: 13, marginTop: 8 }}>
+                <span>% of (basis)</span>
+                <select
+                  value={draft.percentage_basis}
+                  onChange={(e) => setDraft((d) => ({ ...d, percentage_basis: e.target.value }))}
+                  style={inputStyle}
+                >
+                  {PERCENTAGE_BASES.map((b) => (
+                    <option key={b} value={b}>
+                      {PERCENTAGE_BASIS_LABELS[b]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+          </fieldset>
+        ) : null}
+
+        {showMinMax ? (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <label style={{ display: "grid", gap: 4, fontSize: 13 }}>
+              <span>Minimum fee (€, optional)</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={draft.minimum_fee ?? ""}
+                onChange={(e) =>
+                  setDraft((d) => ({
+                    ...d,
+                    minimum_fee: e.target.value === "" ? null : Number(e.target.value),
+                  }))
+                }
+                style={inputStyle}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 4, fontSize: 13 }}>
+              <span>Maximum fee (€, optional)</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={draft.maximum_fee ?? ""}
+                onChange={(e) =>
+                  setDraft((d) => ({
+                    ...d,
+                    maximum_fee: e.target.value === "" ? null : Number(e.target.value),
+                  }))
+                }
+                style={inputStyle}
+              />
+            </label>
+          </div>
+        ) : null}
+
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+          <input
+            type="checkbox"
+            checked={draft.is_active}
+            onChange={(e) => setDraft((d) => ({ ...d, is_active: e.target.checked }))}
+          />
+          Active
+        </label>
+
+        {previewBasis && previewAmount != null && pseudoSetting ? (
+          <div
+            style={{
+              padding: 12,
+              background: "#fff",
+              borderRadius: 8,
+              border: "1px solid #e5e5e5",
+              fontSize: 13,
+            }}
+          >
+            <strong>Preview</strong> (last month with data: {previewBasis.monthKey ?? "—"})
+            {previewBasis.note ? ` — ${previewBasis.note}` : ""}
+            <div style={{ marginTop: 8, color: "#444" }}>
+              Basis: revenue {moneyFmt(previewBasis.revenueTotal)}, office {moneyFmt(previewBasis.officeRent)}, costs{" "}
+              {moneyFmt(previewBasis.totalCosts)}
+            </div>
+            <div style={{ marginTop: 10, fontFamily: "system-ui", lineHeight: 1.5, whiteSpace: "pre-line" }}>
+              {previewLines.map((line, i) => (
+                <div key={i}>{line}</div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button type="submit" disabled={saving} style={btn}>
-            {saving ? "Saving…" : editingId ? "Save changes" : "Add fee"}
+            {saving ? "Saving…" : editingId ? "Save changes" : "Save fee line"}
           </button>
-          {editingId ? (
-            <button type="button" onClick={resetForm} style={btnGhost}>
-              Cancel edit
-            </button>
-          ) : null}
-          <button type="button" onClick={() => void loadFees()} style={btnGhost} disabled={listLoading}>
-            Refresh list
+          <button type="button" onClick={resetDraft} style={btnGhost}>
+            {editingId ? "Cancel edit" : "Add another fee line"}
+          </button>
+          <button type="button" onClick={() => void loadSettings()} style={btnGhost} disabled={listLoading}>
+            Refresh
           </button>
         </div>
       </form>
     </section>
   );
+}
+
+function moneyFmt(n: number): string {
+  return new Intl.NumberFormat("en-IE", { style: "currency", currency: "EUR" }).format(n);
 }
 
 const th: CSSProperties = {
@@ -365,6 +762,4 @@ const th: CSSProperties = {
   background: "#eee",
   fontSize: 12,
 };
-const thR: CSSProperties = { ...th, textAlign: "right" };
 const td: CSSProperties = { padding: "6px 8px", borderBottom: "1px solid #f0f0f0", verticalAlign: "top" };
-const tdR: CSSProperties = { ...td, textAlign: "right" };

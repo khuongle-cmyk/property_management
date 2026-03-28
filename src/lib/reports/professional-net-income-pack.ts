@@ -88,8 +88,8 @@ export function buildProfessionalNetIncomePack(
   const monthlyRows: MonthlyNetIncomeVatRow[] = report.portfolioByMonth.map((pm) => {
     const rev = revenueVatBreakdown(pm.revenue);
     const costs = costsVatBreakdown(pm.costs);
-    const pf = pm.platformManagementFee;
-    const netAfter = pm.netIncomeAfterPlatformFee;
+    const af = pm.administrationFeesTotal;
+    const netAfter = pm.netIncomeAfterAdminFees;
     const row: MonthlyNetIncomeVatRow = {
       monthKey: pm.monthKey,
       basis: basisForMonth(pm.monthKey, asOf),
@@ -97,9 +97,9 @@ export function buildProfessionalNetIncomePack(
       costs,
       netOperatingExVat: roundMoney2(pm.netIncome),
     };
-    if (pf != null && pf > 0) {
-      row.platformManagementFeeExVat = roundMoney2(pf);
-      row.netAfterPlatformFeeExVat = netAfter != null ? roundMoney2(netAfter) : roundMoney2(pm.netIncome - pf);
+    if (af != null && af > 0) {
+      row.administrationFeesExVat = roundMoney2(af);
+      row.netAfterAdminFeesExVat = netAfter != null ? roundMoney2(netAfter) : roundMoney2(pm.netIncome - af);
     }
     return row;
   });

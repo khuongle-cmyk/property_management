@@ -10,7 +10,7 @@ import { buildProfessionalNetIncomePack } from "@/lib/reports/professional-net-i
 import { buildProfessionalRentRollPack } from "@/lib/reports/professional-rent-roll-pack";
 import { loadHistoricalAdminCostsAsEntries, loadHistoricalCostsAsEntries } from "@/lib/reports/historical-costs";
 import { normalizeMemberships, resolveAllowedPropertyIds } from "@/lib/reports/report-access";
-import { attachPlatformManagementFees } from "@/lib/reports/platform-management-fees-report";
+import { attachAdministrationCostFees } from "@/lib/reports/administration-cost-fees-report";
 import { loadReportExportContext } from "@/lib/reports/report-export-context";
 import { coerceReportSections, type RentRollRequestBody } from "@/lib/reports/rent-roll-types";
 
@@ -168,7 +168,7 @@ export async function POST(req: Request) {
     allocateAdminByRevenueShare: !!(niBody.includeAdministration && niBody.allocateAdminByRevenue),
     administrationEntries: adminEntries,
   });
-  report = await attachPlatformManagementFees(supabase, report, allowedIds);
+  report = await attachAdministrationCostFees(supabase, report, allowedIds);
   const pack = buildProfessionalNetIncomePack(report, exportCtx);
   const buffer = await buildProfessionalNetIncomeExcel(report, pack);
   return new NextResponse(new Uint8Array(buffer), {

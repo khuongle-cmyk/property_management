@@ -6,7 +6,7 @@ import type { PropertyCostEntryRow } from "@/lib/reports/net-income-types";
 import { loadHistoricalAdminCostsAsEntries, loadHistoricalCostsAsEntries } from "@/lib/reports/historical-costs";
 import { loadRentRollSourceRows } from "@/lib/reports/rent-roll-data";
 import { normalizeMemberships, resolveAllowedPropertyIds } from "@/lib/reports/report-access";
-import { attachPlatformManagementFees } from "@/lib/reports/platform-management-fees-report";
+import { attachAdministrationCostFees } from "@/lib/reports/administration-cost-fees-report";
 
 type Body = {
   propertyIds?: string[] | null;
@@ -134,6 +134,6 @@ export async function POST(req: Request) {
     allocateAdminByRevenueShare: !!body.allocateAdminByRevenue,
     administrationEntries: adminEntries,
   });
-  report = await attachPlatformManagementFees(supabase, report, allowedIds);
+  report = await attachAdministrationCostFees(supabase, report, allowedIds);
   return NextResponse.json(report);
 }
