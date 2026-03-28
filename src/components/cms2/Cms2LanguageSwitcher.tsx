@@ -11,6 +11,16 @@ import type { CmsTheme } from "@/lib/cms2/types";
 const PETROL = "#1a4a4a";
 const CREAM_HOVER = "#f4f1ec";
 
+const FLAG_URLS: Record<string, string> = {
+  fi: "https://flagcdn.com/w40/fi.png",
+  en: "https://flagcdn.com/w40/gb.png",
+  sv: "https://flagcdn.com/w40/se.png",
+  no: "https://flagcdn.com/w40/no.png",
+  da: "https://flagcdn.com/w40/dk.png",
+  es: "https://flagcdn.com/w40/es.png",
+  fr: "https://flagcdn.com/w40/fr.png",
+};
+
 /** Language dropdown rows (matches public header typography) */
 const LANG_ITEM_STYLE = {
   fontFamily: "'DM Sans', sans-serif",
@@ -69,14 +79,6 @@ export function Cms2LanguageSwitcher({
   return (
     <div ref={rootRef} className="cms2-lang-switcher" style={{ position: "relative", zIndex: 60 }}>
       <style>{`
-        .cms2-lang-switcher span.fi {
-          width: 20px;
-          height: 15px;
-          border-radius: 2px;
-          display: inline-block;
-          flex-shrink: 0;
-          vertical-align: middle;
-        }
         .cms2-lang-switcher ul.cms2-lang-menu {
           background: #fff;
           border-radius: 12px;
@@ -112,7 +114,14 @@ export function Cms2LanguageSwitcher({
           fontFamily: "'DM Sans', sans-serif",
         }}
       >
-        <span className={`fi fi-${current.flagIconSuffix}`} aria-hidden />
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={FLAG_URLS[currentLocale]}
+          alt={current.name}
+          width={20}
+          height={15}
+          style={{ borderRadius: "2px", objectFit: "cover" }}
+        />
       </button>
 
       {open ? (
@@ -151,7 +160,19 @@ export function Cms2LanguageSwitcher({
                     color: active ? PETROL : LANG_ITEM_STYLE.color,
                   }}
                 >
-                  <span className={`fi fi-${opt.flagIconSuffix}`} aria-hidden />
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={FLAG_URLS[opt.code]}
+                    alt={opt.name}
+                    width={20}
+                    height={15}
+                    style={{
+                      borderRadius: "2px",
+                      display: "inline-block",
+                      verticalAlign: "middle",
+                      objectFit: "cover",
+                    }}
+                  />
                   <span>{opt.name}</span>
                 </Link>
               </li>

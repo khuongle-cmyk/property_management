@@ -15,21 +15,19 @@ export function resolveCmsMarketingLocale(raw: string | undefined | null): CmsMa
   return DEFAULT_CMS_MARKETING_LOCALE;
 }
 
-/** UI: flag-icons (`fi fi-xx`) + endonym; `flagIconSuffix` is the `fi-xx` country code (`en` → `gb`). */
+/** UI: endonym per locale (flags: see `Cms2LanguageSwitcher` + flagcdn.com). */
 export const languages: Array<{
   code: CmsMarketingLocale;
-  /** Second part of flag-icons class, e.g. `fi fi-gb` → `gb`. */
-  flagIconSuffix: string;
   /** Language name in that language (e.g. Suomi, English). */
   name: string;
 }> = [
-  { code: "fi", flagIconSuffix: "fi", name: "Suomi" },
-  { code: "en", flagIconSuffix: "gb", name: "English" },
-  { code: "sv", flagIconSuffix: "se", name: "Svenska" },
-  { code: "no", flagIconSuffix: "no", name: "Norsk" },
-  { code: "da", flagIconSuffix: "dk", name: "Dansk" },
-  { code: "es", flagIconSuffix: "es", name: "Español" },
-  { code: "fr", flagIconSuffix: "fr", name: "Français" },
+  { code: "fi", name: "Suomi" },
+  { code: "en", name: "English" },
+  { code: "sv", name: "Svenska" },
+  { code: "no", name: "Norsk" },
+  { code: "da", name: "Dansk" },
+  { code: "es", name: "Español" },
+  { code: "fr", name: "Français" },
 ];
 
 /** Locales passed to auto-translate (all marketing languages). */

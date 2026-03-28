@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import "flag-icons/css/flag-icons.min.css";
 import { DM_Sans, Instrument_Serif } from "next/font/google";
 import BrandProvider from "@/components/BrandProvider";
 import ConditionalWorkspaceChrome from "@/components/ConditionalWorkspaceChrome";
@@ -41,7 +40,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         />
       </head>
       <body
-        className={`${dmSans.variable} ${instrumentSerif.variable}`}
+        className={`${dmSans.className} ${dmSans.variable} ${instrumentSerif.variable}`}
         style={{
           margin: 0,
           background: "var(--warm-white, #faf9f6)",
