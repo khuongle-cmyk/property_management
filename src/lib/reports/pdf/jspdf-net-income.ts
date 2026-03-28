@@ -74,10 +74,12 @@ export async function buildNetIncomePdf(
   }
   y += 4;
 
-  autoTable(doc, {
-    startY: y,
-    head: [["Month", "Basis", "Rev net", "Rev VAT", "Cost net", "Cost VAT", "Net ex-VAT"]],
-    body: pack.monthlyRows.map((r) => [
+  const showPlatformFee = pack.monthlyRows.some((r) => r.platformManagementFeeExVat != null && r.platformManagementFeeExVat > 0);
+  const monthHead = showPlatformFee
+    ? ["Month", "Basis", "Rev net", "Rev VAT", "Cost net", "Cost VAT", "NOI ex-VAT", "Mgmt fee", "Net after fee"]
+    : ["Month", "Basis", "Rev net", "Rev VAT", "Cost net", "Cost VAT", "Net ex-VAT"];
+  const monthBody = pack.monthlyRows.map((r) => {
+    const base = [
       r.monthKey,
       r.basis,
       eurPdf(r.revenue.net),
@@ -85,7 +87,20 @@ export async function buildNetIncomePdf(
       eurPdf(r.costs.net),
       eurPdf(r.costs.vat),
       eurPdf(r.netOperatingExVat),
-    ]),
+    ];
+    if (showPlatformFee) {
+      base.push(
+        eurPdf(r.platformManagementFeeExVat ?? 0),
+        eurPdf(r.netAfterPlatformFeeExVat ?? r.netOperatingExVat),
+      );
+    }
+    return base;
+  });
+
+  autoTable(doc, {
+    startY: y,
+    head: [monthHead],
+    body: monthBody,
     styles: { fontSize: 8, cellPadding: 1.5 },
     headStyles: { fillColor: [30, 58, 90], textColor: 255 },
     margin: { left: margin, right: margin },

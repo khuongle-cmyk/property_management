@@ -30,7 +30,7 @@ const LANG_ITEM_STYLE = {
 } as const;
 
 export function Cms2LanguageSwitcher({
-  theme,
+  theme: _theme,
   currentLocale,
   ui,
 }: {
@@ -84,7 +84,8 @@ export function Cms2LanguageSwitcher({
           border-radius: 12px;
           box-shadow: 0 8px 28px rgba(26, 74, 74, 0.12);
           border: 1px solid rgba(26, 74, 74, 0.08);
-          padding: 6px;
+          padding: 0;
+          box-sizing: border-box;
         }
         .cms2-lang-switcher a.cms2-lang-option:hover {
           background: ${CREAM_HOVER};
@@ -99,29 +100,28 @@ export function Cms2LanguageSwitcher({
         aria-controls="cms2-lang-menu"
         onClick={() => setOpen((o) => !o)}
         style={{
-          display: "inline-flex",
+          display: "flex",
           alignItems: "center",
-          justifyContent: "center",
-          padding: "8px 9px",
-          borderRadius: 10,
+          gap: "6px",
+          padding: "6px 10px",
+          borderRadius: "8px",
+          border: "1.5px solid rgba(26,74,74,0.12)",
+          background: "transparent",
           cursor: "pointer",
-          border: `1px solid ${theme.border}`,
-          background: theme.surface,
-          color: theme.petrol,
-          boxShadow: open ? "0 4px 14px rgba(13, 61, 59, 0.12)" : "none",
-          minWidth: 40,
-          minHeight: 40,
           fontFamily: "'DM Sans', sans-serif",
         }}
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={FLAG_URLS[currentLocale]}
-          alt={current.name}
+          alt=""
           width={20}
           height={15}
           style={{ borderRadius: "2px", objectFit: "cover" }}
         />
+        <span style={{ fontSize: "12px", color: "#2c3e3e", lineHeight: 1 }} aria-hidden>
+          ▼
+        </span>
       </button>
 
       {open ? (
@@ -134,7 +134,8 @@ export function Cms2LanguageSwitcher({
             position: "absolute",
             right: 0,
             top: "calc(100% + 6px)",
-            minWidth: 220,
+            minWidth: "140px",
+            width: "auto",
             margin: 0,
             listStyle: "none",
           }}
@@ -151,10 +152,11 @@ export function Cms2LanguageSwitcher({
                   style={{
                     display: "flex",
                     alignItems: "center",
-                    gap: 12,
-                    padding: "10px 16px",
+                    gap: "10px",
+                    padding: "8px 16px",
                     borderRadius: 8,
                     textDecoration: "none",
+                    whiteSpace: "nowrap",
                     ...LANG_ITEM_STYLE,
                     fontWeight: active ? 500 : 400,
                     color: active ? PETROL : LANG_ITEM_STYLE.color,

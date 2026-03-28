@@ -8,6 +8,7 @@ import { buildProfessionalNetIncomePack } from "@/lib/reports/professional-net-i
 import { buildProfessionalRentRollPack } from "@/lib/reports/professional-rent-roll-pack";
 import { loadHistoricalAdminCostsAsEntries, loadHistoricalCostsAsEntries } from "@/lib/reports/historical-costs";
 import { normalizeMemberships, resolveAllowedPropertyIds } from "@/lib/reports/report-access";
+import { attachPlatformManagementFees } from "@/lib/reports/platform-management-fees-report";
 import { loadReportExportContext } from "@/lib/reports/report-export-context";
 import { coerceReportSections, type RentRollRequestBody } from "@/lib/reports/rent-roll-types";
 import { buildNetIncomePdf } from "@/lib/reports/pdf/jspdf-net-income";
@@ -180,11 +181,12 @@ export async function POST(req: Request) {
     adminEntries = a;
   }
 
-  const report = buildNetIncomeReport(monthKeys, source, [...entries, ...historicalEntries], {
+  let report = buildNetIncomeReport(monthKeys, source, [...entries, ...historicalEntries], {
     includeAdministrationInTrueNet: !!niBody.includeAdministration,
     allocateAdminByRevenueShare: !!(niBody.includeAdministration && niBody.allocateAdminByRevenue),
     administrationEntries: adminEntries,
   });
+  report = await attachPlatformManagementFees(supabase, report, allowedIds);
   const pack = buildProfessionalNetIncomePack(report, exportCtx);
 
   try {

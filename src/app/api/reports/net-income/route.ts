@@ -6,6 +6,7 @@ import type { PropertyCostEntryRow } from "@/lib/reports/net-income-types";
 import { loadHistoricalAdminCostsAsEntries, loadHistoricalCostsAsEntries } from "@/lib/reports/historical-costs";
 import { loadRentRollSourceRows } from "@/lib/reports/rent-roll-data";
 import { normalizeMemberships, resolveAllowedPropertyIds } from "@/lib/reports/report-access";
+import { attachPlatformManagementFees } from "@/lib/reports/platform-management-fees-report";
 
 type Body = {
   propertyIds?: string[] | null;
@@ -128,10 +129,11 @@ export async function POST(req: Request) {
     adminEntries = a;
   }
 
-  const report = buildNetIncomeReport(monthKeys, source, [...entries, ...historicalEntries], {
+  let report = buildNetIncomeReport(monthKeys, source, [...entries, ...historicalEntries], {
     includeAdministrationInTrueNet: !!body.includeAdministration,
     allocateAdminByRevenueShare: !!body.allocateAdminByRevenue,
     administrationEntries: adminEntries,
   });
+  report = await attachPlatformManagementFees(supabase, report, allowedIds);
   return NextResponse.json(report);
 }

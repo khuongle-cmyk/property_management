@@ -85,6 +85,9 @@ export type MonthlyNetIncomeVatRow = {
   revenue: VatBreakdown;
   costs: VatBreakdown;
   netOperatingExVat: number;
+  /** Platform management fee (ex-VAT); same as net income P&L line */
+  platformManagementFeeExVat?: number;
+  netAfterPlatformFeeExVat?: number;
 };
 
 export type ProfessionalNetIncomePack = {

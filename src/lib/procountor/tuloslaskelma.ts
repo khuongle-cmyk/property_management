@@ -167,7 +167,7 @@ export function parseTuloslaskelmaText(
     const accountMatch = cell.match(/(\d{4,5}),\s*(.+)/);
     if (!accountMatch) continue;
 
-    const accountCode = accountMatch[1];
+    const accountCode = accountMatch[1].trim();
     const accountName = accountMatch[2]?.trim() ?? "";
 
     if (debug && accountRowsLogged < 5) {
@@ -251,4 +251,67 @@ export function parseTuloslaskelmaFromArrayBuffer(
 ): PreviewRow[] {
   const text = decodeProcountorFileText(buffer);
   return parseTuloslaskelmaText(text, propertyId, options);
+}
+
+const TULOS_AGG_REVENUE_KEYS = [
+  "office_rent_revenue",
+  "meeting_room_revenue",
+  "hot_desk_revenue",
+  "venue_revenue",
+  "virtual_office_revenue",
+  "furniture_revenue",
+  "additional_services_revenue",
+] as const;
+
+/**
+ * One parsed Tuloslaskelma row = one ledger account × one month (only one category column set).
+ * historical_revenue has UNIQUE(property_id, year, month) — importing many rows without merging
+ * leaves only the first insert; this sums all accounts into one row per month.
+ */
+export function aggregateTuloslaskelmaRevenueRowsForProperty(
+  rows: PreviewRow[],
+  propertyId: string,
+  propertyName: string,
+): PreviewRow[] {
+  const num = (v: unknown) => {
+    const x = Number(v);
+    return Number.isFinite(x) ? x : 0;
+  };
+  const map = new Map<string, PreviewRow>();
+
+  for (const r of rows) {
+    if (num(r.total_revenue) <= 0) continue;
+    const y = Number(r.year);
+    const mo = Number(r.month);
+    if (!Number.isInteger(y) || !Number.isInteger(mo) || mo < 1 || mo > 12) continue;
+    const key = `${y}|${mo}`;
+    const ex = map.get(key);
+    if (!ex) {
+      const row: PreviewRow = {
+        property_id: propertyId,
+        property: propertyName,
+        year: y,
+        month: mo,
+        office_rent_revenue: num(r.office_rent_revenue),
+        meeting_room_revenue: num(r.meeting_room_revenue),
+        hot_desk_revenue: num(r.hot_desk_revenue),
+        venue_revenue: num(r.venue_revenue),
+        virtual_office_revenue: num(r.virtual_office_revenue),
+        furniture_revenue: num(r.furniture_revenue),
+        additional_services_revenue: num(r.additional_services_revenue),
+        total_revenue: num(r.total_revenue),
+      };
+      if (r.account_code != null) row.account_code = r.account_code;
+      if (r.account_name != null) row.account_name = r.account_name;
+      if (r.category != null) row.category = r.category;
+      map.set(key, row);
+    } else {
+      for (const k of TULOS_AGG_REVENUE_KEYS) {
+        ex[k] = num(ex[k]) + num(r[k]);
+      }
+      ex.total_revenue = num(ex.total_revenue) + num(r.total_revenue);
+    }
+  }
+
+  return Array.from(map.values());
 }

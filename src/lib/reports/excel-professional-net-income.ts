@@ -58,33 +58,67 @@ export async function buildProfessionalNetIncomeExcel(
     if (typeof v === "number") r.getCell(2).numFmt = k.includes("%") ? "0.0" : EUR_FMT;
   });
 
+  const showPlatformFee = pack.monthlyRows.some((r) => r.platformManagementFeeExVat != null && r.platformManagementFeeExVat > 0);
   const monthly = wb.addWorksheet("02_Monthly_P_L");
-  monthly.addRow([
-    "Month",
-    "Basis",
-    "Rev net",
-    "Rev VAT",
-    "Rev gross",
-    "Cost net",
-    "Cost VAT",
-    "Cost gross",
-    "Net ex-VAT",
-  ]);
+  monthly.addRow(
+    showPlatformFee
+      ? [
+          "Month",
+          "Basis",
+          "Rev net",
+          "Rev VAT",
+          "Rev gross",
+          "Cost net",
+          "Cost VAT",
+          "Cost gross",
+          "NOI ex-VAT",
+          "Platform mgmt fee",
+          "Net after fee",
+        ]
+      : [
+          "Month",
+          "Basis",
+          "Rev net",
+          "Rev VAT",
+          "Rev gross",
+          "Cost net",
+          "Cost VAT",
+          "Cost gross",
+          "Net ex-VAT",
+        ],
+  );
   styleHeaderRow(monthly.getRow(1));
   pack.monthlyRows.forEach((m, i) => {
     const r = monthly.getRow(i + 2);
-    r.values = [
-      m.monthKey,
-      m.basis,
-      m.revenue.net,
-      m.revenue.vat,
-      m.revenue.gross,
-      m.costs.net,
-      m.costs.vat,
-      m.costs.gross,
-      m.netOperatingExVat,
-    ];
-    for (let c = 3; c <= 9; c++) r.getCell(c).numFmt = EUR_FMT;
+    if (showPlatformFee) {
+      r.values = [
+        m.monthKey,
+        m.basis,
+        m.revenue.net,
+        m.revenue.vat,
+        m.revenue.gross,
+        m.costs.net,
+        m.costs.vat,
+        m.costs.gross,
+        m.netOperatingExVat,
+        m.platformManagementFeeExVat ?? 0,
+        m.netAfterPlatformFeeExVat ?? m.netOperatingExVat,
+      ];
+      for (let c = 3; c <= 11; c++) r.getCell(c).numFmt = EUR_FMT;
+    } else {
+      r.values = [
+        m.monthKey,
+        m.basis,
+        m.revenue.net,
+        m.revenue.vat,
+        m.revenue.gross,
+        m.costs.net,
+        m.costs.vat,
+        m.costs.gross,
+        m.netOperatingExVat,
+      ];
+      for (let c = 3; c <= 9; c++) r.getCell(c).numFmt = EUR_FMT;
+    }
   });
 
   const chart = wb.addWorksheet("03_Revenue_trend");

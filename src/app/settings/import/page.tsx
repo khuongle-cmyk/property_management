@@ -7,7 +7,10 @@ import type { ImportType } from "@/lib/historical-import/types";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { loadScopedPropertiesForUser } from "@/lib/properties/scoped";
 import { formatPropertyLabel } from "@/lib/properties/label";
-import { parseTuloslaskelmaFromArrayBuffer } from "@/lib/procountor/tuloslaskelma";
+import {
+  aggregateTuloslaskelmaRevenueRowsForProperty,
+  parseTuloslaskelmaFromArrayBuffer,
+} from "@/lib/procountor/tuloslaskelma";
 import { formatDateTime } from "@/lib/date/format";
 
 type Software = "generic" | "procountor" | "netvisor" | "visma";
@@ -490,9 +493,8 @@ export default function SettingsImportPage() {
         return;
       }
       const propertyName = properties.find((p) => p.id === pid)?.name ?? "";
-      const revenueRows = payloadRows
-        .filter((r) => Number(r.total_revenue ?? 0) > 0)
-        .map((r) => ({ ...r, property_id: pid, property: propertyName }));
+      const revenueRowsRaw = payloadRows.filter((r) => Number(r.total_revenue ?? 0) > 0);
+      const revenueRows = aggregateTuloslaskelmaRevenueRowsForProperty(revenueRowsRaw, pid, propertyName);
       const costRows = payloadRows
         .filter((r) => Number(r.amount_ex_vat ?? 0) > 0)
         .map((r) => ({ ...r, property_id: pid, property: propertyName }));

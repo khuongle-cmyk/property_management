@@ -47,6 +47,12 @@ export type NetIncomeMonthRow = {
   /** When administration is allocated by portfolio revenue share */
   allocatedAdministrationCost?: number;
   netIncomeAfterAdminAllocation?: number;
+  /** Platform management fee (set by super admin); subtracted for netIncomeAfterPlatformFee */
+  platformManagementFee?: number;
+  /** NOI (or after-admin NOI when allocated) minus platform management fee */
+  netIncomeAfterPlatformFee?: number;
+  /** Margin after platform fee (revenue vs netIncomeAfterPlatformFee); NOI margin stays in netMarginPct */
+  netMarginPctAfterPlatformFee?: number | null;
 };
 
 export type NetIncomeReportModel = {
@@ -63,6 +69,9 @@ export type NetIncomeReportModel = {
     costs: PropertyCostBreakdown;
     netIncome: number;
     netMarginPct: number | null;
+    platformManagementFee?: number;
+    netIncomeAfterPlatformFee?: number;
+    netMarginPctAfterPlatformFee?: number | null;
   }[];
   /** When includeAdministrationInTrueNet: central / HQ costs by month */
   administrationByMonth?: {

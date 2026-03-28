@@ -8,6 +8,7 @@ import type { NetIncomeReportModel } from "@/lib/reports/net-income-types";
 import { REPORT_READER_ROLES } from "@/lib/reports/report-access";
 import { NET_INCOME_COST_KEYS, NET_INCOME_COST_LABELS } from "@/lib/reports/net-income-cost-accounts";
 import { loadScopedPropertiesForUser } from "@/lib/properties/scoped";
+import { AdminFeeSettingsPanel } from "@/components/reports/AdminFeeSettingsPanel";
 
 type PropertyRow = { id: string; name: string; city: string | null; tenant_id: string };
 type MembershipRow = { tenant_id: string | null; role: string | null };
@@ -101,6 +102,11 @@ function NetIncomeInner() {
     }),
     [allProperties, selectedPropertyIds, range, includeAdministration, allocateAdminByRevenue],
   );
+
+  const hasPlatformFees = useMemo(() => {
+    if (!report) return false;
+    return report.rows.some((r) => (r.platformManagementFee ?? 0) > 0);
+  }, [report]);
 
   const runGenerate = useCallback(async () => {
     setGenerating(true);
@@ -312,6 +318,7 @@ function NetIncomeInner() {
           provenance, and indicative net VAT. Set <code>REPORT_BRAND_NAME</code> and <code>REPORT_LOGO_URL</code> for
           branded covers.
         </p>
+        {isSuperAdmin ? <AdminFeeSettingsPanel dateRange={range} /> : null}
       </section>
 
       {genError ? (
@@ -349,6 +356,13 @@ function NetIncomeInner() {
                   <th style={thR}>Property costs</th>
                   <th style={thR}>NOI</th>
                   <th style={thR}>Margin</th>
+                  {hasPlatformFees ? (
+                    <>
+                      <th style={thR}>{isSuperAdmin ? "Platform mgmt fee" : "Management fee (set by platform)"}</th>
+                      <th style={thR}>{isSuperAdmin ? "Net after platform fee" : "Net after fee"}</th>
+                      <th style={thR}>Margin (after fee)</th>
+                    </>
+                  ) : null}
                 </tr>
               </thead>
               <tbody>
@@ -361,6 +375,15 @@ function NetIncomeInner() {
                       <strong>{money(r.netIncome)}</strong>
                     </td>
                     <td style={tdR}>{pct(r.netMarginPct)}</td>
+                    {hasPlatformFees ? (
+                      <>
+                        <td style={tdR}>{money(r.platformManagementFee ?? 0)}</td>
+                        <td style={tdR}>
+                          <strong>{money(r.netIncomeAfterPlatformFee ?? r.netIncome)}</strong>
+                        </td>
+                        <td style={tdR}>{pct(r.netMarginPctAfterPlatformFee ?? null)}</td>
+                      </>
+                    ) : null}
                   </tr>
                 ))}
               </tbody>
@@ -516,6 +539,13 @@ function NetIncomeInner() {
                       <th style={thR}>Net after admin</th>
                     </>
                   ) : null}
+                  {hasPlatformFees ? (
+                    <>
+                      <th style={thR}>{isSuperAdmin ? "Platform mgmt fee" : "Management fee (set by platform)"}</th>
+                      <th style={thR}>{isSuperAdmin ? "Net after platform fee" : "Net after fee"}</th>
+                      <th style={thR}>Margin (after fee)</th>
+                    </>
+                  ) : null}
                   <th style={thR}>Sched.</th>
                   <th style={thR}>Conf.</th>
                 </tr>
@@ -539,6 +569,28 @@ function NetIncomeInner() {
                         </td>
                       </>
                     ) : null}
+                    {hasPlatformFees ? (
+                      <>
+                        <td style={tdR}>
+                          {isSuperAdmin ? (
+                            money(r.platformManagementFee ?? 0)
+                          ) : (
+                            <>
+                              <div>Management fee: {money(r.platformManagementFee ?? 0)}</div>
+                              {(r.platformManagementFee ?? 0) > 0 ? (
+                                <div style={{ fontSize: 11, color: "#666", marginTop: 2 }}>
+                                  Calculated by platform administrator
+                                </div>
+                              ) : null}
+                            </>
+                          )}
+                        </td>
+                        <td style={tdR}>
+                          <strong>{money(r.netIncomeAfterPlatformFee ?? r.netIncome)}</strong>
+                        </td>
+                        <td style={tdR}>{pct(r.netMarginPctAfterPlatformFee ?? null)}</td>
+                      </>
+                    ) : null}
                     <td style={tdR}>{money(r.costsScheduled)}</td>
                     <td style={tdR}>{money(r.costsConfirmed)}</td>
                   </tr>
@@ -546,6 +598,12 @@ function NetIncomeInner() {
               </tbody>
             </table>
           </div>
+
+          {!isSuperAdmin && hasPlatformFees ? (
+            <p style={{ fontSize: 12, color: "#666", marginTop: 8, maxWidth: 640 }}>
+              Management fees are set by the platform and appear in your P&amp;L as shown. You cannot change them here.
+            </p>
+          ) : null}
 
           <p style={{ fontSize: 12, color: "#666", marginTop: 20 }}>
             Revenue includes <strong>historical_revenue</strong> (P&amp;L imports) plus live leases, bookings, and services.
