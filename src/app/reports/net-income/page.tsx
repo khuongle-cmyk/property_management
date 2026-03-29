@@ -113,6 +113,7 @@ function NetIncomeInner() {
     [allProperties, selectedPropertyIds, range, includeAdministration, allocateAdminByRevenue],
   );
 
+  /** Per-property / detail tables: show admin fee breakdown when any row has fees. */
   const hasAdminFees = useMemo(() => {
     if (!report) return false;
     return report.rows.some((r) => (r.administrationFeesTotal ?? 0) > 0);
@@ -590,18 +591,16 @@ function NetIncomeInner() {
                   <th style={niThRight}>Property costs</th>
                   <th style={niThRight}>NOI</th>
                   <th style={niThRight}>Margin</th>
-                  {hasAdminFees ? (
-                    <>
-                      <th style={niThRight}>Administration fees</th>
-                      <th style={niThRight}>Net after fees</th>
-                      <th style={niThRight}>Margin (after fees)</th>
-                    </>
-                  ) : null}
+                  <th style={niThRight}>Administration fees</th>
+                  <th style={niThRight}>Net after fees</th>
+                  <th style={niThRight}>Margin (after fees)</th>
                 </tr>
               </thead>
               <tbody>
                 {report.portfolioByMonth.map((r, i) => {
                   const bg = niStripe(i);
+                  const feeLines = portfolioAdminFeeLines.get(r.monthKey) ?? [];
+                  const feeTotal = r.administrationFeesTotal ?? 0;
                   return (
                     <tr key={r.monthKey}>
                       <td style={niTdLeft(bg)}>{r.monthKey}</td>
@@ -611,38 +610,38 @@ function NetIncomeInner() {
                         <strong>{money(r.netIncome)}</strong>
                       </td>
                       <td style={niTdRight(bg)}>{pct(r.netMarginPct)}</td>
-                      {hasAdminFees ? (
-                        <>
-                          <td style={niTdRightWrap(bg)}>
-                            {isSuperAdmin ? (
-                              <div style={{ fontSize: 13 }}>
-                                {(portfolioAdminFeeLines.get(r.monthKey) ?? []).map((line) => (
-                                  <div key={line.settingId} style={{ marginBottom: 8 }}>
-                                    <div style={{ fontWeight: 600 }}>{line.reportPrimary}</div>
-                                    {line.reportSubtext ? (
-                                      <div style={{ fontSize: 12, color: "#555", marginTop: 2, whiteSpace: "pre-line" }}>
-                                        {line.reportSubtext}
-                                      </div>
-                                    ) : null}
-                                    <div style={{ marginTop: 2 }}>{money(line.amount)}</div>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <div>
-                                <div>{money(r.administrationFeesTotal ?? 0)}</div>
-                                <div style={{ fontSize: 12, color: "#555", marginTop: 2 }}>
-                                  Set by platform administrator
+                      <td style={niTdRightWrap(bg)}>
+                        {isSuperAdmin ? (
+                          <div style={{ fontSize: 13 }}>
+                            {feeLines.length > 0 ? (
+                              feeLines.map((line) => (
+                                <div key={line.settingId} style={{ marginBottom: 8 }}>
+                                  <div style={{ fontWeight: 600 }}>{line.reportPrimary}</div>
+                                  {line.reportSubtext ? (
+                                    <div style={{ fontSize: 12, color: "#555", marginTop: 2, whiteSpace: "pre-line" }}>
+                                      {line.reportSubtext}
+                                    </div>
+                                  ) : null}
+                                  <div style={{ marginTop: 2 }}>{money(line.amount)}</div>
                                 </div>
-                              </div>
+                              ))
+                            ) : (
+                              <div>{money(feeTotal)}</div>
                             )}
-                          </td>
-                          <td style={niTdRight(bg)}>
-                            <strong>{money(r.netIncomeAfterAdminFees ?? r.netIncome)}</strong>
-                          </td>
-                          <td style={niTdRight(bg)}>{pct(r.netMarginPctAfterAdminFees ?? null)}</td>
-                        </>
-                      ) : null}
+                          </div>
+                        ) : (
+                          <div>
+                            <div>{money(feeTotal)}</div>
+                            <div style={{ fontSize: 12, color: "#555", marginTop: 2 }}>
+                              Set by platform administrator
+                            </div>
+                          </div>
+                        )}
+                      </td>
+                      <td style={niTdRight(bg)}>
+                        <strong>{money(r.netIncomeAfterAdminFees ?? r.netIncome)}</strong>
+                      </td>
+                      <td style={niTdRight(bg)}>{pct(r.netMarginPctAfterAdminFees ?? null)}</td>
                     </tr>
                   );
                 })}
@@ -656,15 +655,11 @@ function NetIncomeInner() {
                     <strong>{money(portfolioByMonthTotals.noi)}</strong>
                   </td>
                   <td style={niFootRight}>{pct(portfolioByMonthTotals.marginPct)}</td>
-                  {hasAdminFees ? (
-                    <>
-                      <td style={niFootRightWrap}>{money(portfolioByMonthTotals.administrationFees)}</td>
-                      <td style={niFootRight}>
-                        <strong>{money(portfolioByMonthTotals.netAfterFees)}</strong>
-                      </td>
-                      <td style={niFootRight}>{pct(portfolioByMonthTotals.marginAfterFeesPct)}</td>
-                    </>
-                  ) : null}
+                  <td style={niFootRightWrap}>{money(portfolioByMonthTotals.administrationFees)}</td>
+                  <td style={niFootRight}>
+                    <strong>{money(portfolioByMonthTotals.netAfterFees)}</strong>
+                  </td>
+                  <td style={niFootRight}>{pct(portfolioByMonthTotals.marginAfterFeesPct)}</td>
                 </tr>
               </tfoot>
             </table>

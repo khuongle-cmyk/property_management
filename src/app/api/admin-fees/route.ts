@@ -39,10 +39,11 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  /** Payer org may be `tenant_id` (canonical) or `recipient_tenant_id` (platform-billed row). */
   const { data, error } = await supabase
     .from("administration_cost_settings")
     .select("*")
-    .eq("tenant_id", tenantId)
+    .or(`tenant_id.eq.${tenantId},recipient_tenant_id.eq.${tenantId}`)
     .order("created_at", { ascending: true });
 
   if (error) {

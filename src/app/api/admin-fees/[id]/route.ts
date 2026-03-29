@@ -4,6 +4,8 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 type Ctx = { params: Promise<{ id: string }> };
 
 type PutBody = {
+  /** Super admin may move the fee to another payer org (`tenant_id` on row). */
+  tenant_id?: string | null;
   property_id?: string | null;
   fee_name?: string | null;
   name?: string | null;
@@ -47,6 +49,15 @@ export async function PUT(req: Request, ctx: Ctx) {
   }
 
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+
+  if ("tenant_id" in body) {
+    const raw = body.tenant_id;
+    const tid = raw === null || raw === undefined || raw === "" ? null : String(raw).trim();
+    if (!tid) {
+      return NextResponse.json({ error: "tenant_id cannot be empty" }, { status: 400 });
+    }
+    patch.tenant_id = tid;
+  }
 
   if ("property_id" in body) {
     patch.property_id =

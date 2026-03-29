@@ -40,41 +40,21 @@ export default function ConditionalWorkspaceChrome({
 
   return (
     <>
-      <div
+      <AppNav appNavInitial={appNavInitial} />
+      <main
+        className="vw-main-shell"
         style={{
+          minWidth: 0,
           minHeight: "100vh",
-          display: "flex",
-          flexDirection: "row",
-          alignItems: "stretch",
+          padding: "72px 16px 24px 16px",
+          fontFamily: "var(--font-dm-sans), sans-serif",
           background: "#faf9f6",
+          color: "var(--petrol, #1a4a4a)",
+          boxSizing: "border-box",
         }}
       >
-        <div
-          className="vw-app-nav-column"
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            flexShrink: 0,
-            alignSelf: "stretch",
-            minHeight: "100vh",
-          }}
-        >
-          <AppNav appNavInitial={appNavInitial} />
-        </div>
-        <main
-          className="vw-main-shell"
-          style={{
-            flex: 1,
-            minWidth: 0,
-            padding: "72px 16px 24px 16px",
-            fontFamily: "var(--font-dm-sans), sans-serif",
-            background: "#faf9f6",
-            color: "var(--petrol, #1a4a4a)",
-          }}
-        >
-          {children}
-        </main>
-      </div>
+        {children}
+      </main>
       <style>{`
         .vw-main-shell {
           color: var(--petrol, #1a4a4a);
@@ -158,6 +138,7 @@ export default function ConditionalWorkspaceChrome({
         @media (min-width: 768px) {
           .vw-main-shell {
             padding: 24px 24px 28px 24px !important;
+            margin-left: 270px;
           }
         }
       `}</style>

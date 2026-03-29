@@ -313,12 +313,12 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
       <aside
         style={{
           width: 270,
-          minHeight: "100vh",
-          maxHeight: "100vh",
           background: b.sidebar,
-          position: "sticky",
+          position: "fixed",
           top: 0,
-          alignSelf: "flex-start",
+          left: 0,
+          bottom: 0,
+          zIndex: 60,
           display: "none",
           flexDirection: "column",
           fontFamily: navFont,

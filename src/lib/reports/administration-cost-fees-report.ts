@@ -275,10 +275,44 @@ function moneyFmt(n: number): string {
   return new Intl.NumberFormat("en-IE", { style: "currency", currency: "EUR" }).format(n);
 }
 
+/**
+ * Fee applies to this payer org (property tenant) if:
+ * - Canonical: `tenant_id` is the payer (operator / property org).
+ * - Platform-billed (legacy): `tenant_id` is the billing org (e.g. VillageWorks) and `recipient_tenant_id` is the payer org.
+ */
+export function administrationSettingAppliesToPayerTenant(
+  s: AdministrationCostSettingRow,
+  payerTenantId: string,
+): boolean {
+  if (s.tenant_id === payerTenantId) return true;
+  const rec = String(s.recipient_tenant_id ?? "").trim();
+  return rec === payerTenantId && s.tenant_id !== payerTenantId;
+}
+
+/** True when the row stores billing org in `tenant_id` and payer org in `recipient_tenant_id`. */
+export function administrationSettingIsInvertedPayerRecipient(
+  s: AdministrationCostSettingRow,
+  payerTenantId: string,
+): boolean {
+  const rec = String(s.recipient_tenant_id ?? "").trim();
+  return rec === payerTenantId && s.tenant_id !== payerTenantId;
+}
+
+function settingCouldApplyToRow(
+  s: AdministrationCostSettingRow,
+  row: NetIncomeMonthRow,
+  payerTenantId: string,
+): boolean {
+  if (!administrationSettingAppliesToPayerTenant(s, payerTenantId)) return false;
+  if (s.property_id) return s.property_id === row.propertyId;
+  return true;
+}
+
 function buildAdminFeeReportLine(
   setting: AdministrationCostSettingRow,
   amount: number,
   tenantNameById: Map<string, string>,
+  payerTenantId: string,
 ): {
   settingId: string;
   name: string;
@@ -288,11 +322,15 @@ function buildAdminFeeReportLine(
 } {
   const cat = feeCategorySlugFromSetting(setting);
   const typeLabel = ADMIN_FEE_TYPE_LABELS[cat] ?? displayNameForSetting(setting);
-  const payerName = displayTenantLabel(tenantNameById.get(setting.tenant_id) ?? null);
-  const recipientRaw =
-    setting.recipient_tenant_id != null && String(setting.recipient_tenant_id).trim() !== ""
-      ? tenantNameById.get(String(setting.recipient_tenant_id).trim())
+  const inverted = administrationSettingIsInvertedPayerRecipient(setting, payerTenantId);
+  const payerId = inverted ? payerTenantId : setting.tenant_id;
+  const recipientId = inverted
+    ? setting.tenant_id
+    : setting.recipient_tenant_id != null && String(setting.recipient_tenant_id).trim() !== ""
+      ? String(setting.recipient_tenant_id).trim()
       : null;
+  const payerName = displayTenantLabel(tenantNameById.get(payerId) ?? null);
+  const recipientRaw = recipientId ? tenantNameById.get(recipientId) : null;
   const recipientDisp = recipientRaw ? displayTenantLabel(recipientRaw) : null;
   const reportPrimary = `${typeLabel} → ${recipientDisp ?? "—"}`;
   const reportSubtext = `Recipient: ${recipientDisp ?? "—"}\nPaid by: ${payerName}`;
@@ -362,7 +400,7 @@ export function mergeAdministrationCostSettingsIntoReport(
   for (const [, rowsInGroup] of groupMap) {
     const tid = propertyTenantMap.get(rowsInGroup[0].propertyId);
     if (!tid) continue;
-    const portfolioSettings = active.filter((s) => s.tenant_id === tid && !s.property_id);
+    const portfolioSettings = active.filter((s) => !s.property_id && administrationSettingAppliesToPayerTenant(s, tid));
     for (const setting of portfolioSettings) {
       const total = portfolioFeeTotal(setting, rowsInGroup);
       if (total === 0) continue;
@@ -378,7 +416,10 @@ export function mergeAdministrationCostSettingsIntoReport(
   for (const row of report.rows) {
     const tid = propertyTenantMap.get(row.propertyId);
     if (!tid) continue;
-    const direct = active.filter((s) => s.tenant_id === tid && s.property_id === row.propertyId);
+    const direct = active.filter(
+      (s) =>
+        s.property_id === row.propertyId && administrationSettingAppliesToPayerTenant(s, tid),
+    );
     for (const setting of direct) {
       const amt = propertyFeeAmount(setting, row);
       amountByKey.set(`${row.propertyId}|${row.monthKey}|${setting.id}`, amt);
@@ -405,12 +446,12 @@ export function mergeAdministrationCostSettingsIntoReport(
       };
     }
 
-    const relevant = active.filter((s) => s.tenant_id === tid);
+    const relevant = active.filter((s) => settingCouldApplyToRow(s, row, tid));
     let totalFees = 0;
     for (const setting of relevant) {
       const amt = amountByKey.get(`${row.propertyId}|${row.monthKey}|${setting.id}`) ?? 0;
       if (amt === 0) continue;
-      lines.push(buildAdminFeeReportLine(setting, amt, tenantNameById));
+      lines.push(buildAdminFeeReportLine(setting, amt, tenantNameById, tid));
       totalFees += amt;
     }
 
@@ -481,14 +522,17 @@ export async function attachAdministrationCostFees(
     propertyTenantMap.set(p.id, p.tenant_id);
   }
   const tenantIds = [...new Set([...propertyTenantMap.values()])];
+  if (tenantIds.length === 0) return report;
 
-  const { data: settingRows, error: sErr } = await supabase
-    .from("administration_cost_settings")
-    .select(
-      "id, tenant_id, property_id, name, fee_type, custom_name, calculation_mode, fixed_amount, fixed_period, percentage_value, percentage_basis, minimum_fee, maximum_fee, is_active, recipient_tenant_id",
-    )
-    .in("tenant_id", tenantIds);
+  const selectCols =
+    "id, tenant_id, property_id, name, fee_type, custom_name, calculation_mode, fixed_amount, fixed_period, percentage_value, percentage_basis, minimum_fee, maximum_fee, is_active, recipient_tenant_id";
 
+  const [byPayerKey, byRecipientKey] = await Promise.all([
+    supabase.from("administration_cost_settings").select(selectCols).in("tenant_id", tenantIds),
+    supabase.from("administration_cost_settings").select(selectCols).in("recipient_tenant_id", tenantIds),
+  ]);
+
+  const sErr = byPayerKey.error ?? byRecipientKey.error;
   if (sErr) {
     if (sErr.code === "42P01" || String(sErr.message).includes("administration_cost_settings")) {
       return report;
@@ -497,7 +541,11 @@ export async function attachAdministrationCostFees(
     return report;
   }
 
-  const settings = (settingRows ?? []) as AdministrationCostSettingRow[];
+  const mergedById = new Map<string, AdministrationCostSettingRow>();
+  for (const row of [...(byPayerKey.data ?? []), ...(byRecipientKey.data ?? [])] as AdministrationCostSettingRow[]) {
+    mergedById.set(row.id, row);
+  }
+  const settings = [...mergedById.values()];
 
   const nameIds = new Set<string>();
   for (const s of settings) {
