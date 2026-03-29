@@ -5,6 +5,11 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type CSSProperties } from "react";
 import { useBrand } from "@/components/BrandProvider";
 import { getSupabaseClient } from "@/lib/supabase/browser";
+import {
+  computeAppNavFlagsFromRoles,
+  LOGGED_OUT_APP_NAV_INITIAL,
+  type AppNavInitialState,
+} from "@/lib/nav/nav-flags";
 
 const navFont = "var(--font-dm-sans), sans-serif";
 
@@ -28,11 +33,12 @@ function navLinkIsActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-function canSeeManageBookingsNav(role: string): boolean {
-  return ["owner", "manager", "customer_service"].includes(role);
-}
+type AppNavProps = {
+  /** From server layout (SSR session); avoids empty sidebar before hydration. */
+  appNavInitial: AppNavInitialState;
+};
 
-export default function AppNav() {
+export default function AppNav({ appNavInitial }: AppNavProps) {
   const { brand } = useBrand();
   const b = {
     primary: brand.primary_color,
@@ -45,18 +51,17 @@ export default function AppNav() {
   };
   const pathname = usePathname();
   const router = useRouter();
-  const [ready, setReady] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [loggedIn, setLoggedIn] = useState(false);
-  const [displayName, setDisplayName] = useState("User");
-  const [email, setEmail] = useState("");
-  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
-  const [showManageBookings, setShowManageBookings] = useState(false);
-  const [showOwnerDashboard, setShowOwnerDashboard] = useState(false);
-  const [showRoomsNav, setShowRoomsNav] = useState(false);
-  const [showCrmNav, setShowCrmNav] = useState(false);
-  const [showReportsNav, setShowReportsNav] = useState(false);
-  const [showMarketingNav, setShowMarketingNav] = useState(false);
+  const [loggedIn, setLoggedIn] = useState(appNavInitial.loggedIn);
+  const [displayName, setDisplayName] = useState(appNavInitial.displayName);
+  const [email, setEmail] = useState(appNavInitial.email);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(appNavInitial.isSuperAdmin);
+  const [showManageBookings, setShowManageBookings] = useState(appNavInitial.showManageBookings);
+  const [showOwnerDashboard, setShowOwnerDashboard] = useState(appNavInitial.showOwnerDashboard);
+  const [showRoomsNav, setShowRoomsNav] = useState(appNavInitial.showRoomsNav);
+  const [showCrmNav, setShowCrmNav] = useState(appNavInitial.showCrmNav);
+  const [showReportsNav, setShowReportsNav] = useState(appNavInitial.showReportsNav);
+  const [showMarketingNav, setShowMarketingNav] = useState(appNavInitial.showMarketingNav);
 
   useEffect(() => {
     let cancelled = false;
@@ -69,6 +74,8 @@ export default function AppNav() {
 
       if (!user) {
         setLoggedIn(false);
+        setDisplayName(LOGGED_OUT_APP_NAV_INITIAL.displayName);
+        setEmail(LOGGED_OUT_APP_NAV_INITIAL.email);
         setIsSuperAdmin(false);
         setShowManageBookings(false);
         setShowOwnerDashboard(false);
@@ -76,7 +83,6 @@ export default function AppNav() {
         setShowCrmNav(false);
         setShowReportsNav(false);
         setShowMarketingNav(false);
-        setReady(true);
         return;
       }
 
@@ -93,55 +99,14 @@ export default function AppNav() {
       const { data: memberships } = await supabase.from("memberships").select("role");
       const roles = (memberships ?? []).map((m) => (m.role ?? "").toLowerCase());
       if (cancelled) return;
-      setIsSuperAdmin(roles.includes("super_admin"));
-
-      setShowReportsNav(
-        roles.some((r) =>
-          ["super_admin", "owner", "manager", "accounting", "viewer"].includes(r),
-        ),
-      );
-      setShowManageBookings(roles.some(canSeeManageBookingsNav));
-      setShowOwnerDashboard(roles.some((r) => ["owner", "super_admin"].includes(r)));
-      setShowRoomsNav(
-        roles.some((r) =>
-          [
-            "super_admin",
-            "owner",
-            "manager",
-            "viewer",
-            "customer_service",
-            "accounting",
-            "maintenance",
-            "tenant",
-          ].includes(r)
-        )
-      );
-      setShowCrmNav(
-        roles.some((r) =>
-          [
-            "super_admin",
-            "owner",
-            "manager",
-            "customer_service",
-            "agent",
-            "viewer",
-          ].includes(r)
-        )
-      );
-      setShowMarketingNav(
-        roles.some((r) =>
-          [
-            "super_admin",
-            "owner",
-            "manager",
-            "customer_service",
-            "accounting",
-            "viewer",
-            "agent",
-          ].includes(r)
-        )
-      );
-      setReady(true);
+      const flags = computeAppNavFlagsFromRoles(roles);
+      setIsSuperAdmin(flags.isSuperAdmin);
+      setShowReportsNav(flags.showReportsNav);
+      setShowManageBookings(flags.showManageBookings);
+      setShowOwnerDashboard(flags.showOwnerDashboard);
+      setShowRoomsNav(flags.showRoomsNav);
+      setShowCrmNav(flags.showCrmNav);
+      setShowMarketingNav(flags.showMarketingNav);
     })();
     return () => {
       cancelled = true;
@@ -156,12 +121,6 @@ export default function AppNav() {
     const supabase = getSupabaseClient();
     await supabase.auth.signOut();
     router.push("/login");
-  }
-
-  if (!ready) {
-    return (
-      <aside style={{ width: 260, background: b.sidebar, minHeight: "100vh", display: "none" }} />
-    );
   }
 
   const sections: Array<{ title: string; items: Array<{ href: string; label: string; visible: boolean }> }> = [

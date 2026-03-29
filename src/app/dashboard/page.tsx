@@ -15,6 +15,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import DashboardLayout from "@/components/DashboardLayout";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { VILLAGEWORKS_BRAND } from "@/lib/brand/villageworks";
 
@@ -505,7 +506,7 @@ export default function DashboardPage() {
   }, [pipelineTenantId]);
 
   return (
-    <main style={{ display: "grid", gap: 14 }}>
+    <DashboardLayout>
       <section style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
         <div>
           <h1 style={{ margin: 0, fontWeight: 600, letterSpacing: "-0.02em" }}>Dashboard</h1>
@@ -1032,7 +1033,7 @@ export default function DashboardPage() {
           }
         }
       `}</style>
-    </main>
+    </DashboardLayout>
   );
 }
 

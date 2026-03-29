@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import AppNav from "@/components/AppNav";
+import type { AppNavInitialState } from "@/lib/nav/nav-flags";
 import LeadChatbotWidget from "@/components/LeadChatbotWidget";
 import VoiceAssistantWidget from "@/components/VoiceAssistantWidget";
 import { isReservedOrgSlug } from "@/lib/cms2/reserved-slugs";
@@ -17,7 +18,13 @@ function isPublicMarketingPath(pathname: string | null): boolean {
   return true;
 }
 
-export default function ConditionalWorkspaceChrome({ children }: { children: ReactNode }) {
+export default function ConditionalWorkspaceChrome({
+  children,
+  appNavInitial,
+}: {
+  children: ReactNode;
+  appNavInitial: AppNavInitialState;
+}) {
   const pathname = usePathname();
   const publicSite = isPublicMarketingPath(pathname);
 
@@ -52,7 +59,7 @@ export default function ConditionalWorkspaceChrome({ children }: { children: Rea
             minHeight: "100vh",
           }}
         >
-          <AppNav />
+          <AppNav appNavInitial={appNavInitial} />
         </div>
         <main
           className="vw-main-shell"

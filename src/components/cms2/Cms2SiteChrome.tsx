@@ -206,17 +206,31 @@ export function Cms2SiteChrome({
 
   return (
     <div
-      className={dmSans.className}
+      className={`${dmSans.className} cms2-public-shell`}
       style={{
         minHeight: "100vh",
         background: t.bg,
         color: t.text,
+        overflowX: "hidden",
+        maxWidth: "100vw",
+        width: "100%",
+        boxSizing: "border-box",
       }}
     >
       <div style={{ height: 4, background: `linear-gradient(90deg, ${t.petrol}, ${t.teal})` }} />
       <Cms2HeaderClient org={org} theme={t} nav={nav} basePath={prefix} locale={locale} ui={ui} />
       {children}
-      <footer style={{ background: t.petrolDark, color: "#b8d4d2", padding: "48px 22px 40px", marginTop: 48 }}>
+      <footer
+        style={{
+          background: t.petrolDark,
+          color: "#b8d4d2",
+          padding: "48px 22px max(40px, env(safe-area-inset-bottom, 0px))",
+          marginTop: 48,
+          overflowX: "hidden",
+          maxWidth: "100vw",
+          boxSizing: "border-box",
+        }}
+      >
         <div
           style={{
             maxWidth: 1120,
@@ -327,10 +341,13 @@ export function Cms2Hero({
         gridTemplateColumns: "minmax(0, 1.12fr) minmax(0, 1fr)",
         gap: 44,
         alignItems: "center",
+        width: "100%",
+        boxSizing: "border-box",
+        overflowX: "hidden",
       }}
       className="cms2-hero-grid"
     >
-      <div>
+      <div style={{ minWidth: 0, maxWidth: "100%" }}>
         {eyebrow ? (
           <div
             style={{
@@ -351,7 +368,7 @@ export function Cms2Hero({
           </div>
         ) : null}
         <h1
-          className={instrumentSerif.className}
+          className={`${instrumentSerif.className} cms2-hero-headline`}
           style={{
             margin: "0 0 18px",
             fontSize: "clamp(32px, 8vw, 68px)",
@@ -359,6 +376,8 @@ export function Cms2Hero({
             letterSpacing: "-0.02em",
             lineHeight: 1.12,
             color: theme.petrolDark,
+            wordBreak: "break-word",
+            overflowWrap: "anywhere",
           }}
         >
           {headMain}
@@ -369,14 +388,20 @@ export function Cms2Hero({
             </>
           ) : null}
         </h1>
-        <p style={{ margin: "0 0 26px", fontSize: "1.09rem", color: theme.muted, maxWidth: 540, lineHeight: 1.6 }}>
+        <p
+          className="cms2-hero-sub"
+          style={{ margin: "0 0 26px", fontSize: "1.09rem", color: theme.muted, maxWidth: 540, lineHeight: 1.6 }}
+        >
           {org.settings.subheadline}
         </p>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+        <div className="cms2-hero-ctas" style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
           <Link
             href={`${p}/spaces`}
             style={{
               display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              minHeight: 44,
               padding: "11px 20px",
               borderRadius: 10,
               fontWeight: 600,
@@ -393,6 +418,9 @@ export function Cms2Hero({
             href={`${p}/contact`}
             style={{
               display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              minHeight: 44,
               padding: "11px 20px",
               borderRadius: 10,
               fontWeight: 600,
@@ -408,6 +436,7 @@ export function Cms2Hero({
         </div>
         {statsLine ? (
           <p
+            className="cms2-hero-stats-line"
             style={{
               margin: "22px 0 0",
               fontSize: "0.92rem",
@@ -472,8 +501,31 @@ export function Cms2Hero({
         @media (max-width: 767px) {
           .cms2-hero-grid {
             grid-template-columns: 1fr !important;
-            padding: 28px 18px 40px !important;
+            padding: 100px 20px 60px !important;
             gap: 24px !important;
+          }
+          .cms2-hero-headline {
+            font-size: 36px !important;
+            line-height: 1.15 !important;
+          }
+          .cms2-hero-sub {
+            max-width: 100% !important;
+          }
+          .cms2-hero-ctas {
+            flex-direction: column !important;
+            align-items: stretch !important;
+          }
+          .cms2-hero-ctas a {
+            width: 100% !important;
+            box-sizing: border-box !important;
+          }
+          .cms2-hero-stats-line {
+            display: block !important;
+            overflow-x: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+            white-space: nowrap !important;
+            padding-bottom: 4px !important;
+            margin-top: 18px !important;
           }
           .cms2-hero-photo { display: none !important; }
           .cms2-hero-aside-photo { display: none !important; }

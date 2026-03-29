@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
+import DashboardLayout from "@/components/DashboardLayout";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import LogoutButton from "../dashboard/LogoutButton";
 
@@ -245,7 +246,7 @@ export default function SuperAdminDashboardPage() {
   const linkStyle = { color: "var(--teal, #3aafa9)", fontWeight: 600 as const, textDecoration: "none" as const };
 
   return (
-    <div>
+    <DashboardLayout>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
         <div>
           <h1 style={{ margin: "0 0 8px", fontSize: "1.65rem", fontWeight: 700, color: "var(--petrol, #1a4a4a)" }}>All organizations</h1>
@@ -496,7 +497,7 @@ export default function SuperAdminDashboardPage() {
           </div>
         </>
       )}
-    </div>
+    </DashboardLayout>
   );
 }
 

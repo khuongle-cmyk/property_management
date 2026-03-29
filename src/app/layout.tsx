@@ -4,6 +4,7 @@ import { DM_Sans, Instrument_Serif } from "next/font/google";
 import BrandProvider from "@/components/BrandProvider";
 import ConditionalWorkspaceChrome from "@/components/ConditionalWorkspaceChrome";
 import { DEFAULT_BRAND } from "@/lib/brand/default";
+import { getAppNavInitialState } from "@/lib/nav/get-app-nav-initial";
 
 const dmSans = DM_Sans({
   subsets: ["latin"],
@@ -32,9 +33,14 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
+  viewportFit: "cover",
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+/** Session-dependent nav must not be statically cached at build time. */
+export const dynamic = "force-dynamic";
+
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  const appNavInitial = await getAppNavInitialState();
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -52,13 +58,18 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           background: "var(--warm-white, #faf9f6)",
           color: "var(--brand-text)",
           fontFamily: "'DM Sans', sans-serif",
+          overflowX: "hidden",
+          maxWidth: "100vw",
+          paddingBottom: "env(safe-area-inset-bottom, 0px)",
         }}
       >
         <BrandProvider>
-          <ConditionalWorkspaceChrome>{children}</ConditionalWorkspaceChrome>
+          <ConditionalWorkspaceChrome appNavInitial={appNavInitial}>{children}</ConditionalWorkspaceChrome>
           <style>{`
             html {
               background: var(--warm-white, #faf9f6);
+              overflow-x: hidden;
+              max-width: 100vw;
             }
             :root {
               --petrol: #1a4a4a;

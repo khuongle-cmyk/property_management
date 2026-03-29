@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { languages, type CmsMarketingLocale } from "@/lib/cms2/marketing-locales";
 import type { CmsPublicUi } from "@/lib/cms2/public-ui";
@@ -29,14 +29,35 @@ const LANG_ITEM_STYLE = {
   color: "#2c3e3e",
 } as const;
 
+const DRAWER_ROW: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 12,
+  minHeight: 48,
+  padding: "0 4px",
+  fontFamily: "'DM Sans', sans-serif",
+  fontSize: 16,
+  fontWeight: 400,
+  color: "#2c3e3e",
+  textDecoration: "none",
+  boxSizing: "border-box",
+  width: "100%",
+};
+
 export function Cms2LanguageSwitcher({
   theme: _theme,
   currentLocale,
   ui,
+  variant = "dropdown",
+  onNavigate,
 }: {
   theme: CmsTheme;
   currentLocale: CmsMarketingLocale;
   ui: CmsPublicUi;
+  /** `drawer`: full-width stacked links for mobile menu (no trigger). */
+  variant?: "dropdown" | "drawer";
+  /** Called when a language is chosen (drawer: close parent menu). */
+  onNavigate?: () => void;
 }) {
   const pathname = usePathname() || "/";
   const searchParams = useSearchParams();
@@ -76,6 +97,44 @@ export function Cms2LanguageSwitcher({
 
   const ariaLabel = `${tx(ui, "lang.title")}: ${current.name}`;
 
+  if (variant === "drawer") {
+    return (
+      <ul
+        className="cms2-lang-drawer-list"
+        role="list"
+        style={{ listStyle: "none", margin: 0, padding: 0, width: "100%" }}
+      >
+        {languages.map((opt) => {
+          const active = currentLocale === opt.code;
+          return (
+            <li key={opt.code} style={{ margin: 0 }}>
+              <Link
+                href={hrefFor(opt.code)}
+                scroll={false}
+                onClick={() => onNavigate?.()}
+                style={{
+                  ...DRAWER_ROW,
+                  fontWeight: active ? 600 : 400,
+                  color: active ? PETROL : "#2c3e3e",
+                }}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={FLAG_URLS[opt.code]}
+                  alt=""
+                  width={22}
+                  height={16}
+                  style={{ borderRadius: 2, objectFit: "cover", flexShrink: 0 }}
+                />
+                <span>{opt.name}</span>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    );
+  }
+
   return (
     <div ref={rootRef} className="cms2-lang-switcher" style={{ position: "relative", zIndex: 60 }}>
       <style>{`
@@ -90,10 +149,21 @@ export function Cms2LanguageSwitcher({
         .cms2-lang-switcher a.cms2-lang-option:hover {
           background: ${CREAM_HOVER};
         }
+        .cms2-lang-switcher .cms2-lang-trigger-btn {
+          min-width: 44px;
+          min-height: 44px;
+        }
+        @media (min-width: 768px) {
+          .cms2-lang-switcher .cms2-lang-trigger-btn {
+            min-width: unset;
+            min-height: unset;
+          }
+        }
       `}</style>
       <button
         type="button"
         id="cms2-lang-trigger"
+        className="cms2-lang-trigger-btn"
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -102,6 +172,7 @@ export function Cms2LanguageSwitcher({
         style={{
           display: "flex",
           alignItems: "center",
+          justifyContent: "center",
           gap: "6px",
           padding: "6px 10px",
           borderRadius: "8px",

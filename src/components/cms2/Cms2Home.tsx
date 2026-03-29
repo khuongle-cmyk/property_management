@@ -45,7 +45,16 @@ export function Cms2Home({
         ui={ui}
         defaultHeroImageUrl={basePath === "" ? DEFAULT_CMS2_HERO_IMAGE_URL : null}
       />
-      <section style={{ maxWidth: 1120, margin: "0 auto", padding: "12px 22px 56px", width: "100%", boxSizing: "border-box" }}>
+      <section
+        style={{
+          maxWidth: "min(1120px, 100vw)",
+          margin: "0 auto",
+          padding: "12px 22px 56px",
+          width: "100%",
+          boxSizing: "border-box",
+          overflowX: "hidden",
+        }}
+      >
         {useApiList ? (
           <Cms2PublicSpacesFetchClient theme={t} basePath={p} locale={locale} ui={ui} variant="home" />
         ) : (
