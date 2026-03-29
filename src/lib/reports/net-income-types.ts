@@ -63,6 +63,11 @@ export type NetIncomeMonthRow = {
   netIncomeAfterAdminFees?: number;
   /** Margin after admin fees */
   netMarginPctAfterAdminFees?: number | null;
+  /** Platform / SaaS management fee allocated to this property-month */
+  platformManagementFee?: number;
+  /** After administration fees and platform management fee */
+  netIncomeAfterPlatformFee?: number;
+  netMarginPctAfterPlatformFee?: number | null;
   /** staff_costs + staff_benefits from net-income buckets — admin fee % basis (hr_costs) */
   hrStaffCosts?: number;
 };
@@ -84,6 +89,9 @@ export type NetIncomeReportModel = {
     administrationFeesTotal?: number;
     netIncomeAfterAdminFees?: number;
     netMarginPctAfterAdminFees?: number | null;
+    platformManagementFee?: number;
+    netIncomeAfterPlatformFee?: number;
+    netMarginPctAfterPlatformFee?: number | null;
   }[];
   /** When includeAdministrationInTrueNet: central / HQ costs by month */
   administrationByMonth?: {

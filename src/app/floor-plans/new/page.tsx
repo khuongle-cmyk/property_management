@@ -2,17 +2,17 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
-import { getSupabaseClient } from "@/lib/supabase/browser";
+import { Suspense, useEffect, useState, type FormEvent } from "react";
 
-type PropertyRow = { id: string; name: string | null };
+type PropertyRow = { id: string; name: string | null; tenant_id?: string | null };
 
-export default function NewFloorPlanPage() {
+function NewFloorPlanForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const preProperty = searchParams.get("propertyId")?.trim() ?? "";
 
   const [properties, setProperties] = useState<PropertyRow[]>([]);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const [propertyId, setPropertyId] = useState(preProperty);
   const [name, setName] = useState("");
   const [floorNumber, setFloorNumber] = useState(1);
@@ -20,28 +20,24 @@ export default function NewFloorPlanPage() {
   const [heightM, setHeightM] = useState(15);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [bgFile, setBgFile] = useState<File | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const supabase = getSupabaseClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) {
-        router.replace("/login");
+      const res = await fetch("/api/floor-plans/properties-for-new");
+      const json = (await res.json()) as { properties?: PropertyRow[]; error?: string };
+      if (cancelled) return;
+      if (!res.ok) {
+        setLoadErr(json.error ?? "Could not load properties");
         return;
       }
-      const { data: mems } = await supabase.from("memberships").select("tenant_id");
-      const tenantIds = [...new Set((mems ?? []).map((m) => m.tenant_id).filter(Boolean))] as string[];
-      if (!tenantIds.length) return;
-      const { data: props } = await supabase.from("properties").select("id, name").in("tenant_id", tenantIds).order("name");
-      if (!cancelled) setProperties(props ?? []);
+      setProperties(json.properties ?? []);
     })();
     return () => {
       cancelled = true;
     };
-  }, [router]);
+  }, []);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -68,7 +64,18 @@ export default function NewFloorPlanPage() {
         setError(json.error ?? "Create failed");
         return;
       }
-      if (json.id) router.push(`/floor-plans/${json.id}/edit`);
+      if (!json.id) {
+        setError("Create failed: no id");
+        return;
+      }
+
+      if (bgFile) {
+        const fd = new FormData();
+        fd.append("file", bgFile);
+        await fetch(`/api/floor-plans/${encodeURIComponent(json.id)}/background`, { method: "POST", body: fd });
+      }
+
+      router.push(`/floor-plans/${json.id}/edit`);
     } finally {
       setBusy(false);
     }
@@ -77,13 +84,13 @@ export default function NewFloorPlanPage() {
   return (
     <main style={{ maxWidth: 520, margin: "0 auto", padding: "24px 16px" }}>
       <Link href="/floor-plans" style={{ fontSize: 14 }}>
-        ← Floor plans
+        ← Floor planner
       </Link>
       <h1 style={{ marginTop: 16 }}>New floor plan</h1>
-      <p style={{ color: "#555" }}>Choose property and dimensions. You can upload a background image in the editor.</p>
+      <p style={{ color: "#555" }}>Choose property and dimensions. You can add a background before opening the editor.</p>
 
+      {loadErr ? <p style={{ color: "#b00020" }}>{loadErr}</p> : null}
       {error ? <p style={{ color: "#b00020" }}>{error}</p> : null}
-
       <form onSubmit={onSubmit} style={{ display: "grid", gap: 14, marginTop: 20 }}>
         <label style={{ display: "grid", gap: 6 }}>
           <span>Property</span>
@@ -93,7 +100,7 @@ export default function NewFloorPlanPage() {
             required
             style={{ padding: 10, borderRadius: 8, border: "1px solid #ccc" }}
           >
-            <option value="">Select…</option>
+            <option value="">{properties.length ? "Select…" : "Loading properties…"}</option>
             {properties.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name ?? p.id}
@@ -122,6 +129,51 @@ export default function NewFloorPlanPage() {
           <span>Depth (meters)</span>
           <input type="number" min={1} step={0.1} value={heightM} onChange={(e) => setHeightM(Number(e.target.value))} style={{ padding: 10, borderRadius: 8, border: "1px solid #ccc" }} />
         </label>
+
+        <div
+          style={{
+            border: "1px dashed #cbd5e1",
+            borderRadius: 10,
+            padding: 14,
+            background: "#f8fafc",
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>Background floor plan (optional)</div>
+          <label
+            style={{
+              display: "inline-block",
+              padding: "10px 14px",
+              borderRadius: 8,
+              border: "1px solid #94a3b8",
+              cursor: "pointer",
+              background: "#fff",
+              fontSize: 14,
+            }}
+          >
+            Upload PDF or image
+            <input
+              type="file"
+              accept=".pdf,.png,.jpg,.jpeg,.svg,.webp,application/pdf,image/png,image/jpeg,image/svg+xml"
+              hidden
+              onChange={(e) => setBgFile(e.target.files?.[0] ?? null)}
+            />
+          </label>
+          {bgFile ? (
+            <p style={{ margin: "10px 0 0", fontSize: 13, color: "#334155" }}>
+              Selected: <strong>{bgFile.name}</strong>
+            </p>
+          ) : null}
+          <p style={{ margin: "10px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>
+            Accepted: .pdf, .png, .jpg, .svg, .webp
+            <br />
+            Have a DWG file? Convert to PDF first at{" "}
+            <a href="https://convertio.co" target="_blank" rel="noreferrer">
+              convertio.co
+            </a>
+            .
+          </p>
+        </div>
+
         <button
           type="submit"
           disabled={busy}
@@ -139,5 +191,13 @@ export default function NewFloorPlanPage() {
         </button>
       </form>
     </main>
+  );
+}
+
+export default function NewFloorPlanPage() {
+  return (
+    <Suspense fallback={<p style={{ padding: 24 }}>Loading…</p>}>
+      <NewFloorPlanForm />
+    </Suspense>
   );
 }

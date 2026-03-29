@@ -77,7 +77,7 @@ create index if not exists bookings_tenant_id_idx on public.bookings (tenant_id)
 create index if not exists bookings_property_id_idx on public.bookings (property_id);
 create index if not exists bookings_start_at_idx on public.bookings (start_at);
 
--- No overlapping pending/confirmed bookings on the same space.
+-- No overlapping confirmed bookings on the same space (pending may overlap until approved).
 create or replace function public.prevent_booking_overlap()
 returns trigger
 language plpgsql
@@ -91,7 +91,7 @@ begin
     from public.bookings b
     where b.space_id = new.space_id
       and b.id is distinct from new.id
-      and b.status in ('pending', 'confirmed')
+      and b.status = 'confirmed'
       and tstzrange(b.start_at, b.end_at, '[)') && tstzrange(new.start_at, new.end_at, '[)')
   ) then
     raise exception 'This space is already booked for that time range';

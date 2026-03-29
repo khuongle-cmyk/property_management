@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -355,6 +355,7 @@ function parseSpaceStatusClient(v: unknown): string | null {
 
 export default function RoomsDashboardPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rooms, setRooms] = useState<RoomRow[]>([]);
@@ -700,6 +701,12 @@ export default function RoomsDashboardPage() {
       c = true;
     };
   }, [loadAll]);
+
+  useEffect(() => {
+    const q = (searchParams.get("propertyId") ?? "").trim();
+    if (!q || properties.length === 0) return;
+    if (properties.some((p) => p.id === q)) setSelectedPropertyId(q);
+  }, [searchParams, properties]);
 
   const propertyQuickStats = useMemo(() => {
     const m: Record<string, { totalRooms: number; occPct: number }> = {};

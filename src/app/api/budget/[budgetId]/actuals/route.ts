@@ -15,22 +15,26 @@ import { normalizeMemberships, resolveAllowedPropertyIds } from "@/lib/reports/r
 type Ctx = { params: Promise<{ budgetId: string }> };
 
 export async function GET(req: Request, ctx: Ctx) {
-  const { budgetId } = await ctx.params;
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  try {
+    const { budgetId } = await ctx.params;
+    const supabase = await createSupabaseServerClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { memberships, canRunReports } = await getMembershipContext(supabase, user.id);
-  if (!canRunReports) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    const { memberships, canRunReports } = await getMembershipContext(supabase, user.id);
+    if (!canRunReports) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const { budget, error } = await loadBudget(supabase, budgetId);
-  if (error) return NextResponse.json({ error }, { status: 500 });
-  if (!budget) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  if (!userCanViewBudget(memberships, budget.tenant_id)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+    const { budget, error } = await loadBudget(supabase, budgetId);
+    if (error) {
+      console.error("[GET /api/budget/[budgetId]/actuals] loadBudget:", error, { budgetId });
+      return NextResponse.json({ error }, { status: 500 });
+    }
+    if (!budget) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (!userCanViewBudget(memberships, budget.tenant_id)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
 
   const { searchParams } = new URL(req.url);
   const filterPid = (searchParams.get("propertyId") ?? "").trim() || null;
@@ -42,16 +46,32 @@ export async function GET(req: Request, ctx: Ctx) {
     scopedTenantIds,
     filterPid ? [filterPid] : null,
   );
-  if (pErr || allowedIds.length === 0) {
-    return NextResponse.json({ error: pErr ?? "No properties" }, { status: 400 });
+  if (pErr) {
+    console.warn("[GET /api/budget/[budgetId]/actuals] resolveAllowedPropertyIds:", pErr);
   }
+  const allowedSet = new Set(allowedIds ?? []);
 
   const { data: tenantProps } = await supabase.from("properties").select("id").eq("tenant_id", budget.tenant_id);
-  const propIds = (tenantProps ?? [])
-    .map((r: { id: string }) => r.id)
-    .filter((id) => allowedIds.includes(id));
-  if (propIds.length === 0) {
-    return NextResponse.json({ error: "No properties for tenant" }, { status: 400 });
+  const tenantIdSet = new Set((tenantProps ?? []).map((r: { id: string }) => r.id));
+
+  let propIds = [...tenantIdSet].filter((id) => allowedSet.has(id));
+
+  if (propIds.length === 0 && allowedSet.size > 0) {
+    const [{ data: rPid }, { data: cPid }] = await Promise.all([
+      supabase.from("budget_revenue_lines").select("property_id").eq("budget_id", budgetId),
+      supabase.from("budget_cost_lines").select("property_id").eq("budget_id", budgetId),
+    ]);
+    const fromLines = new Set<string>();
+    for (const row of [...(rPid ?? []), ...(cPid ?? [])] as { property_id: string | null }[]) {
+      const pid = row.property_id;
+      if (pid && allowedSet.has(pid)) fromLines.add(pid);
+    }
+    propIds = [...fromLines];
+  }
+
+  if (filterPid) {
+    const want = filterPid.trim().toLowerCase();
+    propIds = propIds.filter((id) => id.toLowerCase() === want);
   }
 
   const year = budget.budget_year;
@@ -99,13 +119,18 @@ export async function GET(req: Request, ctx: Ctx) {
     });
   }
 
-  return NextResponse.json({
-    year,
-    propertyIds: propIds,
-    actuals: bundle,
-    supplementalNote:
-      "Lease invoice and booking totals are raw cash components for drill-down; primary comparison uses historical_* tables when imported.",
-    loadErrors: errors,
-    months,
-  });
+    return NextResponse.json({
+      year,
+      propertyIds: propIds,
+      actuals: bundle,
+      supplementalNote:
+        "Lease invoice and booking totals are raw cash components for drill-down; primary comparison uses historical_* tables when imported.",
+      loadErrors: errors,
+      months,
+    });
+  } catch (e) {
+    console.error("[GET /api/budget/[budgetId]/actuals] unhandled:", e);
+    const msg = e instanceof Error ? e.message : "Internal error";
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
 }

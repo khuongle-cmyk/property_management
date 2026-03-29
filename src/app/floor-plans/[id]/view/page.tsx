@@ -2,11 +2,24 @@
 
 import dynamic from "next/dynamic";
 
-const FloorPlanViewer = dynamic(() => import("@/components/floor-plans/FloorPlanViewer"), {
+const FloorPlanViewerInner = dynamic(() => import("@/components/floor-plans/FloorPlanViewerInner"), {
   ssr: false,
-  loading: () => <p style={{ padding: 24, color: "#666" }}>Loading…</p>,
+  loading: () => (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        minHeight: "100vh",
+        fontFamily: "var(--font-dm-sans), sans-serif",
+        color: "#64748b",
+      }}
+    >
+      Loading viewer…
+    </div>
+  ),
 });
 
 export default function FloorPlanViewPage() {
-  return <FloorPlanViewer />;
+  return <FloorPlanViewerInner />;
 }

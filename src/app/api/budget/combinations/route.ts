@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { budgetApiErrorPayload } from "@/lib/budget/api-errors";
 import { getMembershipContext, userCanViewBudget } from "@/lib/budget/server-access";
+import { normalizeMemberships } from "@/lib/reports/report-access";
 
 export async function GET(req: Request) {
   let supabase;
@@ -43,6 +44,7 @@ export async function POST(req: Request) {
 
   const { memberships, canManageAny } = await getMembershipContext(supabase, user.id);
   if (!canManageAny) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const { isSuperAdmin } = normalizeMemberships(memberships);
 
   let body: {
     tenant_id?: string;
@@ -64,7 +66,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const { data: props } = await supabase.from("properties").select("id").eq("tenant_id", tenant_id);
+  let propsQuery = supabase.from("properties").select("id");
+  if (!isSuperAdmin) {
+    propsQuery = propsQuery.eq("tenant_id", tenant_id);
+  }
+  const { data: props } = await propsQuery;
   const allowed = new Set((props ?? []).map((p: { id: string }) => p.id));
   const property_ids = (body.property_ids ?? []).filter((id) => allowed.has(id));
 

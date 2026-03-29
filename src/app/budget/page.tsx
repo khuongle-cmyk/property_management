@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -75,8 +75,8 @@ function linesToRevenueGrid(lines: LineRow[], year: number): Record<string, Reco
   for (const c of BUDGET_REVENUE_CATEGORIES) out[c] = emptyMonthRecord(0);
   for (const row of lines) {
     if (num(row.year) !== year) continue;
-    const cat = String(row.category ?? "");
-    if (!out[cat]) continue;
+    const cat = String(row.category ?? "").trim() || "other";
+    if (!out[cat]) out[cat] = emptyMonthRecord(0);
     const m = num(row.month);
     if (m < 1 || m > 12) continue;
     out[cat][mk(m)] += num(row.budgeted_amount);
@@ -89,8 +89,8 @@ function linesToCostGrid(lines: LineRow[], year: number): Record<string, Record<
   for (const c of BUDGET_COST_TYPES) out[c] = emptyMonthRecord(0);
   for (const row of lines) {
     if (num(row.year) !== year) continue;
-    const ct = String(row.cost_type ?? "");
-    if (!out[ct]) continue;
+    const ct = String(row.cost_type ?? "").trim() || "other";
+    if (!out[ct]) out[ct] = emptyMonthRecord(0);
     const m = num(row.month);
     if (m < 1 || m > 12) continue;
     out[ct][mk(m)] += num(row.budgeted_amount);
@@ -159,7 +159,13 @@ export default function BudgetPage() {
   const [capexLines, setCapexLines] = useState<LineRow[]>([]);
   const [occLines, setOccLines] = useState<LineRow[]>([]);
   const [properties, setProperties] = useState<ScopedPropertyRow[]>([]);
-  const importFileInputRef = useRef<HTMLInputElement>(null);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [excelImportBusy, setExcelImportBusy] = useState(false);
+  const [excelImportResult, setExcelImportResult] = useState<
+    | null
+    | { ok: true; revenueRows: number; costRows: number; propertiesImported?: number; summary?: string }
+    | { ok: false; error: string }
+  >(null);
   const [propertyFilter, setPropertyFilter] = useState<string | null>(null);
   const [view, setView] = useState<"monthly" | "quarterly" | "annual">("monthly");
   const [tab, setTab] = useState<TabId>("overview");
@@ -216,24 +222,129 @@ export default function BudgetPage() {
     return base;
   }, [costGrid, staffByMonth]);
 
+  const revenueRowKeys = useMemo(() => {
+    const base = [...BUDGET_REVENUE_CATEGORIES];
+    const extras = Object.keys(revGrid).filter(
+      (k) => !base.includes(k as (typeof BUDGET_REVENUE_CATEGORIES)[number]),
+    );
+    extras.sort();
+    return [...base, ...extras];
+  }, [revGrid]);
+
+  const costRowKeysForGrid = useMemo(() => {
+    const base = [...BUDGET_COST_TYPES];
+    const extras = Object.keys(mergedCostGrid).filter(
+      (k) => !base.includes(k as (typeof BUDGET_COST_TYPES)[number]),
+    );
+    extras.sort();
+    return [...base, ...extras];
+  }, [mergedCostGrid]);
+
+  const overviewByProperty = useMemo(() => {
+    type Row = { key: string; label: string; rev: number[]; cost: number[] };
+    const byKey = new Map<string, Row>();
+    const y = year;
+    const getRow = (pid: string | null) => {
+      const key = pid ?? "__unassigned__";
+      let row = byKey.get(key);
+      if (!row) {
+        const label = pid
+          ? (properties.find((p) => p.id === pid)?.name ?? `Property ${pid.slice(0, 8)}…`)
+          : "Unassigned / org-wide";
+        row = { key, label, rev: Array(12).fill(0), cost: Array(12).fill(0) };
+        byKey.set(key, row);
+      }
+      return row;
+    };
+    for (const row of revLines as Array<{
+      property_id?: string | null;
+      year?: unknown;
+      month?: unknown;
+      budgeted_amount?: unknown;
+    }>) {
+      if (num(row.year) !== y) continue;
+      const m = num(row.month);
+      if (m < 1 || m > 12) continue;
+      getRow(row.property_id ?? null).rev[m - 1] += num(row.budgeted_amount);
+    }
+    for (const row of costLines as Array<{
+      property_id?: string | null;
+      year?: unknown;
+      month?: unknown;
+      budgeted_amount?: unknown;
+    }>) {
+      if (num(row.year) !== y) continue;
+      const m = num(row.month);
+      if (m < 1 || m > 12) continue;
+      getRow(row.property_id ?? null).cost[m - 1] += num(row.budgeted_amount);
+    }
+    const rows = [...byKey.values()].sort((a, b) => a.label.localeCompare(b.label));
+    const monthRev = Array.from({ length: 12 }, () => 0);
+    const monthCost = Array.from({ length: 12 }, () => 0);
+    const monthNet = Array.from({ length: 12 }, () => 0);
+    for (let i = 0; i < 12; i++) {
+      for (const r of rows) {
+        monthRev[i] += r.rev[i];
+        monthCost[i] += r.cost[i];
+      }
+      // budget_cost_lines.budgeted_amount is negative for expenses; net = revenue + costs (algebraic sum).
+      monthNet[i] = monthRev[i] + monthCost[i];
+    }
+    const annualRev = monthRev.reduce((a, b) => a + b, 0);
+    const annualCost = monthCost.reduce((a, b) => a + b, 0);
+    return { rows, monthRev, monthCost, monthNet, annualRev, annualCost, annualNet: annualRev + annualCost };
+  }, [revLines, costLines, year, properties]);
+
+  const revenueLabelsForGrid = useMemo(() => {
+    const o: Record<string, string> = { ...(BUDGET_REVENUE_LABELS as unknown as Record<string, string>) };
+    for (const k of revenueRowKeys) {
+      if (!o[k]) o[k] = k.replace(/_/g, " ");
+    }
+    return o;
+  }, [revenueRowKeys]);
+
+  const costLabelsForGrid = useMemo(() => {
+    const o: Record<string, string> = { ...(BUDGET_COST_LABELS as unknown as Record<string, string>) };
+    for (const k of costRowKeysForGrid) {
+      if (!o[k]) o[k] = k.replace(/_/g, " ");
+    }
+    return o;
+  }, [costRowKeysForGrid]);
+
   const revTot = useMemo(() => totalRevenuePerMonth(aggregateRevenueByMonth(revLines as never[], year, propertyFilter)), [revLines, year, propertyFilter]);
   const costTot = useMemo(
     () => totalCostPerMonth(aggregateCostByMonth(costLines as never[], year, propertyFilter, staffByMonth)),
     [costLines, year, propertyFilter, staffByMonth],
   );
 
-  const loadBudgets = useCallback(async (tid: string) => {
+  const loadBudgets = useCallback(async (tid: string, selectBudgetId?: string | null) => {
     const r = await fetch(`/api/budget?tenantId=${encodeURIComponent(tid)}`);
     if (!r.ok) return;
     const j = (await r.json()) as { budgets: BudgetMeta[] };
     setBudgets(j.budgets ?? []);
-    setSelectedId((cur) => cur ?? (j.budgets?.[0]?.id ?? null));
+    if (selectBudgetId) {
+      setSelectedId(selectBudgetId);
+    } else {
+      setSelectedId((cur) => cur ?? (j.budgets?.[0]?.id ?? null));
+    }
   }, []);
 
   const loadBundle = useCallback(async (id: string) => {
     const r = await fetch(`/api/budget/${id}`);
-    if (!r.ok) return;
-    const j = (await r.json()) as {
+    const raw = await r.text();
+    if (!r.ok) {
+      let detail = raw;
+      try {
+        const errBody = JSON.parse(raw) as { error?: string };
+        if (errBody?.error) detail = errBody.error;
+      } catch {
+        /* keep raw */
+      }
+      console.error("loadBundle failed", r.status, detail);
+      setMsg(`Could not load budget (${r.status}): ${detail}`);
+      return;
+    }
+    let j: {
       budget: BudgetMeta;
       revenueLines: LineRow[];
       costLines: LineRow[];
@@ -241,6 +352,12 @@ export default function BudgetPage() {
       capexLines: LineRow[];
       occupancyLines: LineRow[];
     };
+    try {
+      j = JSON.parse(raw) as typeof j;
+    } catch {
+      setMsg("Could not load budget: invalid response");
+      return;
+    }
     setBudget(j.budget);
     setRevLines(j.revenueLines ?? []);
     setCostLines(j.costLines ?? []);
@@ -275,7 +392,10 @@ export default function BudgetPage() {
         setCanManage(roles.some((r) => ["owner", "manager", "super_admin"].includes(r)));
       }
       const scoped = await loadScopedPropertiesForUser(supabase, user.id);
-      if (!c) setProperties(scoped.properties ?? []);
+      if (!c) {
+        setProperties(scoped.properties ?? []);
+        setIsSuperAdmin(scoped.isSuperAdmin);
+      }
       if (tid) await loadBudgets(tid);
       if (!c) setReady(true);
     })();
@@ -284,11 +404,14 @@ export default function BudgetPage() {
     };
   }, [router, loadBudgets]);
 
-  /** Super admins load all properties globally; portfolio + API must only use the active tenant. */
-  const propertiesForTenant = useMemo(
-    () => (tenantId ? properties.filter((p) => p.tenant_id === tenantId) : []),
-    [properties, tenantId],
-  );
+  /**
+   * Super admins see every property for portfolio / import mapping; other roles stay scoped to the active tenant.
+   */
+  const propertiesForTenant = useMemo(() => {
+    if (!tenantId) return [];
+    if (isSuperAdmin) return properties;
+    return properties.filter((p) => p.tenant_id === tenantId);
+  }, [properties, tenantId, isSuperAdmin]);
 
   useEffect(() => {
     setPortfolioPropIds(new Set(propertiesForTenant.map((p) => p.id)));
@@ -340,8 +463,10 @@ export default function BudgetPage() {
 
   async function updatePortfolioView() {
     if (!tenantId) return;
+    const allowed = new Set(propertiesForTenant.map((p) => p.id));
+    const portfolioIds = [...portfolioPropIds].filter((id) => allowed.has(id));
     const params = new URLSearchParams({ tenantId, year: String(year) });
-    for (const pid of portfolioPropIds) params.append("propertyId", pid);
+    for (const pid of portfolioIds) params.append("propertyId", pid);
     if (!portfolioIncludeAdmin) params.set("includeAdmin", "false");
     const r = await fetch(`/api/budget/consolidated?${params.toString()}`);
     if (!r.ok) {
@@ -595,7 +720,7 @@ export default function BudgetPage() {
       const rev = revTot[mkk] ?? 0;
       const cost = costTot[mkk] ?? 0;
       const cx = capexM[mkk] ?? 0;
-      const net = rev - cost - cx;
+      const net = rev + cost - cx;
       bal += net;
       rows.push({ month: MONTH_SHORT[m - 1], rev, cost, capex: cx, net, bal });
     }
@@ -648,54 +773,86 @@ export default function BudgetPage() {
           </button>
         )}
         {canManage && (
-          <>
-            <button
-              type="button"
-              onClick={() => {
-                console.log("[budget] Import Excel clicked", { selectedId, hasInput: !!importFileInputRef.current });
-                if (!selectedId) {
-                  setMsg("Select a budget in the dropdown first, then import.");
-                  return;
-                }
-                importFileInputRef.current?.click();
-              }}
-              style={{ padding: "8px 12px", border: "1px solid #ccc", borderRadius: 6, background: "#fff", cursor: "pointer" }}
-            >
-              Import Excel
-            </button>
+          <label
+            style={{
+              padding: "8px 12px",
+              border: "1px solid #ccc",
+              borderRadius: 6,
+              background: tenantId && !excelImportBusy ? "#fff" : "#f4f4f5",
+              cursor: tenantId && !excelImportBusy ? "pointer" : "not-allowed",
+              display: "inline-block",
+              fontSize: 14,
+            }}
+            onClick={(ev) => {
+              if (!tenantId || excelImportBusy) {
+                ev.preventDefault();
+                setMsg("Organization context missing; reload the page or pick a tenant.");
+              }
+            }}
+          >
+            <span>{excelImportBusy ? "Importing…" : "Import Excel"}</span>
             <input
-              ref={importFileInputRef}
               type="file"
               accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-              style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
-              tabIndex={-1}
-              aria-hidden
+              disabled={!tenantId || excelImportBusy}
+              style={{ display: "none" }}
               onChange={async (e) => {
                 const f = e.target.files?.[0];
-                console.log("[budget] Import Excel file input change", { fileName: f?.name, size: f?.size, selectedId });
-                if (!f) return;
-                if (!selectedId) {
-                  setMsg("Select a budget first.");
+                if (!f || !tenantId) {
                   e.target.value = "";
                   return;
                 }
+                setExcelImportBusy(true);
+                setExcelImportResult(null);
+                setMsg(null);
                 const fd = new FormData();
-                fd.set("budgetId", selectedId);
+                fd.set("tenantId", tenantId);
                 fd.set("file", f);
                 try {
-                  const r = await fetch("/api/budget/import", { method: "POST", body: fd });
+                  const r = await fetch("/api/budget/import-excel", { method: "POST", body: fd });
                   const text = await r.text();
-                  console.log("[budget] Import Excel response", { ok: r.ok, status: r.status, text: text.slice(0, 200) });
-                  setMsg(r.ok ? "Import complete." : text);
-                  if (r.ok) loadBundle(selectedId);
+                  let parsed: {
+                    ok?: boolean;
+                    error?: string;
+                    revenueLines?: number;
+                    costLines?: number;
+                    propertiesImported?: number;
+                    summary?: string;
+                    budget?: { id: string };
+                    warnings?: string[];
+                  } = {};
+                  try {
+                    parsed = JSON.parse(text) as typeof parsed;
+                  } catch {
+                    parsed = {};
+                  }
+                  if (r.ok && parsed.ok && parsed.budget?.id) {
+                    setExcelImportResult({
+                      ok: true,
+                      revenueRows: Number(parsed.revenueLines) || 0,
+                      costRows: Number(parsed.costLines) || 0,
+                      propertiesImported: Number(parsed.propertiesImported) || 0,
+                      summary: parsed.summary,
+                    });
+                    setMsg(parsed.summary ?? "Import complete.");
+                    await loadBudgets(tenantId, parsed.budget.id);
+                    await loadBundle(parsed.budget.id);
+                  } else {
+                    const err = (parsed.error ?? text) || `Import failed (${r.status})`;
+                    setExcelImportResult({ ok: false, error: err });
+                    setMsg(err);
+                  }
                 } catch (err) {
-                  console.error("[budget] Import Excel fetch failed", err);
-                  setMsg(err instanceof Error ? err.message : "Import failed");
+                  const message = err instanceof Error ? err.message : "Import failed";
+                  setExcelImportResult({ ok: false, error: message });
+                  setMsg(message);
+                } finally {
+                  setExcelImportBusy(false);
+                  e.target.value = "";
                 }
-                e.target.value = "";
               }}
             />
-          </>
+          </label>
         )}
         <button type="button" onClick={() => exportXlsx()} disabled={!selectedId} style={{ padding: "8px 12px" }}>
           Export Excel
@@ -728,6 +885,35 @@ export default function BudgetPage() {
           </span>
         )}
       </div>
+
+      {excelImportResult && (
+        <div
+          role="status"
+          style={{
+            marginBottom: 16,
+            padding: "12px 14px",
+            borderRadius: 8,
+            background: excelImportResult.ok ? "#ecfdf5" : "#fef2f2",
+            border: `1px solid ${excelImportResult.ok ? "#a7f3d0" : "#fecaca"}`,
+            fontSize: 14,
+          }}
+        >
+          {excelImportResult.ok ? (
+            <p style={{ margin: 0 }}>
+              {excelImportResult.summary ? (
+                <strong>{excelImportResult.summary}</strong>
+              ) : (
+                <>
+                  Import finished: <strong>{excelImportResult.revenueRows}</strong> revenue row(s),{" "}
+                  <strong>{excelImportResult.costRows}</strong> cost row(s) written.
+                </>
+              )}
+            </p>
+          ) : (
+            <p style={{ margin: 0, color: "#991b1b" }}>{excelImportResult.error}</p>
+          )}
+        </div>
+      )}
 
       {tenantId && propertiesForTenant.length > 0 ? (
         <section
@@ -906,6 +1092,146 @@ export default function BudgetPage() {
 
       {selectedId && budget && tab === "overview" && (
         <section>
+          <h2 style={{ fontSize: 17, margin: "0 0 12px" }}>This budget ({year}) — by property</h2>
+          <p style={{ fontSize: 13, color: "#52525b", margin: "0 0 16px" }}>
+            Monthly and annual figures from this budget’s stored revenue and cost lines (by property where applicable).
+          </p>
+
+          <h3 style={{ fontSize: 15, margin: "0 0 8px" }}>Monthly revenue by property (€)</h3>
+          <div style={{ overflowX: "auto", marginBottom: 20 }}>
+            <table style={{ borderCollapse: "collapse", fontSize: 13, minWidth: 640 }}>
+              <thead>
+                <tr style={{ background: "#f4f4f5" }}>
+                  <th style={{ textAlign: "left", padding: 8, borderBottom: "1px solid #e4e4e7" }}>Property</th>
+                  {MONTH_SHORT.map((m) => (
+                    <th key={m} style={{ textAlign: "right", padding: 8, borderBottom: "1px solid #e4e4e7" }}>
+                      {m}
+                    </th>
+                  ))}
+                  <th style={{ textAlign: "right", padding: 8, borderBottom: "1px solid #e4e4e7" }}>Year</th>
+                </tr>
+              </thead>
+              <tbody>
+                {overviewByProperty.rows.map((r) => (
+                  <tr key={`rev-${r.key}`}>
+                    <td style={{ padding: 6, borderBottom: "1px solid #f4f4f5" }}>{r.label}</td>
+                    {r.rev.map((v, i) => (
+                      <td key={i} style={{ textAlign: "right", padding: 6, borderBottom: "1px solid #f4f4f5" }}>
+                        {v.toLocaleString("en-IE", { maximumFractionDigits: 0 })}
+                      </td>
+                    ))}
+                    <td style={{ textAlign: "right", fontWeight: 600, padding: 6, borderBottom: "1px solid #f4f4f5" }}>
+                      {r.rev.reduce((a, b) => a + b, 0).toLocaleString("en-IE", { maximumFractionDigits: 0 })}
+                    </td>
+                  </tr>
+                ))}
+                <tr style={{ fontWeight: 700, background: "#fafafa" }}>
+                  <td style={{ padding: 8 }}>Total revenue</td>
+                  {overviewByProperty.monthRev.map((v, i) => (
+                    <td key={i} style={{ textAlign: "right", padding: 8 }}>
+                      {v.toLocaleString("en-IE", { maximumFractionDigits: 0 })}
+                    </td>
+                  ))}
+                  <td style={{ textAlign: "right", padding: 8 }}>
+                    {overviewByProperty.annualRev.toLocaleString("en-IE", { maximumFractionDigits: 0 })}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3 style={{ fontSize: 15, margin: "0 0 8px" }}>Monthly costs by property (€)</h3>
+          <div style={{ overflowX: "auto", marginBottom: 20 }}>
+            <table style={{ borderCollapse: "collapse", fontSize: 13, minWidth: 640 }}>
+              <thead>
+                <tr style={{ background: "#f4f4f5" }}>
+                  <th style={{ textAlign: "left", padding: 8, borderBottom: "1px solid #e4e4e7" }}>Property</th>
+                  {MONTH_SHORT.map((m) => (
+                    <th key={m} style={{ textAlign: "right", padding: 8, borderBottom: "1px solid #e4e4e7" }}>
+                      {m}
+                    </th>
+                  ))}
+                  <th style={{ textAlign: "right", padding: 8, borderBottom: "1px solid #e4e4e7" }}>Year</th>
+                </tr>
+              </thead>
+              <tbody>
+                {overviewByProperty.rows.map((r) => (
+                  <tr key={`cost-${r.key}`}>
+                    <td style={{ padding: 6, borderBottom: "1px solid #f4f4f5" }}>{r.label}</td>
+                    {r.cost.map((v, i) => (
+                      <td key={i} style={{ textAlign: "right", padding: 6, borderBottom: "1px solid #f4f4f5" }}>
+                        {v.toLocaleString("en-IE", { maximumFractionDigits: 0 })}
+                      </td>
+                    ))}
+                    <td style={{ textAlign: "right", fontWeight: 600, padding: 6, borderBottom: "1px solid #f4f4f5" }}>
+                      {r.cost.reduce((a, b) => a + b, 0).toLocaleString("en-IE", { maximumFractionDigits: 0 })}
+                    </td>
+                  </tr>
+                ))}
+                <tr style={{ fontWeight: 700, background: "#fafafa" }}>
+                  <td style={{ padding: 8 }}>Total costs</td>
+                  {overviewByProperty.monthCost.map((v, i) => (
+                    <td key={i} style={{ textAlign: "right", padding: 8 }}>
+                      {v.toLocaleString("en-IE", { maximumFractionDigits: 0 })}
+                    </td>
+                  ))}
+                  <td style={{ textAlign: "right", padding: 8 }}>
+                    {overviewByProperty.annualCost.toLocaleString("en-IE", { maximumFractionDigits: 0 })}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3 style={{ fontSize: 15, margin: "0 0 8px" }}>Net income by month (€)</h3>
+          <div style={{ overflowX: "auto", marginBottom: 24 }}>
+            <table style={{ borderCollapse: "collapse", fontSize: 13, minWidth: 640 }}>
+              <thead>
+                <tr style={{ background: "#f4f4f5" }}>
+                  <th style={{ textAlign: "left", padding: 8, borderBottom: "1px solid #e4e4e7" }}>Property</th>
+                  {MONTH_SHORT.map((m) => (
+                    <th key={m} style={{ textAlign: "right", padding: 8, borderBottom: "1px solid #e4e4e7" }}>
+                      {m}
+                    </th>
+                  ))}
+                  <th style={{ textAlign: "right", padding: 8, borderBottom: "1px solid #e4e4e7" }}>Year</th>
+                </tr>
+              </thead>
+              <tbody>
+                {overviewByProperty.rows.map((r) => {
+                  const annual = r.rev.reduce((acc, revVal, i) => acc + revVal + r.cost[i], 0);
+                  return (
+                    <tr key={`net-${r.key}`}>
+                      <td style={{ padding: 6, borderBottom: "1px solid #f4f4f5" }}>{r.label}</td>
+                      {MONTH_SHORT.map((_, i) => {
+                        const net = r.rev[i] + r.cost[i];
+                        return (
+                          <td key={i} style={{ textAlign: "right", padding: 6, borderBottom: "1px solid #f4f4f5" }}>
+                            {net.toLocaleString("en-IE", { maximumFractionDigits: 0 })}
+                          </td>
+                        );
+                      })}
+                      <td style={{ textAlign: "right", fontWeight: 600, padding: 6, borderBottom: "1px solid #f4f4f5" }}>
+                        {annual.toLocaleString("en-IE", { maximumFractionDigits: 0 })}
+                      </td>
+                    </tr>
+                  );
+                })}
+                <tr style={{ fontWeight: 700, background: "#fafafa" }}>
+                  <td style={{ padding: 8 }}>Total net income</td>
+                  {overviewByProperty.monthNet.map((v, i) => (
+                    <td key={i} style={{ textAlign: "right", padding: 8 }}>
+                      {v.toLocaleString("en-IE", { maximumFractionDigits: 0 })}
+                    </td>
+                  ))}
+                  <td style={{ textAlign: "right", padding: 8 }}>
+                    {overviewByProperty.annualNet.toLocaleString("en-IE", { maximumFractionDigits: 0 })}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
           {consolidated ? (
             <div style={{ marginBottom: 28 }}>
               <h2 style={{ fontSize: 17, margin: "0 0 12px" }}>Combined portfolio P&amp;L (annual)</h2>
@@ -1051,14 +1377,18 @@ export default function BudgetPage() {
               ["Budgeted costs", Object.values(costTot).reduce((a, b) => a + b, 0)],
               [
                 "Net income",
-                Object.values(revTot).reduce((a, b) => a + b, 0) - Object.values(costTot).reduce((a, b) => a + b, 0),
+                (() => {
+                  const tr = Object.values(revTot).reduce((a, b) => a + b, 0);
+                  const tc = Object.values(costTot).reduce((a, b) => a + b, 0);
+                  return tr + tc;
+                })(),
               ],
               [
                 "Margin %",
                 (() => {
                   const tr = Object.values(revTot).reduce((a, b) => a + b, 0);
                   const tc = Object.values(costTot).reduce((a, b) => a + b, 0);
-                  return tr > 0 ? ((tr - tc) / tr) * 100 : 0;
+                  return tr > 0 ? ((tr + tc) / tr) * 100 : 0;
                 })(),
               ],
             ].map(([label, v]) => (
@@ -1145,8 +1475,8 @@ export default function BudgetPage() {
             <p style={{ background: "#f4f4f5", padding: 12, borderRadius: 8, marginBottom: 12, fontSize: 14 }}>{aiText}</p>
           )}
           <BudgetMonthGrid
-            rowKeys={[...BUDGET_REVENUE_CATEGORIES]}
-            rowLabels={BUDGET_REVENUE_LABELS as unknown as Record<string, string>}
+            rowKeys={revenueRowKeys}
+            rowLabels={revenueLabelsForGrid}
             values={revGrid}
             onChange={onRevChange}
           />
@@ -1200,8 +1530,8 @@ export default function BudgetPage() {
             )}
           </div>
           <BudgetMonthGrid
-            rowKeys={[...BUDGET_COST_TYPES]}
-            rowLabels={BUDGET_COST_LABELS as unknown as Record<string, string>}
+            rowKeys={costRowKeysForGrid}
+            rowLabels={costLabelsForGrid}
             values={mergedCostGrid}
             onChange={onCostChange}
             readOnlyRowKeys={new Set(["staff"])}

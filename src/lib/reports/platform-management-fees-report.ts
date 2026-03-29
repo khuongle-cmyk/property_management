@@ -63,7 +63,9 @@ export function mergePlatformManagementFeesIntoReport(
     }
 
     const baseNet =
-      row.netIncomeAfterAdminAllocation != null ? row.netIncomeAfterAdminAllocation : row.netIncome;
+      row.netIncomeAfterAdminFees ??
+      row.netIncomeAfterAdminAllocation ??
+      row.netIncome;
     const netIncomeAfterPlatformFee = baseNet - fee;
 
     const netMarginPctAfterPlatformFee =
@@ -84,7 +86,8 @@ export function mergePlatformManagementFeesIntoReport(
   const portfolioByMonth = report.portfolioByMonth.map((pm) => {
     const slice = rows.filter((r) => r.monthKey === pm.monthKey);
     const platformManagementFee = slice.reduce((s, r) => s + (r.platformManagementFee ?? 0), 0);
-    const netIncomeAfterPlatformFee = pm.netIncome - platformManagementFee;
+    const afterAdminFees = pm.netIncomeAfterAdminFees ?? pm.netIncome;
+    const netIncomeAfterPlatformFee = afterAdminFees - platformManagementFee;
     const netMarginPctAfterPlatformFee =
       pm.revenue.total > 0
         ? (netIncomeAfterPlatformFee / pm.revenue.total) * 100

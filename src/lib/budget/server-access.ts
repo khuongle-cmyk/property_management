@@ -46,8 +46,10 @@ export async function loadBudget(
 }
 
 export function userCanViewBudget(memberships: MembershipRow[], budgetTenantId: string): boolean {
+  const norm = (s: string) => s.trim().toLowerCase();
   const { canRunReports, scopedTenantIds, isSuperAdmin } = normalizeMemberships(memberships);
   if (!canRunReports) return false;
   if (isSuperAdmin) return true;
-  return scopedTenantIds.includes(budgetTenantId);
+  const want = norm(budgetTenantId);
+  return scopedTenantIds.some((id) => norm(String(id)) === want);
 }

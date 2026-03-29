@@ -324,7 +324,7 @@ export default function PropertyCostsPage() {
           </p>
           <p style={{ fontSize: 14, display: "flex", gap: 14, flexWrap: "wrap", marginTop: 10 }}>
             <Link href={`/rooms`}>Rooms dashboard</Link>
-            <Link href={`/floor-plans?propertyId=${encodeURIComponent(propertyId)}`}>Floor plans</Link>
+            <Link href={`/floor-plans?propertyId=${encodeURIComponent(propertyId)}`}>Floor planner</Link>
             <Link href={`/reports/rent-roll?propertyId=${encodeURIComponent(propertyId)}`}>Rent roll report</Link>
             <Link href={`/reports/net-income?propertyId=${encodeURIComponent(propertyId)}`}>Net income report</Link>
           </p>

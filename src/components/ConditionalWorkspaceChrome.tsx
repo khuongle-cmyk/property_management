@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import AppNav from "@/components/AppNav";
 import type { AppNavInitialState } from "@/lib/nav/nav-flags";
+import AiAssistantWidget from "@/components/AiAssistantWidget";
 import LeadChatbotWidget from "@/components/LeadChatbotWidget";
 import VoiceAssistantWidget from "@/components/VoiceAssistantWidget";
 import { isReservedOrgSlug } from "@/lib/cms2/reserved-slugs";
@@ -142,7 +143,7 @@ export default function ConditionalWorkspaceChrome({
           }
         }
       `}</style>
-      <LeadChatbotWidget />
+      <AiAssistantWidget />
       <VoiceAssistantWidget />
     </>
   );

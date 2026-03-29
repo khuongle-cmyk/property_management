@@ -181,7 +181,7 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
 
   const overviewItems: NavItem[] = [
     { href: "/dashboard", label: "Dashboard", visible: showOwnerDashboard },
-    { href: "/dashboard", label: "Properties", visible: loggedIn },
+    { href: "/properties", label: "Properties", visible: loggedIn },
   ];
 
   const spacesItems: NavItem[] = [
@@ -192,8 +192,9 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
     { href: "/virtual-office", label: "Virtual Office", visible: loggedIn && showRoomsNav },
     { href: "/rooms", label: "Rooms (all products)", visible: loggedIn && showRoomsNav },
     { href: "/rooms/furniture", label: "Furniture", visible: loggedIn && showRoomsNav },
-    { href: "/floor-plans", label: "Floor Plans", visible: loggedIn && showRoomsNav },
   ];
+
+  const toolsItems: NavItem[] = [{ href: "/floor-plans", label: "Floor planner", visible: loggedIn && showRoomsNav }];
 
   const bookingsItems: NavItem[] = [
     { href: "/bookings/calendar", label: "Calendar", visible: loggedIn },
@@ -222,13 +223,15 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
     { href: "/super-admin", label: "Super Admin", visible: loggedIn && isSuperAdmin },
   ];
 
+  /** Section order: Overview + Admin are static; these match product nav spec. */
   const collapsibleSections: Array<{ id: string; title: string; items: NavItem[] }> = [
+    { id: "crm", title: "CRM", items: crmItems },
+    { id: "marketing", title: "Marketing", items: marketingItems },
     { id: "spaces", title: "Spaces", items: spacesItems },
     { id: "bookings", title: "Bookings", items: bookingsItems },
-    { id: "crm", title: "CRM", items: crmItems },
     { id: "work", title: "Work", items: workItems },
     { id: "finance", title: "Finance", items: financeItems },
-    { id: "marketing", title: "Marketing", items: marketingItems },
+    { id: "tools", title: "Tools", items: toolsItems },
   ];
 
   function renderNavLinks(items: NavItem[]) {

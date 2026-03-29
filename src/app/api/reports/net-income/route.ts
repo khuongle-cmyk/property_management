@@ -7,6 +7,7 @@ import { loadHistoricalAdminCostsAsEntries, loadHistoricalCostsAsEntries } from 
 import { loadRentRollSourceRows } from "@/lib/reports/rent-roll-data";
 import { normalizeMemberships, resolveAllowedPropertyIds } from "@/lib/reports/report-access";
 import { attachAdministrationCostFees } from "@/lib/reports/administration-cost-fees-report";
+import { attachPlatformManagementFees } from "@/lib/reports/platform-management-fees-report";
 
 type Body = {
   propertyIds?: string[] | null;
@@ -135,5 +136,6 @@ export async function POST(req: Request) {
     administrationEntries: adminEntries,
   });
   report = await attachAdministrationCostFees(supabase, report, allowedIds);
+  report = await attachPlatformManagementFees(supabase, report, allowedIds);
   return NextResponse.json(report);
 }

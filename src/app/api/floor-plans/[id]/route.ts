@@ -233,7 +233,14 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { error } = await supabase.from("floor_plans").delete().eq("id", id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  const { error: elErr } = await supabase.from("floor_plan_elements").delete().eq("floor_plan_id", id);
+  if (elErr) return NextResponse.json({ error: elErr.message }, { status: 400 });
+
+  const { error: rmErr } = await supabase.from("floor_plan_rooms").delete().eq("floor_plan_id", id);
+  if (rmErr) return NextResponse.json({ error: rmErr.message }, { status: 400 });
+
+  const { error: planErr } = await supabase.from("floor_plans").delete().eq("id", id);
+  if (planErr) return NextResponse.json({ error: planErr.message }, { status: 400 });
+
   return NextResponse.json({ ok: true });
 }

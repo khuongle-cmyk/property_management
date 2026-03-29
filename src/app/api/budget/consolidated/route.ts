@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { buildConsolidatedAnnualPL, buildConsolidatedMonthlySeries, type BudgetLinesBundle } from "@/lib/budget/consolidated-pl";
 import { getMembershipContext, userCanViewBudget } from "@/lib/budget/server-access";
+import { normalizeMemberships } from "@/lib/reports/report-access";
 
 export async function GET(req: Request) {
   const supabase = await createSupabaseServerClient();
@@ -12,12 +13,14 @@ export async function GET(req: Request) {
 
   const { memberships, canRunReports } = await getMembershipContext(supabase, user.id);
   if (!canRunReports) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const { isSuperAdmin } = normalizeMemberships(memberships);
 
   const { searchParams } = new URL(req.url);
   const tenantId = (searchParams.get("tenantId") ?? "").trim();
   const year = Number(searchParams.get("year"));
   const includeAdmin = searchParams.get("includeAdmin") !== "false";
-  const propertyIds = searchParams.getAll("propertyId").filter(Boolean);
+  const propertyIdsRaw = searchParams.getAll("propertyId");
+  const propertyIds = [...new Set(propertyIdsRaw.map((s) => s.trim()).filter(Boolean))];
 
   if (!tenantId) return NextResponse.json({ error: "tenantId required" }, { status: 400 });
   if (!Number.isFinite(year) || year < 2000 || year > 2100) {
@@ -27,24 +30,30 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  // Validate each requested property by id (RLS-visible row) and tenant ownership.
+  const normUuid = (s: string) => s.trim().toLowerCase();
+  const tenantNorm = normUuid(tenantId);
+
+  // Validate each requested property: must exist under RLS; non–super-admins must stay within the selected tenant.
   if (propertyIds.length > 0) {
-    const { data: propRows, error: propErr } = await supabase.from("properties").select("id, tenant_id").in("id", propertyIds);
+    const idNormList = propertyIds.map(normUuid);
+    let propQ = supabase.from("properties").select("id, tenant_id").in("id", idNormList);
+    if (!isSuperAdmin) {
+      propQ = propQ.eq("tenant_id", tenantNorm);
+    }
+    const { data: propRows, error: propErr } = await propQ;
     if (propErr) return NextResponse.json({ error: propErr.message }, { status: 500 });
-    const byId = new Map((propRows ?? []).map((r: { id: string; tenant_id: string }) => [r.id, r.tenant_id]));
+    const byIdNorm = new Map(
+      (propRows ?? []).map((r: { id: string; tenant_id: string }) => [normUuid(r.id), r.tenant_id]),
+    );
     for (const pid of propertyIds) {
-      const propTenant = byId.get(pid);
+      const key = normUuid(pid);
+      const propTenant = byIdNorm.get(key);
       if (!propTenant) {
-        return NextResponse.json(
-          { error: `Unknown or inaccessible property: ${pid} (not found under your access)` },
-          { status: 400 },
-        );
+        return NextResponse.json({ error: `Invalid property: ${pid}` }, { status: 400 });
       }
-      if (propTenant !== tenantId) {
+      if (!isSuperAdmin && normUuid(String(propTenant)) !== tenantNorm) {
         return NextResponse.json(
-          {
-            error: `Property ${pid} is not under tenant ${tenantId}. Use only properties for the selected organization.`,
-          },
+          { error: `Invalid property: ${pid} (not under the selected organization)` },
           { status: 400 },
         );
       }
@@ -54,9 +63,11 @@ export async function GET(req: Request) {
   const { data: budgetRows, error: bErr } = await supabase
     .from("budgets")
     .select("id, name, budget_year, budget_scope, property_id, tenant_id")
-    .eq("tenant_id", tenantId)
+    .eq("tenant_id", tenantNorm)
     .eq("budget_year", year);
   if (bErr) return NextResponse.json({ error: bErr.message }, { status: 500 });
+
+  const selectedNorm = propertyIds.length === 0 ? null : new Set(propertyIds.map(normUuid));
 
   const wantedIds: string[] = [];
   for (const row of budgetRows ?? []) {
@@ -65,7 +76,11 @@ export async function GET(req: Request) {
       if (includeAdmin) wantedIds.push(r.id);
       continue;
     }
-    if (r.budget_scope === "property" && r.property_id && (propertyIds.length === 0 || propertyIds.includes(r.property_id))) {
+    if (
+      r.budget_scope === "property" &&
+      r.property_id &&
+      (!selectedNorm || selectedNorm.has(normUuid(r.property_id)))
+    ) {
       wantedIds.push(r.id);
     }
   }

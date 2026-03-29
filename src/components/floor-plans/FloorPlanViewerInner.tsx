@@ -2,8 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Stage, Layer, Group, Rect, Line, Text } from "react-konva";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ROOM_TYPE_COLORS, type FloorPlanRoomType, type OccupancyKind } from "@/lib/floor-plans/constants";
 
 const OCC_STYLES: Record<OccupancyKind, { fill: string; stroke: string; label: string }> = {
@@ -34,9 +33,37 @@ type RoomOcc = {
   contract: { tenant_name: string | null; end_date: string | null; monthly_rent: number } | null;
 };
 
-export default function FloorPlanViewer() {
+function hitTestRoom(wx: number, wy: number, rooms: RoomOcc[]): string | null {
+  for (let i = rooms.length - 1; i >= 0; i--) {
+    const r = rooms[i];
+    if (r.shape === "polygon" && Array.isArray(r.polygon_points) && (r.polygon_points as number[]).length >= 6) {
+      const pts = r.polygon_points as number[];
+      let minX = Infinity,
+        minY = Infinity,
+        maxX = -Infinity,
+        maxY = -Infinity;
+      for (let k = 0; k < pts.length; k += 2) {
+        const px = r.x + pts[k];
+        const py = r.y + pts[k + 1];
+        minX = Math.min(minX, px);
+        maxX = Math.max(maxX, px);
+        minY = Math.min(minY, py);
+        maxY = Math.max(maxY, py);
+      }
+      if (wx >= minX && wx <= maxX && wy >= minY && wy <= maxY) return r.id;
+    } else {
+      if (wx >= r.x && wx <= r.x + r.width && wy >= r.y && wy <= r.y + r.height) return r.id;
+    }
+  }
+  return null;
+}
+
+export default function FloorPlanViewerInner() {
   const params = useParams();
   const id = typeof params.id === "string" ? params.id : "";
+
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
 
   const [viewport, setViewport] = useState({ w: 920, h: 560 });
   const [zoom, setZoom] = useState(1);
@@ -87,7 +114,10 @@ export default function FloorPlanViewer() {
 
   useEffect(() => {
     const onResize = () => {
-      setViewport({ w: Math.min(1100, window.innerWidth - 320), h: Math.max(320, window.innerHeight - 200) });
+      const el = wrapRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      setViewport({ w: Math.max(280, Math.min(1100, r.width)), h: Math.max(320, Math.min(720, window.innerHeight - 200)) });
     };
     onResize();
     window.addEventListener("resize", onResize);
@@ -109,9 +139,113 @@ export default function FloorPlanViewer() {
     });
   }, [data, filterOcc, filterType]);
 
-  const onWheel = (e: { evt: WheelEvent }) => {
-    e.evt.preventDefault();
-    setZoom((z) => Math.min(3, Math.max(0.15, z + (e.evt.deltaY > 0 ? -0.06 : 0.06))));
+  const clientToWorld = useCallback(
+    (clientX: number, clientY: number) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return { x: 0, y: 0 };
+      const rect = canvas.getBoundingClientRect();
+      const sx = ((clientX - rect.left) * canvas.width) / rect.width;
+      const sy = ((clientY - rect.top) * canvas.height) / rect.height;
+      return { x: (sx - pan.x) / zoom, y: (sy - pan.y) / zoom };
+    },
+    [pan.x, pan.y, zoom],
+  );
+
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !data) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+    const vw = viewport.w;
+    const vh = viewport.h;
+    canvas.width = Math.floor(vw * dpr);
+    canvas.height = Math.floor(vh * dpr);
+    canvas.style.width = `${vw}px`;
+    canvas.style.height = `${vh}px`;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = "#f9fafb";
+    ctx.fillRect(0, 0, vw, vh);
+    ctx.save();
+    ctx.translate(pan.x, pan.y);
+    ctx.scale(zoom, zoom);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.strokeStyle = "#cbd5e1";
+    ctx.lineWidth = 2 / zoom;
+    ctx.fillRect(0, 0, fpW, fpH);
+    ctx.strokeRect(0, 0, fpW, fpH);
+
+    for (const room of visibleRooms) {
+      const occ = OCC_STYLES[room.occupancy] ?? OCC_STYLES.unlinked;
+      const rt = room.room_type in ROOM_TYPE_COLORS ? (room.room_type as FloorPlanRoomType) : "other";
+      const base = ROOM_TYPE_COLORS[rt];
+      const fill = room.occupancy === "not_rentable" ? occ.fill : base.fill;
+      const stroke = occ.stroke;
+      ctx.fillStyle = fill;
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = 2 / zoom;
+      ctx.globalAlpha = 0.95;
+
+      if (room.shape === "polygon" && Array.isArray(room.polygon_points) && (room.polygon_points as number[]).length >= 6) {
+        const pts = room.polygon_points as number[];
+        ctx.beginPath();
+        ctx.moveTo(room.x + pts[0], room.y + pts[1]);
+        for (let i = 2; i < pts.length; i += 2) ctx.lineTo(room.x + pts[i], room.y + pts[i + 1]);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      } else {
+        ctx.fillRect(room.x, room.y, room.width, room.height);
+        ctx.strokeRect(room.x, room.y, room.width, room.height);
+      }
+
+      const label = [room.room_number, room.room_name].filter(Boolean).join(" · ") || "Room";
+      ctx.fillStyle = "#111827";
+      ctx.globalAlpha = 1;
+      ctx.font = `${12 / zoom}px system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, room.x + room.width / 2, room.y + room.height / 2);
+    }
+
+    ctx.restore();
+  }, [data, visibleRooms, pan, zoom, fpW, fpH, viewport.w, viewport.h]);
+
+  useEffect(() => {
+    draw();
+  }, [draw]);
+
+  const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!data) return;
+    const w = clientToWorld(e.clientX, e.clientY);
+    const hit = hitTestRoom(w.x, w.y, visibleRooms);
+    setHover(hit ? data.rooms.find((r) => r.id === hit) ?? null : null);
+  };
+
+  const onPointerLeave = () => setHover(null);
+
+  const onClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!data) return;
+    const w = clientToWorld(e.clientX, e.clientY);
+    const hit = hitTestRoom(w.x, w.y, visibleRooms);
+    setPanel(hit ? data.rooms.find((r) => r.id === hit) ?? null : null);
+  };
+
+  const onWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const px = ((e.clientX - rect.left) * canvas.width) / rect.width;
+    const py = ((e.clientY - rect.top) * canvas.height) / rect.height;
+    const old = zoom;
+    const delta = e.deltaY > 0 ? -0.06 : 0.06;
+    const next = Math.min(3, Math.max(0.15, old + delta));
+    const wx = (px - pan.x) / old;
+    const wy = (py - pan.y) / old;
+    setPan({ x: px - wx * next, y: py - wy * next });
+    setZoom(next);
   };
 
   if (!id) return <main style={{ padding: 24 }}>Invalid plan.</main>;
@@ -121,7 +255,7 @@ export default function FloorPlanViewer() {
   return (
     <main style={{ maxWidth: 1200, margin: "0 auto", padding: "16px" }}>
       <div style={{ marginBottom: 12, display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
-        <Link href="/floor-plans">← Floor plans</Link>
+        <Link href="/floor-plans">← Floor planner</Link>
         <Link href={`/floor-plans/${id}/edit`}>Edit</Link>
         <h1 style={{ margin: 0, flex: "1 1 auto" }}>{data.plan.name}</h1>
         {data.plan.status === "draft" ? (
@@ -159,49 +293,15 @@ export default function FloorPlanViewer() {
           </div>
         </div>
 
-        <div style={{ flex: "1 1 480px", minWidth: 280, border: "1px solid #e5e7eb", borderRadius: 12, overflow: "hidden", background: "#f9fafb" }}>
-          <Stage width={viewport.w} height={viewport.h} onWheel={onWheel}>
-            <Layer>
-              <Group x={pan.x} y={pan.y} scaleX={zoom} scaleY={zoom}>
-                <Rect x={0} y={0} width={fpW} height={fpH} fill="white" stroke="#cbd5e1" strokeWidth={2 / zoom} />
-                {visibleRooms.map((room) => {
-                  const occ = OCC_STYLES[room.occupancy] ?? OCC_STYLES.unlinked;
-                  const rt = (room.room_type as FloorPlanRoomType) in ROOM_TYPE_COLORS ? (room.room_type as FloorPlanRoomType) : "other";
-                  const base = ROOM_TYPE_COLORS[rt];
-                  const fill = room.occupancy === "not_rentable" ? occ.fill : base.fill;
-                  const stroke = occ.stroke;
-                  const label = [room.room_number, room.room_name].filter(Boolean).join(" · ") || "Room";
-                  return (
-                    <Group
-                      key={room.id}
-                      x={Number(room.x)}
-                      y={Number(room.y)}
-                      rotation={Number(room.rotation)}
-                      onMouseEnter={() => setHover(room)}
-                      onMouseLeave={() => setHover((h) => (h?.id === room.id ? null : h))}
-                      onClick={() => setPanel(room)}
-                    >
-                      {room.shape === "polygon" && Array.isArray(room.polygon_points) && (room.polygon_points as number[]).length >= 6 ? (
-                        <Line points={room.polygon_points as number[]} closed fill={fill} stroke={stroke} strokeWidth={2 / zoom} opacity={0.95} />
-                      ) : (
-                        <Rect width={Number(room.width)} height={Number(room.height)} fill={fill} stroke={stroke} strokeWidth={2 / zoom} opacity={0.95} />
-                      )}
-                      <Text
-                        x={Number(room.width) / 2}
-                        y={Number(room.height) / 2}
-                        offsetX={label.length * 3}
-                        offsetY={6 / zoom}
-                        text={label}
-                        fontSize={12 / zoom}
-                        fill="#111"
-                        listening={false}
-                      />
-                    </Group>
-                  );
-                })}
-              </Group>
-            </Layer>
-          </Stage>
+        <div ref={wrapRef} style={{ flex: "1 1 480px", minWidth: 280, border: "1px solid #e5e7eb", borderRadius: 12, overflow: "hidden", background: "#f9fafb" }}>
+          <canvas
+            ref={canvasRef}
+            onPointerMove={onPointerMove}
+            onPointerLeave={onPointerLeave}
+            onClick={onClick}
+            onWheel={onWheel}
+            style={{ display: "block", cursor: "default", touchAction: "none" }}
+          />
         </div>
 
         <aside style={{ width: 280, minWidth: 240, border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, fontSize: 14 }}>

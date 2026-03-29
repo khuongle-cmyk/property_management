@@ -23,6 +23,8 @@ export default function FloorPlansListPage() {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
@@ -59,12 +61,18 @@ export default function FloorPlansListPage() {
     if (json.id) router.push(`/floor-plans/${encodeURIComponent(json.id)}/edit`);
   }
 
-  async function onDelete(id: string) {
-    if (!confirm("Delete this floor plan?")) return;
-    const res = await fetch(`/api/floor-plans/${encodeURIComponent(id)}`, { method: "DELETE" });
+  async function confirmDelete() {
+    if (!deleteId) return;
+    setDeleteBusy(true);
+    setError(null);
+    const res = await fetch(`/api/floor-plans/${encodeURIComponent(deleteId)}`, { method: "DELETE" });
     const json = (await res.json()) as { error?: string };
+    setDeleteBusy(false);
     if (!res.ok) setError(json.error ?? "Delete failed");
-    else await load();
+    else {
+      setDeleteId(null);
+      await load();
+    }
   }
 
   return (
@@ -76,7 +84,7 @@ export default function FloorPlansListPage() {
       </div>
 
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 20 }}>
-        <h1 style={{ margin: 0 }}>Floor plans</h1>
+        <h1 style={{ margin: 0 }}>Floor planner</h1>
         <Link
           href={filterPropertyId ? `/floor-plans/new?propertyId=${encodeURIComponent(filterPropertyId)}` : "/floor-plans/new"}
           style={{
@@ -106,7 +114,7 @@ export default function FloorPlansListPage() {
       {loading ? (
         <p style={{ color: "#666" }}>Loading…</p>
       ) : rows.length === 0 ? (
-        <p style={{ color: "#666" }}>No floor plans yet. Create one to start drawing.</p>
+        <p style={{ color: "#666" }}>No plans yet. Create one to start drawing.</p>
       ) : (
         <div style={{ overflowX: "auto", border: "1px solid #e5e7eb", borderRadius: 12 }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
@@ -137,11 +145,11 @@ export default function FloorPlansListPage() {
                     <Link href={`/floor-plans/${r.id}/view`} style={{ color: "#1a4a4a" }}>
                       View
                     </Link>
+                    <button type="button" style={{ background: "none", border: "none", color: "#b00020", cursor: "pointer", padding: 0 }} onClick={() => setDeleteId(r.id)}>
+                      Delete
+                    </button>
                     <button type="button" style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", padding: 0 }} onClick={() => onDuplicate(r.id)}>
                       Duplicate
-                    </button>
-                    <button type="button" style={{ background: "none", border: "none", color: "#b00020", cursor: "pointer", padding: 0 }} onClick={() => onDelete(r.id)}>
-                      Delete
                     </button>
                   </td>
                 </tr>
@@ -150,6 +158,70 @@ export default function FloorPlansListPage() {
           </table>
         </div>
       )}
+
+      {deleteId ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-floor-plan-title"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(15,23,42,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 50,
+            padding: 16,
+          }}
+          onClick={() => (deleteBusy ? null : setDeleteId(null))}
+        >
+          <div
+            style={{
+              background: "#fff",
+              borderRadius: 12,
+              padding: 24,
+              maxWidth: 400,
+              width: "100%",
+              boxShadow: "0 20px 40px rgba(0,0,0,0.12)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="delete-floor-plan-title" style={{ margin: "0 0 12px", fontSize: 18 }}>
+              Delete floor plan
+            </h2>
+            <p style={{ margin: "0 0 20px", color: "#374151", lineHeight: 1.5 }}>
+              Delete this floor plan? This cannot be undone.
+            </p>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                disabled={deleteBusy}
+                onClick={() => setDeleteId(null)}
+                style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #d1d5db", background: "#fff", cursor: deleteBusy ? "not-allowed" : "pointer" }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleteBusy}
+                onClick={() => void confirmDelete()}
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: "#b00020",
+                  color: "#fff",
+                  fontWeight: 600,
+                  cursor: deleteBusy ? "not-allowed" : "pointer",
+                }}
+              >
+                {deleteBusy ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

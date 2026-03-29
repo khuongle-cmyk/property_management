@@ -116,7 +116,9 @@ function NetIncomeInner() {
   /** Per-property / detail tables: show admin fee breakdown when any row has fees. */
   const hasAdminFees = useMemo(() => {
     if (!report) return false;
-    return report.rows.some((r) => (r.administrationFeesTotal ?? 0) > 0);
+    return report.rows.some(
+      (r) => (r.administrationFeesTotal ?? 0) > 0 || (r.platformManagementFee ?? 0) > 0,
+    );
   }, [report]);
 
   const portfolioAdminFeeLines = useMemo(() => {
@@ -205,8 +207,8 @@ function NetIncomeInner() {
       revenue += r.revenue.total;
       costs += r.costs.total;
       noi += r.netIncome;
-      administrationFees += r.administrationFeesTotal ?? 0;
-      netAfterFees += r.netIncomeAfterAdminFees ?? r.netIncome;
+      administrationFees += (r.administrationFeesTotal ?? 0) + (r.platformManagementFee ?? 0);
+      netAfterFees += r.netIncomeAfterPlatformFee ?? r.netIncomeAfterAdminFees ?? r.netIncome;
     }
     return {
       revenue,
@@ -289,8 +291,8 @@ function NetIncomeInner() {
       noi += r.netIncome;
       allocatedAdmin += r.allocatedAdministrationCost ?? 0;
       netAfterAdminAlloc += r.netIncomeAfterAdminAllocation ?? r.netIncome;
-      administrationFees += r.administrationFeesTotal ?? 0;
-      netAfterFees += r.netIncomeAfterAdminFees ?? r.netIncome;
+      administrationFees += (r.administrationFeesTotal ?? 0) + (r.platformManagementFee ?? 0);
+      netAfterFees += r.netIncomeAfterPlatformFee ?? r.netIncomeAfterAdminFees ?? r.netIncome;
       scheduled += r.costsScheduled;
       confirmed += r.costsConfirmed;
     }
@@ -591,16 +593,22 @@ function NetIncomeInner() {
                   <th style={niThRight}>Property costs</th>
                   <th style={niThRight}>NOI</th>
                   <th style={niThRight}>Margin</th>
-                  <th style={niThRight}>Administration fees</th>
-                  <th style={niThRight}>Net after fees</th>
-                  <th style={niThRight}>Margin (after fees)</th>
+                  <th style={{ ...niThRight, minWidth: 120 }}>Administration fees</th>
+                  <th style={{ ...niThRight, minWidth: 112 }}>Net after fees</th>
+                  <th style={{ ...niThRight, minWidth: 100 }}>Margin (after fees)</th>
                 </tr>
               </thead>
               <tbody>
                 {report.portfolioByMonth.map((r, i) => {
                   const bg = niStripe(i);
                   const feeLines = portfolioAdminFeeLines.get(r.monthKey) ?? [];
-                  const feeTotal = r.administrationFeesTotal ?? 0;
+                  const adminCfg = r.administrationFeesTotal ?? 0;
+                  const platformFee = r.platformManagementFee ?? 0;
+                  const feeTotal = adminCfg + platformFee;
+                  const netAfter =
+                    r.netIncomeAfterPlatformFee ?? r.netIncomeAfterAdminFees ?? r.netIncome;
+                  const marginAfter =
+                    r.netMarginPctAfterPlatformFee ?? r.netMarginPctAfterAdminFees ?? null;
                   return (
                     <tr key={r.monthKey}>
                       <td style={niTdLeft(bg)}>{r.monthKey}</td>
@@ -610,7 +618,7 @@ function NetIncomeInner() {
                         <strong>{money(r.netIncome)}</strong>
                       </td>
                       <td style={niTdRight(bg)}>{pct(r.netMarginPct)}</td>
-                      <td style={niTdRightWrap(bg)}>
+                      <td style={{ ...niTdRightWrap(bg), minWidth: 120 }}>
                         {isSuperAdmin ? (
                           <div style={{ fontSize: 13 }}>
                             {feeLines.length > 0 ? (
@@ -626,22 +634,28 @@ function NetIncomeInner() {
                                 </div>
                               ))
                             ) : (
-                              <div>{money(feeTotal)}</div>
+                              <div>{money(adminCfg)}</div>
                             )}
+                            {platformFee > 0 ? (
+                              <div style={{ marginTop: feeLines.length ? 8 : 0 }}>
+                                <div style={{ fontWeight: 600 }}>Platform management fee</div>
+                                <div style={{ marginTop: 2 }}>{money(platformFee)}</div>
+                              </div>
+                            ) : null}
                           </div>
                         ) : (
                           <div>
                             <div>{money(feeTotal)}</div>
                             <div style={{ fontSize: 12, color: "#555", marginTop: 2 }}>
-                              Set by platform administrator
+                              Config + platform fees (if any)
                             </div>
                           </div>
                         )}
                       </td>
-                      <td style={niTdRight(bg)}>
-                        <strong>{money(r.netIncomeAfterAdminFees ?? r.netIncome)}</strong>
+                      <td style={{ ...niTdRight(bg), minWidth: 112 }}>
+                        <strong>{money(netAfter)}</strong>
                       </td>
-                      <td style={niTdRight(bg)}>{pct(r.netMarginPctAfterAdminFees ?? null)}</td>
+                      <td style={{ ...niTdRight(bg), minWidth: 100 }}>{pct(marginAfter)}</td>
                     </tr>
                   );
                 })}
@@ -945,9 +959,15 @@ function NetIncomeInner() {
                             )}
                           </td>
                           <td style={niTdRight(bg)}>
-                            <strong>{money(r.netIncomeAfterAdminFees ?? r.netIncome)}</strong>
+                            <strong>
+                              {money(
+                                r.netIncomeAfterPlatformFee ?? r.netIncomeAfterAdminFees ?? r.netIncome,
+                              )}
+                            </strong>
                           </td>
-                          <td style={niTdRight(bg)}>{pct(r.netMarginPctAfterAdminFees ?? null)}</td>
+                          <td style={niTdRight(bg)}>
+                            {pct(r.netMarginPctAfterPlatformFee ?? r.netMarginPctAfterAdminFees ?? null)}
+                          </td>
                         </>
                       ) : null}
                       <td style={niTdRight(bg)}>{money(r.costsScheduled)}</td>

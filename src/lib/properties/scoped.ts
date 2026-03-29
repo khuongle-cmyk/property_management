@@ -5,6 +5,13 @@ export type ScopedPropertyRow = {
   name: string | null;
   city: string | null;
   tenant_id: string | null;
+  address?: string | null;
+  postal_code?: string | null;
+  total_units?: number | null;
+  occupied_units?: number | null;
+  status?: string | null;
+  /** Nested from `tenants` when selected with join (PostgREST may return object or single-element array) */
+  tenants?: { name: string | null } | { name: string | null }[] | null;
 };
 
 export async function loadScopedPropertiesForUser(
@@ -23,15 +30,27 @@ export async function loadScopedPropertiesForUser(
   const isSuperAdmin = roleRows.some((m) => m.role === "super_admin");
   const tenantIds = [...new Set(roleRows.map((m) => m.tenant_id).filter(Boolean))];
 
-  let q = supabase.from("properties").select("id,name,city,tenant_id").order("name", { ascending: true });
+  let q = supabase
+    .from("properties")
+    .select("id,name,city,tenant_id,address,postal_code,total_units,occupied_units,status,tenants(name)")
+    .order("name", { ascending: true });
   if (!isSuperAdmin) {
     if (tenantIds.length === 0) return { properties: [], isSuperAdmin, tenantIds };
     q = q.in("tenant_id", tenantIds);
   }
 
   const { data } = await q;
+  const raw = (data ?? []) as Record<string, unknown>[];
+  const properties: ScopedPropertyRow[] = raw.map((row) => {
+    const t = row.tenants;
+    let tenants: ScopedPropertyRow["tenants"];
+    if (t == null) tenants = null;
+    else if (Array.isArray(t)) tenants = (t[0] as { name: string | null }) ?? null;
+    else tenants = t as { name: string | null };
+    return { ...row, tenants } as ScopedPropertyRow;
+  });
   return {
-    properties: ((data ?? []) as ScopedPropertyRow[]) ?? [],
+    properties,
     isSuperAdmin,
     tenantIds,
   };
