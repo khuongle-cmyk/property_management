@@ -1,29 +1,13 @@
 -- =====================================================================
--- rooms_status_available_upgrade.sql
--- Align database + booking trigger/policies to statuses:
---   available, occupied, under_maintenance
---
--- Run in Supabase SQL Editor after your constraint/data update.
+-- Fix booking insert trigger: accept space_status available OR vacant,
+-- require is_published (when column exists), keep office / overlap rules.
+-- Run in Supabase SQL Editor if inserts fail with "Space is not available for booking"
+-- while the space is bookable in the UI.
 -- =====================================================================
 
 alter table public.bookable_spaces
   add column if not exists is_published boolean not null default true;
 
--- Normalize legacy values (if present) so the rest of the app can use only
--- available/occupied/under_maintenance.
-update public.bookable_spaces
-set space_status = 'available'
-where space_status = 'vacant';
-
-update public.bookable_spaces
-set space_status = 'occupied'
-where space_status = 'unavailable';
-
--- Ensure default
-alter table public.bookable_spaces
-  alter column space_status set default 'available';
-
--- ---- Booking trigger: available or vacant; published; offices not hourly-bookable ----
 create or replace function public.bookings_before_insert()
 returns trigger
 language plpgsql
@@ -100,7 +84,7 @@ begin
 end;
 $$;
 
--- ---- Anon policy: public bookable spaces ----
+-- Keep anon policy aligned with both statuses (if policy exists)
 drop policy if exists "bookable_spaces_select_anon" on public.bookable_spaces;
 create policy "bookable_spaces_select_anon"
 on public.bookable_spaces
@@ -110,4 +94,3 @@ using (
   space_status in ('available', 'vacant')
   and coalesce(is_published, true) = true
 );
-

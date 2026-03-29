@@ -19,7 +19,7 @@ function NewEmailCampaignPage() {
   const router = useRouter();
   const search = useSearchParams();
   const editId = search.get("id");
-  const { tenantId, querySuffix, loading: ctxLoading } = useMarketingTenant();
+  const { tenantId, querySuffix, loading: ctxLoading, dataReady, allOrganizations } = useMarketingTenant();
 
   const [step, setStep] = useState(1);
   const [emailId, setEmailId] = useState<string | null>(editId);
@@ -195,7 +195,7 @@ function NewEmailCampaignPage() {
       setBusy(false);
       if (ok) {
         setMsg("Scheduled. Sending uses Resend when you trigger send from ops (scheduled dispatch not automated in this build).");
-        router.push("/marketing/email");
+        router.push(`/marketing/email${querySuffix}`);
       }
       return;
     }
@@ -208,10 +208,23 @@ function NewEmailCampaignPage() {
       return;
     }
     setMsg(`Sent: ${j.sent}, failed: ${j.failed}`);
-    router.push("/marketing/email");
+    router.push(`/marketing/email${querySuffix}`);
   }
 
-  if (ctxLoading || !tenantId) return null;
+  if (ctxLoading || !dataReady) return null;
+  if (allOrganizations) {
+    return (
+      <div style={{ maxWidth: 560, display: "grid", gap: 16 }}>
+        <p style={{ margin: 0, fontSize: 15, color: "rgba(26,74,74,0.85)" }}>
+          Select a single organization in the header to create or edit email campaigns.
+        </p>
+        <Link href={`/marketing/email${querySuffix}`} style={{ fontSize: 14 }}>
+          ← Back to list
+        </Link>
+      </div>
+    );
+  }
+  if (!tenantId) return null;
   if (!loaded) return <p>Loading draft…</p>;
 
   const stepStyle = (n: number) => ({
@@ -230,7 +243,7 @@ function NewEmailCampaignPage() {
         <span style={stepStyle(3)}>3 Recipients</span>
         <span style={stepStyle(4)}>4 Schedule</span>
       </div>
-      <Link href="/marketing/email" style={{ fontSize: 14 }}>
+      <Link href={`/marketing/email${querySuffix}`} style={{ fontSize: 14 }}>
         ← Back to list
       </Link>
       {msg ? <p style={{ color: msg.startsWith("Sent") || msg.includes("Recipient") ? "#0d6b4d" : "#b42318" }}>{msg}</p> : null}

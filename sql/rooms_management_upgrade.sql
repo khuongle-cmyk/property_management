@@ -66,6 +66,7 @@ alter table public.bookable_spaces add column if not exists daily_price_eur nume
 
 alter table public.bookable_spaces add column if not exists combination_id uuid references public.room_combinations(id) on delete set null;
 alter table public.bookable_spaces add column if not exists is_combination_parent boolean not null default false;
+alter table public.bookable_spaces add column if not exists is_published boolean not null default true;
 
 -- ---- Migrate enums / status values ----
 alter table public.bookable_spaces drop constraint if exists bookable_spaces_space_type_check;
@@ -91,7 +92,7 @@ create unique index if not exists bookable_spaces_one_combo_parent_idx
   on public.bookable_spaces (combination_id)
   where is_combination_parent = true and combination_id is not null;
 
--- ---- Booking trigger: vacant only; offices not hourly-bookable via this flow ----
+-- ---- Booking trigger: vacant or available; published; offices not hourly-bookable ----
 create or replace function public.bookings_before_insert()
 returns trigger
 language plpgsql
@@ -106,9 +107,24 @@ declare
   v_space_status text;
   v_space_type text;
   v_hours numeric;
+  v_published boolean;
 begin
-  select bs.property_id, p.tenant_id, bs.requires_approval, bs.hourly_price, bs.space_status, bs.space_type
-  into v_property_id, v_tenant_id, v_requires, v_hourly, v_space_status, v_space_type
+  select
+    bs.property_id,
+    p.tenant_id,
+    bs.requires_approval,
+    bs.hourly_price,
+    bs.space_status,
+    bs.space_type,
+    coalesce(bs.is_published, true)
+  into
+    v_property_id,
+    v_tenant_id,
+    v_requires,
+    v_hourly,
+    v_space_status,
+    v_space_type,
+    v_published
   from public.bookable_spaces bs
   join public.properties p on p.id = bs.property_id
   where bs.id = new.space_id;
@@ -117,8 +133,13 @@ begin
     raise exception 'Invalid space_id';
   end if;
 
-  if v_space_status is distinct from 'vacant' then
+  if v_space_status is null
+     or lower(trim(v_space_status)) not in ('available', 'vacant') then
     raise exception 'Space is not available for booking';
+  end if;
+
+  if v_published is not true then
+    raise exception 'Space is not published for booking';
   end if;
 
   if v_space_type = 'office' then
@@ -154,7 +175,10 @@ create policy "bookable_spaces_select_anon"
 on public.bookable_spaces
 for select
 to anon
-using (space_status = 'vacant');
+using (
+  space_status in ('available', 'vacant')
+  and coalesce(is_published, true) = true
+);
 
 -- ---- RLS: room_combinations ----
 alter table public.room_combinations enable row level security;

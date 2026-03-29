@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import * as XLSX from "xlsx";
 import { useMarketingTenant } from "@/contexts/MarketingTenantContext";
+import { pathWithMarketingScope } from "@/lib/marketing/access";
 
 type Reg = {
   id: string;
@@ -21,7 +22,7 @@ type Ev = { id: string; slug: string; name: string; status: string; is_public: b
 export default function EventDetailPage() {
   const params = useParams();
   const id = String(params?.id ?? "");
-  const { loading: ctxLoading } = useMarketingTenant();
+  const { loading: ctxLoading, querySuffix } = useMarketingTenant();
   const [ev, setEv] = useState<Ev | null>(null);
   const [regs, setRegs] = useState<Reg[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -72,7 +73,7 @@ export default function EventDetailPage() {
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
-      <Link href="/marketing/events">← Events</Link>
+      <Link href={pathWithMarketingScope("/marketing/events", querySuffix)}>← Events</Link>
       <h2 style={{ margin: 0 }}>{ev.name}</h2>
       <p style={{ margin: 0, fontSize: 14 }}>
         Status: {ev.status}

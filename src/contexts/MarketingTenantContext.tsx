@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 
 const STORAGE_KEY = "vw-marketing-tenant-id";
+/** Persisted when super admin selects combined “All organizations” */
+const STORAGE_ALL = "__all__";
 
 const MARKETING_ROLES = new Set([
   "owner",
@@ -24,6 +26,8 @@ type Ctx = {
   tenantId: string;
   tenants: TenantOpt[];
   isSuperAdmin: boolean;
+  allOrganizations: boolean;
+  dataReady: boolean;
   setTenantId: (id: string) => void;
   querySuffix: string;
 };
@@ -46,12 +50,15 @@ export function MarketingTenantProvider({ children }: { children: ReactNode }) {
 
   const setTenantId = useCallback((id: string) => {
     setTenantIdState(id);
-    if (typeof window !== "undefined" && id) {
-      try {
+    if (typeof window === "undefined") return;
+    try {
+      if (id === "") {
+        window.localStorage.setItem(STORAGE_KEY, STORAGE_ALL);
+      } else if (id) {
         window.localStorage.setItem(STORAGE_KEY, id);
-      } catch {
-        /* ignore */
       }
+    } catch {
+      /* ignore */
     }
   }, []);
 
@@ -121,11 +128,20 @@ export function MarketingTenantProvider({ children }: { children: ReactNode }) {
       let initial = "";
       try {
         const saved = typeof window !== "undefined" ? window.localStorage.getItem(STORAGE_KEY) : null;
-        if (saved && list.some((t) => t.id === saved)) initial = saved;
+        if (superA && saved === STORAGE_ALL) {
+          initial = "";
+        } else if (saved && list.some((t) => t.id === saved)) {
+          initial = saved;
+        } else if (superA) {
+          initial = "";
+        } else if (list[0]) {
+          initial = list[0].id;
+        }
       } catch {
-        /* ignore */
+        if (superA) initial = "";
+        else if (list[0]) initial = list[0].id;
       }
-      if (!initial && list[0]) initial = list[0].id;
+      if (!superA && !initial && list[0]) initial = list[0].id;
 
       if (!cancelled) {
         setTenants(list);
@@ -138,10 +154,15 @@ export function MarketingTenantProvider({ children }: { children: ReactNode }) {
     };
   }, [router]);
 
+  const allOrganizations = isSuperAdmin && tenantId === "";
+
   const querySuffix = useMemo(() => {
+    if (allOrganizations) return "?allOrganizations=1";
     if (!tenantId) return "";
     return `?tenantId=${encodeURIComponent(tenantId)}`;
-  }, [tenantId]);
+  }, [tenantId, allOrganizations]);
+
+  const dataReady = !loading && !error && (tenantId !== "" || allOrganizations);
 
   const value = useMemo(
     () => ({
@@ -150,10 +171,12 @@ export function MarketingTenantProvider({ children }: { children: ReactNode }) {
       tenantId,
       tenants,
       isSuperAdmin,
+      allOrganizations,
+      dataReady,
       setTenantId,
       querySuffix,
     }),
-    [loading, error, tenantId, tenants, isSuperAdmin, setTenantId, querySuffix],
+    [loading, error, tenantId, tenants, isSuperAdmin, allOrganizations, dataReady, setTenantId, querySuffix],
   );
 
   return <MarketingTenantContext.Provider value={value}>{children}</MarketingTenantContext.Provider>;

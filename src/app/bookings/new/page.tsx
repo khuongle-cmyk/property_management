@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { spaceTypeLabel } from "@/lib/bookings/status-style";
+import { normalizeSpaceTypeKey } from "@/lib/bookings/space-availability";
 import { loadScopedPropertiesForUser } from "@/lib/properties/scoped";
 
 type PropertyRow = { id: string; name: string; city: string | null; tenant_id: string };
@@ -14,6 +15,7 @@ type SpaceRow = {
   hourly_price: number;
   requires_approval: boolean;
   space_status: string;
+  is_published?: boolean | null;
 };
 type TenantUser = { id: string; email: string; display_name: string | null };
 
@@ -97,14 +99,16 @@ export default function NewBookingPage() {
     const supabase = getSupabaseClient();
     const { data, error: sErr } = await supabase
       .from("bookable_spaces")
-      .select("id, name, space_type, hourly_price, requires_approval, space_status")
+      .select("id, name, space_type, hourly_price, requires_approval, space_status, is_published")
       .eq("property_id", pid)
-      .eq("space_status", "available")
+      .in("space_status", ["available", "vacant"])
       .not("space_type", "eq", "office")
       .order("name", { ascending: true });
 
     if (sErr) throw new Error(sErr.message);
-    const list = (data as SpaceRow[]) ?? [];
+    const list = ((data as SpaceRow[]) ?? []).filter(
+      (s) => normalizeSpaceTypeKey(s.space_type) !== "office" && s.is_published !== false,
+    );
     setSpaces(list);
     setSpaceId((prev) => {
       if (prev && list.some((s) => s.id === prev)) return prev;

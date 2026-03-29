@@ -27,11 +27,27 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const { data: propCheck } = await supabase.from("properties").select("id").eq("tenant_id", tenantId);
-  const tenantPropIds = new Set((propCheck ?? []).map((r: { id: string }) => r.id));
-  for (const pid of propertyIds) {
-    if (!tenantPropIds.has(pid)) {
-      return NextResponse.json({ error: `Invalid property: ${pid}` }, { status: 400 });
+  // Validate each requested property by id (RLS-visible row) and tenant ownership.
+  if (propertyIds.length > 0) {
+    const { data: propRows, error: propErr } = await supabase.from("properties").select("id, tenant_id").in("id", propertyIds);
+    if (propErr) return NextResponse.json({ error: propErr.message }, { status: 500 });
+    const byId = new Map((propRows ?? []).map((r: { id: string; tenant_id: string }) => [r.id, r.tenant_id]));
+    for (const pid of propertyIds) {
+      const propTenant = byId.get(pid);
+      if (!propTenant) {
+        return NextResponse.json(
+          { error: `Unknown or inaccessible property: ${pid} (not found under your access)` },
+          { status: 400 },
+        );
+      }
+      if (propTenant !== tenantId) {
+        return NextResponse.json(
+          {
+            error: `Property ${pid} is not under tenant ${tenantId}. Use only properties for the selected organization.`,
+          },
+          { status: 400 },
+        );
+      }
     }
   }
 

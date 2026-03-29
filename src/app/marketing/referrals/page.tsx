@@ -13,14 +13,14 @@ type Ref = {
 };
 
 export default function MarketingReferralsPage() {
-  const { tenantId, querySuffix, loading: ctxLoading } = useMarketingTenant();
+  const { tenantId, querySuffix, dataReady, allOrganizations } = useMarketingTenant();
   const [rows, setRows] = useState<Ref[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (ctxLoading || !tenantId) return;
+    if (!dataReady) return;
     let c = false;
     void (async () => {
       const res = await fetch(`/api/marketing/referrals${querySuffix}`, { cache: "no-store" });
@@ -33,10 +33,10 @@ export default function MarketingReferralsPage() {
     return () => {
       c = true;
     };
-  }, [tenantId, querySuffix, ctxLoading]);
+  }, [dataReady, querySuffix]);
 
   async function addRow() {
-    if (!tenantId) return;
+    if (!dataReady || allOrganizations || !tenantId) return;
     setBusy(true);
     const res = await fetch("/api/marketing/referrals", {
       method: "POST",
@@ -58,7 +58,7 @@ export default function MarketingReferralsPage() {
     }
   }
 
-  if (ctxLoading || !tenantId) return null;
+  if (!dataReady) return null;
 
   return (
     <div style={{ display: "grid", gap: 16, maxWidth: 720 }}>
@@ -67,9 +67,19 @@ export default function MarketingReferralsPage() {
         Track referral codes; unique links per tenant in the portal and automatic rewards on contract signed can be layered on this table.
       </p>
       {err ? <p style={{ color: "#b42318" }}>{err}</p> : null}
+      {allOrganizations ? (
+        <p style={{ margin: 0, fontSize: 14, color: "rgba(26,74,74,0.8)" }}>
+          Select a single organization above to add referral rows.
+        </p>
+      ) : null}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <input placeholder="Custom code (optional)" value={code} onChange={(e) => setCode(e.target.value)} style={inp} />
-        <button type="button" onClick={() => void addRow()} disabled={busy} style={{ padding: "10px 16px", borderRadius: 8, background: "var(--petrol)", color: "#fff", border: "none", cursor: "pointer" }}>
+        <button
+          type="button"
+          onClick={() => void addRow()}
+          disabled={busy || allOrganizations}
+          style={{ padding: "10px 16px", borderRadius: 8, background: "var(--petrol)", color: "#fff", border: "none", cursor: "pointer" }}
+        >
           Add tracking row
         </button>
       </div>

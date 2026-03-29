@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { Suspense, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { Suspense, useEffect, useState, type CSSProperties } from "react";
 import type { CmsMarketingLocale } from "@/lib/cms2/marketing-locales";
 import type { CmsPublicUi } from "@/lib/cms2/public-ui";
 import { tx } from "@/lib/cms2/public-ui";
@@ -10,7 +10,7 @@ import type { PublicOrgPayload } from "@/lib/cms2/types";
 import type { CmsTheme } from "@/lib/cms2/types";
 import { Cms2LanguageSwitcher } from "./Cms2LanguageSwitcher";
 
-/** Breakpoint: &lt; 768px = compact bar + full-width menu drawer. */
+/** Breakpoint: &lt; 768px = compact bar + slide-in menu panel. */
 const NAV_MOBILE_MAX = 767;
 
 const NAV_LINK_HOVER = "#1a4a4a";
@@ -30,20 +30,6 @@ const NAV_BTN_STYLE: CSSProperties = {
   letterSpacing: "-0.01em",
 };
 
-const MOBILE_MENU_LINK: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  minHeight: 48,
-  padding: "0 4px",
-  fontFamily: "'DM Sans', sans-serif",
-  fontSize: 16,
-  fontWeight: 400,
-  color: "#2c3e3e",
-  textDecoration: "none",
-  width: "100%",
-  boxSizing: "border-box",
-};
-
 export function Cms2HeaderClient({
   org,
   theme,
@@ -60,29 +46,27 @@ export function Cms2HeaderClient({
   ui: CmsPublicUi;
 }) {
   const [open, setOpen] = useState(false);
-  const headerRef = useRef<HTMLElement>(null);
   const loginRedirect = `${basePath || ""}/portal`;
 
   const closeMenu = () => setOpen(false);
 
-  useLayoutEffect(() => {
-    const el = headerRef.current;
-    if (!el) return;
-    const setVar = () => {
-      document.documentElement.style.setProperty(
-        "--cms2-public-header-h",
-        `${Math.ceil(el.getBoundingClientRect().height)}px`,
-      );
-    };
-    setVar();
-    const ro = new ResizeObserver(setVar);
-    ro.observe(el);
-    window.addEventListener("orientationchange", setVar);
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") closeMenu();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     return () => {
-      ro.disconnect();
-      window.removeEventListener("orientationchange", setVar);
+      document.body.style.overflow = prev;
     };
-  }, []);
+  }, [open]);
 
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 768px)");
@@ -95,7 +79,6 @@ export function Cms2HeaderClient({
 
   return (
     <header
-      ref={headerRef}
       style={{
         position: "sticky",
         top: 0,
@@ -143,10 +126,16 @@ export function Cms2HeaderClient({
           {org.logoUrl ? (
             <Image
               src={org.logoUrl}
-              alt=""
-              width={200}
-              height={50}
-              style={{ width: "auto", height: "40px", maxWidth: "min(160px, 42vw)" }}
+              alt={org.brandName || "Logo"}
+              width={160}
+              height={40}
+              className="cms2-header-logo-img"
+              style={{
+                width: "auto",
+                maxWidth: "min(200px, 55vw)",
+                objectFit: "contain",
+                verticalAlign: "middle",
+              }}
               unoptimized
             />
           ) : (
@@ -284,33 +273,38 @@ export function Cms2HeaderClient({
         </div>
       </div>
 
-      {open ? (
-        <>
-          <button
-            type="button"
-            className="cms2-mobile-menu-backdrop"
-            aria-label="Close menu"
-            onClick={closeMenu}
-          />
-          <div
-            className="cms2-mobile-menu-drawer"
-            role="dialog"
-            aria-modal="true"
-            aria-label={tx(ui, "header.menu")}
-          >
+      <button
+        type="button"
+        className={`cms2-mobile-menu-backdrop${open ? " cms2-mobile-menu-backdrop--open" : ""}`}
+        aria-label="Close menu"
+        aria-hidden={!open}
+        tabIndex={open ? 0 : -1}
+        onClick={closeMenu}
+      />
+      <div
+        className={`cms2-mobile-menu-drawer${open ? " cms2-mobile-menu-drawer--open" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-hidden={!open}
+        aria-label={tx(ui, "header.menu")}
+      >
+        <button
+          type="button"
+          className="cms2-mobile-menu-close"
+          aria-label="Close menu"
+          onClick={closeMenu}
+        >
+          ×
+        </button>
+        <div className="cms2-mobile-menu-body">
+          <nav className="cms2-mobile-menu-nav" aria-label="Main">
             {nav.map((item) => (
-              <Link key={item.href + item.label} href={item.href} onClick={closeMenu} style={MOBILE_MENU_LINK}>
+              <Link key={item.href + item.label} href={item.href} onClick={closeMenu} className="cms2-mobile-nav-link">
                 {item.label}
               </Link>
             ))}
-            <hr
-              className="cms2-mobile-menu-hr"
-              style={{
-                border: "none",
-                borderTop: `1px solid ${theme.border}`,
-                margin: "12px 0",
-              }}
-            />
+          </nav>
+          <div className="cms2-mobile-menu-lang">
             <Suspense fallback={null}>
               <Cms2LanguageSwitcher
                 variant="drawer"
@@ -320,53 +314,34 @@ export function Cms2HeaderClient({
                 onNavigate={closeMenu}
               />
             </Suspense>
-            <hr
-              className="cms2-mobile-menu-hr"
-              style={{
-                border: "none",
-                borderTop: `1px solid ${theme.border}`,
-                margin: "12px 0",
-              }}
-            />
-            <Link
-              href={`/login?redirect=${encodeURIComponent(loginRedirect || "/portal")}`}
-              onClick={closeMenu}
-              style={{
-                ...MOBILE_MENU_LINK,
-                marginTop: 4,
-                justifyContent: "center",
-                borderRadius: 10,
-                border: `1px solid ${theme.border}`,
-                background: theme.surface,
-                fontWeight: 600,
-                color: NAV_LINK_HOVER,
-              }}
-            >
-              {tx(ui, "header.login")}
-            </Link>
-            <Link
-              href={`${basePath}/book`}
-              onClick={closeMenu}
-              style={{
-                ...MOBILE_MENU_LINK,
-                marginTop: 10,
-                justifyContent: "center",
-                borderRadius: 10,
-                border: "none",
-                background: theme.petrol,
-                fontWeight: 600,
-                color: "#fff",
-                boxShadow: "0 4px 14px rgba(26, 92, 90, 0.35)",
-              }}
-            >
-              {tx(ui, "header.bookRoom")}
-            </Link>
           </div>
-        </>
-      ) : null}
+        </div>
+        <div className="cms2-mobile-menu-footer">
+          <Link
+            href={`/login?redirect=${encodeURIComponent(loginRedirect || "/portal")}`}
+            onClick={closeMenu}
+            className="cms2-mobile-btn-ghost"
+          >
+            {tx(ui, "header.login")}
+          </Link>
+          <Link href={`${basePath}/book`} onClick={closeMenu} className="cms2-mobile-btn-primary">
+            {tx(ui, "header.bookRoom")}
+          </Link>
+        </div>
+      </div>
 
       <style>{`
+        .cms2-header-logo-img {
+          height: 32px !important;
+          width: auto !important;
+          max-height: 32px !important;
+          object-fit: contain !important;
+        }
         @media (min-width: 768px) {
+          .cms2-header-logo-img {
+            height: 40px !important;
+            max-height: 40px !important;
+          }
           .cms2-nav-inline-desktop {
             display: flex !important;
           }
@@ -408,34 +383,138 @@ export function Cms2HeaderClient({
             display: block !important;
             position: fixed !important;
             inset: 0 !important;
-            z-index: 68 !important;
+            z-index: 90 !important;
             margin: 0 !important;
             padding: 0 !important;
             border: none !important;
             background: rgba(0, 0, 0, 0.4) !important;
             cursor: pointer !important;
             -webkit-tap-highlight-color: transparent;
+            opacity: 0 !important;
+            pointer-events: none !important;
+            transition: opacity 0.3s ease !important;
+          }
+          .cms2-mobile-menu-backdrop--open {
+            opacity: 1 !important;
+            pointer-events: auto !important;
           }
           .cms2-mobile-menu-drawer {
             display: flex !important;
             flex-direction: column !important;
             align-items: stretch !important;
             position: fixed !important;
-            left: 0 !important;
+            top: 0 !important;
             right: 0 !important;
-            top: var(--cms2-public-header-h, 68px) !important;
-            width: 100vw !important;
-            max-width: 100vw !important;
+            left: auto !important;
+            width: 280px !important;
+            max-width: min(280px, 92vw) !important;
+            height: 100vh !important;
+            height: 100dvh !important;
             box-sizing: border-box !important;
-            padding: 24px !important;
-            padding-bottom: max(24px, env(safe-area-inset-bottom, 0px)) !important;
+            padding: 80px 24px max(40px, env(safe-area-inset-bottom, 0px)) !important;
+            padding-top: max(80px, calc(56px + env(safe-area-inset-top, 0px))) !important;
             background: #ffffff !important;
-            z-index: 69 !important;
-            max-height: calc(100dvh - var(--cms2-public-header-h, 68px) - env(safe-area-inset-bottom, 0px)) !important;
+            z-index: 91 !important;
+            box-shadow: -4px 0 24px rgba(0, 0, 0, 0.12) !important;
+            transform: translateX(100%) !important;
+            transition: transform 0.3s ease !important;
+            pointer-events: none !important;
+            overflow: hidden !important;
+            -webkit-tap-highlight-color: transparent;
+          }
+          .cms2-mobile-menu-drawer--open {
+            transform: translateX(0) !important;
+            pointer-events: auto !important;
+          }
+          .cms2-mobile-menu-close {
+            position: absolute !important;
+            top: max(16px, env(safe-area-inset-top, 0px)) !important;
+            right: 16px !important;
+            z-index: 2 !important;
+            width: 44px !important;
+            height: 44px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            border: none !important;
+            background: transparent !important;
+            cursor: pointer !important;
+            font-size: 28px !important;
+            line-height: 1 !important;
+            color: #2c3e3e !important;
+            padding: 0 !important;
+            border-radius: 10px !important;
+            -webkit-tap-highlight-color: transparent;
+          }
+          .cms2-mobile-menu-body {
+            flex: 1 !important;
+            min-height: 0 !important;
             overflow-y: auto !important;
             -webkit-overflow-scrolling: touch !important;
             overscroll-behavior: contain !important;
-            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.1) !important;
+          }
+          .cms2-mobile-menu-nav {
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: stretch !important;
+          }
+          .cms2-mobile-nav-link {
+            display: block !important;
+            font-family: 'DM Sans', sans-serif !important;
+            font-size: 16px !important;
+            font-weight: 400 !important;
+            color: #2c3e3e !important;
+            text-decoration: none !important;
+            padding: 12px 0 !important;
+            border-bottom: 1px solid #f0f0f0 !important;
+            text-transform: none !important;
+            -webkit-tap-highlight-color: transparent;
+          }
+          .cms2-mobile-menu-lang {
+            margin-top: 20px !important;
+            padding-top: 4px !important;
+          }
+          .cms2-mobile-menu-footer {
+            flex-shrink: 0 !important;
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 10px !important;
+            padding-top: 20px !important;
+            margin-top: auto !important;
+          }
+          .cms2-mobile-btn-ghost {
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            width: 100% !important;
+            box-sizing: border-box !important;
+            padding: 12px 16px !important;
+            border-radius: 10px !important;
+            border: 1px solid ${theme.border} !important;
+            background: ${theme.surface} !important;
+            color: ${NAV_LINK_HOVER} !important;
+            font-family: 'DM Sans', sans-serif !important;
+            font-size: 15px !important;
+            font-weight: 400 !important;
+            text-decoration: none !important;
+            -webkit-tap-highlight-color: transparent;
+          }
+          .cms2-mobile-btn-primary {
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            width: 100% !important;
+            box-sizing: border-box !important;
+            padding: 12px 16px !important;
+            border-radius: 10px !important;
+            border: none !important;
+            background: ${theme.petrol} !important;
+            color: #fff !important;
+            font-family: 'DM Sans', sans-serif !important;
+            font-size: 15px !important;
+            font-weight: 600 !important;
+            text-decoration: none !important;
+            box-shadow: 0 4px 14px rgba(26, 92, 90, 0.35) !important;
             -webkit-tap-highlight-color: transparent;
           }
         }

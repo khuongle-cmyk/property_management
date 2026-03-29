@@ -31,6 +31,9 @@ create table if not exists public.bookable_spaces (
 create index if not exists bookable_spaces_property_id_idx
   on public.bookable_spaces (property_id);
 
+alter table public.bookable_spaces
+  add column if not exists is_published boolean not null default true;
+
 -- ---- bookings --------------------------------------------------------
 create table if not exists public.bookings (
   id uuid primary key default gen_random_uuid(),
@@ -117,10 +120,26 @@ declare
   v_requires boolean;
   v_hourly numeric;
   v_space_status text;
+  v_space_type text;
   v_hours numeric;
+  v_published boolean;
 begin
-  select bs.property_id, p.tenant_id, bs.requires_approval, bs.hourly_price, bs.space_status
-  into v_property_id, v_tenant_id, v_requires, v_hourly, v_space_status
+  select
+    bs.property_id,
+    p.tenant_id,
+    bs.requires_approval,
+    bs.hourly_price,
+    bs.space_status,
+    bs.space_type,
+    coalesce(bs.is_published, true)
+  into
+    v_property_id,
+    v_tenant_id,
+    v_requires,
+    v_hourly,
+    v_space_status,
+    v_space_type,
+    v_published
   from public.bookable_spaces bs
   join public.properties p on p.id = bs.property_id
   where bs.id = new.space_id;
@@ -129,8 +148,17 @@ begin
     raise exception 'Invalid space_id';
   end if;
 
-  if v_space_status is distinct from 'available' then
+  if v_space_status is null
+     or lower(trim(v_space_status)) not in ('available', 'vacant') then
     raise exception 'Space is not available for booking';
+  end if;
+
+  if v_published is not true then
+    raise exception 'Space is not published for booking';
+  end if;
+
+  if v_space_type = 'office' then
+    raise exception 'Offices use long-term leases; use the rooms dashboard for lease details, not hourly booking';
   end if;
 
   new.property_id := v_property_id;

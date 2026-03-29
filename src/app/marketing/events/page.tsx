@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useMarketingTenant } from "@/contexts/MarketingTenantContext";
+import { pathWithMarketingScope } from "@/lib/marketing/access";
 
 type Ev = {
   id: string;
@@ -15,12 +16,12 @@ type Ev = {
 };
 
 export default function MarketingEventsPage() {
-  const { tenantId, querySuffix, loading: ctxLoading } = useMarketingTenant();
+  const { querySuffix, dataReady } = useMarketingTenant();
   const [rows, setRows] = useState<Ev[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    if (ctxLoading || !tenantId) return;
+    if (!dataReady) return;
     let c = false;
     void (async () => {
       const res = await fetch(`/api/marketing/events${querySuffix}`, { cache: "no-store" });
@@ -33,15 +34,18 @@ export default function MarketingEventsPage() {
     return () => {
       c = true;
     };
-  }, [tenantId, querySuffix, ctxLoading]);
+  }, [dataReady, querySuffix]);
 
-  if (ctxLoading || !tenantId) return null;
+  if (!dataReady) return null;
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
         <h2 style={{ margin: 0, flex: 1, fontSize: "1.25rem" }}>Events</h2>
-        <Link href="/marketing/events/new" style={{ padding: "10px 16px", borderRadius: 8, background: "var(--petrol)", color: "#fff", textDecoration: "none" }}>
+        <Link
+          href={pathWithMarketingScope("/marketing/events/new", querySuffix)}
+          style={{ padding: "10px 16px", borderRadius: 8, background: "var(--petrol)", color: "#fff", textDecoration: "none" }}
+        >
           New event
         </Link>
       </div>
@@ -61,7 +65,7 @@ export default function MarketingEventsPage() {
             {rows.map((r) => (
               <tr key={r.id} style={{ borderBottom: "1px solid rgba(26,74,74,0.06)" }}>
                 <td style={{ padding: 12 }}>
-                  <Link href={`/marketing/events/${r.id}`}>{r.name}</Link>
+                  <Link href={pathWithMarketingScope(`/marketing/events/${r.id}`, querySuffix)}>{r.name}</Link>
                 </td>
                 <td style={{ padding: 12 }}>{new Date(r.start_datetime).toLocaleString()}</td>
                 <td style={{ padding: 12 }}>{r.status}</td>

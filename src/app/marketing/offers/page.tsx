@@ -16,7 +16,7 @@ type Offer = {
 };
 
 export default function MarketingOffersPage() {
-  const { tenantId, querySuffix, loading: ctxLoading } = useMarketingTenant();
+  const { tenantId, querySuffix, dataReady, allOrganizations } = useMarketingTenant();
   const [rows, setRows] = useState<Offer[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -26,7 +26,7 @@ export default function MarketingOffersPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (ctxLoading || !tenantId) return;
+    if (!dataReady) return;
     let c = false;
     void (async () => {
       const res = await fetch(`/api/marketing/offers${querySuffix}`, { cache: "no-store" });
@@ -39,10 +39,10 @@ export default function MarketingOffersPage() {
     return () => {
       c = true;
     };
-  }, [tenantId, querySuffix, ctxLoading]);
+  }, [dataReady, querySuffix]);
 
   async function createOffer() {
-    if (!tenantId || !name.trim()) return;
+    if (allOrganizations || !tenantId || !name.trim()) return;
     setBusy(true);
     const res = await fetch("/api/marketing/offers", {
       method: "POST",
@@ -66,7 +66,7 @@ export default function MarketingOffersPage() {
     }
   }
 
-  if (ctxLoading || !tenantId) return null;
+  if (!dataReady) return null;
 
   return (
     <div style={{ display: "grid", gap: 16, maxWidth: 720 }}>
@@ -75,6 +75,11 @@ export default function MarketingOffersPage() {
         Apply promo codes during booking/contract flows in a follow-up; usage is tracked on the offer row.
       </p>
       {err ? <p style={{ color: "#b42318" }}>{err}</p> : null}
+      {allOrganizations ? (
+        <p style={{ margin: 0, fontSize: 14, color: "rgba(26,74,74,0.8)" }}>
+          Select a single organization above to create offers.
+        </p>
+      ) : null}
       <div style={{ background: "#fff", padding: 16, borderRadius: 12, border: "1px solid rgba(26,74,74,0.1)", display: "grid", gap: 10 }}>
         <input placeholder="Offer name" value={name} onChange={(e) => setName(e.target.value)} style={inp} />
         <select value={offerType} onChange={(e) => setOfferType(e.target.value)} style={inp}>
@@ -86,7 +91,12 @@ export default function MarketingOffersPage() {
         </select>
         {offerType === "discount_pct" ? <input placeholder="%" value={pct} onChange={(e) => setPct(e.target.value)} style={inp} /> : null}
         <input placeholder="Promo code (auto if empty)" value={promo} onChange={(e) => setPromo(e.target.value)} style={inp} />
-        <button type="button" onClick={() => void createOffer()} disabled={busy} style={{ padding: 10, borderRadius: 8, background: "var(--petrol)", color: "#fff", border: "none", cursor: "pointer" }}>
+        <button
+          type="button"
+          onClick={() => void createOffer()}
+          disabled={busy || allOrganizations}
+          style={{ padding: 10, borderRadius: 8, background: "var(--petrol)", color: "#fff", border: "none", cursor: "pointer" }}
+        >
           Create
         </button>
       </div>

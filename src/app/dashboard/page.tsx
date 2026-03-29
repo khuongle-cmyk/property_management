@@ -202,11 +202,6 @@ export default function DashboardPage() {
         .filter(Boolean) as string[];
       if (!cancelled) setOwnerTenantIds(ownerTenantIds);
 
-      if (isSuperAdmin) {
-        router.replace("/super-admin");
-        return;
-      }
-
       if (!isSuperAdmin && ownerTenantIds.length === 0) {
         if (!cancelled) {
           setError("Not authorized to view the owner dashboard.");

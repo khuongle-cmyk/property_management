@@ -5,10 +5,11 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { useMarketingTenant } from "@/contexts/MarketingTenantContext";
+import { pathWithMarketingScope } from "@/lib/marketing/access";
 
 export default function NewSmsPage() {
   const router = useRouter();
-  const { tenantId, loading: ctxLoading } = useMarketingTenant();
+  const { tenantId, querySuffix, loading: ctxLoading, dataReady, allOrganizations } = useMarketingTenant();
   const [text, setText] = useState("");
   const [audience, setAudience] = useState("all_leads");
   const [customPhones, setCustomPhones] = useState("");
@@ -29,6 +30,7 @@ export default function NewSmsPage() {
   }, [tenantId]);
 
   async function aiSms() {
+    if (allOrganizations || !tenantId) return;
     setBusy(true);
     setMsg(null);
     const res = await fetch("/api/marketing/ai/sms-body", {
@@ -85,18 +87,29 @@ export default function NewSmsPage() {
     if (!r3.ok) setMsg(j3.error ?? "Send failed — check Twilio env");
     else {
       setMsg(`Sent. Delivered: ${j3.delivered ?? 0}`);
-      router.push("/marketing/sms");
+      router.push(pathWithMarketingScope("/marketing/sms", querySuffix));
     }
   }
 
-  if (ctxLoading || !tenantId) return null;
+  if (ctxLoading || !dataReady) return null;
+  if (allOrganizations) {
+    return (
+      <div style={{ maxWidth: 560, display: "grid", gap: 16 }}>
+        <p style={{ margin: 0, fontSize: 15, color: "rgba(26,74,74,0.85)" }}>
+          Select a single organization in the header to send SMS.
+        </p>
+        <Link href={pathWithMarketingScope("/marketing/sms", querySuffix)}>← Back</Link>
+      </div>
+    );
+  }
+  if (!tenantId) return null;
 
   const len = text.length;
   const warn = len > 160;
 
   return (
     <div style={{ maxWidth: 560, display: "grid", gap: 16 }}>
-      <Link href="/marketing/sms">← Back</Link>
+      <Link href={pathWithMarketingScope("/marketing/sms", querySuffix)}>← Back</Link>
       <h2 style={{ margin: 0, fontSize: "1.25rem" }}>New SMS</h2>
       {msg ? <p style={{ color: msg.includes("Sent") ? "#0d6b4d" : "#b42318" }}>{msg}</p> : null}
       <label style={{ display: "grid", gap: 6 }}>

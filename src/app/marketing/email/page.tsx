@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useMarketingTenant } from "@/contexts/MarketingTenantContext";
+import { pathWithMarketingScope } from "@/lib/marketing/access";
 
 type EmailRow = {
   id: string;
@@ -16,13 +17,13 @@ type EmailRow = {
 };
 
 export default function MarketingEmailListPage() {
-  const { tenantId, querySuffix, loading: ctxLoading } = useMarketingTenant();
+  const { querySuffix, dataReady } = useMarketingTenant();
   const [rows, setRows] = useState<EmailRow[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   async function load() {
-    if (!tenantId) return;
+    if (!dataReady) return;
     setLoading(true);
     const res = await fetch(`/api/marketing/emails${querySuffix}`, { cache: "no-store" });
     const j = (await res.json()) as { emails?: EmailRow[]; error?: string };
@@ -35,9 +36,9 @@ export default function MarketingEmailListPage() {
   }
 
   useEffect(() => {
-    if (ctxLoading || !tenantId) return;
+    if (!dataReady) return;
     void load();
-  }, [tenantId, querySuffix, ctxLoading]);
+  }, [dataReady, querySuffix]);
 
   async function duplicate(id: string) {
     const res = await fetch(`/api/marketing/emails/${id}/duplicate`, { method: "POST" });
@@ -49,7 +50,7 @@ export default function MarketingEmailListPage() {
     void load();
   }
 
-  if (ctxLoading || !tenantId) return null;
+  if (!dataReady) return null;
   if (loading) return <p>Loading…</p>;
 
   return (
@@ -57,7 +58,7 @@ export default function MarketingEmailListPage() {
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
         <h2 style={{ margin: 0, flex: 1, fontSize: "1.25rem" }}>Email campaigns</h2>
         <Link
-          href="/marketing/email/new"
+          href={pathWithMarketingScope("/marketing/email/new", querySuffix)}
           style={{
             padding: "10px 16px",
             borderRadius: 8,
@@ -100,7 +101,10 @@ export default function MarketingEmailListPage() {
                   <td style={{ padding: 12 }}>{clickRate != null ? `${clickRate}%` : "—"}</td>
                   <td style={{ padding: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
                     {r.status === "draft" ? (
-                      <Link href={`/marketing/email/new?id=${encodeURIComponent(r.id)}`} style={{ fontSize: 13 }}>
+                      <Link
+                        href={pathWithMarketingScope(`/marketing/email/new?id=${encodeURIComponent(r.id)}`, querySuffix)}
+                        style={{ fontSize: 13 }}
+                      >
                         Edit
                       </Link>
                     ) : null}

@@ -5,7 +5,7 @@ import { MarketingTenantProvider, useMarketingTenant } from "@/contexts/Marketin
 import MarketingSubNav from "@/components/marketing/MarketingSubNav";
 
 function Inner({ children }: { children: ReactNode }) {
-  const { loading, error, tenantId, tenants, isSuperAdmin, setTenantId } = useMarketingTenant();
+  const { loading, error, tenantId, tenants, isSuperAdmin, dataReady, setTenantId } = useMarketingTenant();
 
   if (loading) {
     return <p style={{ color: "var(--petrol, #1a4a4a)", opacity: 0.8 }}>Loading marketing…</p>;
@@ -43,6 +43,9 @@ function Inner({ children }: { children: ReactNode }) {
                 minWidth: 200,
               }}
             >
+              {isSuperAdmin ? (
+                <option value="">All organizations</option>
+              ) : null}
               {tenants.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name}
@@ -53,7 +56,7 @@ function Inner({ children }: { children: ReactNode }) {
         ) : null}
       </div>
       <MarketingSubNav />
-      {!tenantId ? <p style={{ color: "#b42318" }}>Select an organization to continue.</p> : children}
+      {!dataReady ? <p style={{ color: "#b42318" }}>Select an organization to continue.</p> : children}
     </>
   );
 }

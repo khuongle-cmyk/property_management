@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useMarketingTenant } from "@/contexts/MarketingTenantContext";
-
 type Post = {
   id: string;
   platform: string;
@@ -13,7 +12,7 @@ type Post = {
 };
 
 export default function MarketingSocialPage() {
-  const { tenantId, querySuffix, loading: ctxLoading } = useMarketingTenant();
+  const { tenantId, querySuffix, dataReady, allOrganizations } = useMarketingTenant();
   const [posts, setPosts] = useState<Post[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [platform, setPlatform] = useState("linkedin");
@@ -22,7 +21,7 @@ export default function MarketingSocialPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (ctxLoading || !tenantId) return;
+    if (!dataReady) return;
     let c = false;
     void (async () => {
       const res = await fetch(`/api/marketing/social/posts${querySuffix}`, { cache: "no-store" });
@@ -35,9 +34,10 @@ export default function MarketingSocialPage() {
     return () => {
       c = true;
     };
-  }, [tenantId, querySuffix, ctxLoading]);
+  }, [dataReady, querySuffix]);
 
   async function aiCaption() {
+    if (allOrganizations || !tenantId) return;
     setBusy(true);
     const res = await fetch("/api/marketing/ai/email-body", {
       method: "POST",
@@ -53,7 +53,7 @@ export default function MarketingSocialPage() {
   }
 
   async function saveDraft() {
-    if (!tenantId) return;
+    if (allOrganizations || !tenantId) return;
     setBusy(true);
     const res = await fetch("/api/marketing/social/posts", {
       method: "POST",
@@ -78,7 +78,7 @@ export default function MarketingSocialPage() {
     }
   }
 
-  if (ctxLoading || !tenantId) return null;
+  if (!dataReady) return null;
 
   return (
     <div style={{ display: "grid", gap: 20, maxWidth: 720 }}>
@@ -88,6 +88,12 @@ export default function MarketingSocialPage() {
         <code>marketing_social_connections</code> and env placeholders from the spec.
       </p>
       {err ? <p style={{ color: "#b42318" }}>{err}</p> : null}
+
+      {allOrganizations ? (
+        <p style={{ margin: 0, fontSize: 14, color: "rgba(26,74,74,0.8)" }}>
+          Select a single organization above to create social drafts.
+        </p>
+      ) : null}
 
       <div style={{ background: "#fff", padding: 20, borderRadius: 12, border: "1px solid rgba(26,74,74,0.1)", display: "grid", gap: 12 }}>
         <h3 style={{ margin: 0, fontSize: 16 }}>Create post</h3>
@@ -104,7 +110,12 @@ export default function MarketingSocialPage() {
           Schedule (optional)
           <input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} style={{ padding: 10, borderRadius: 8 }} />
         </label>
-        <button type="button" onClick={() => void saveDraft()} disabled={busy} style={{ padding: "10px 18px", borderRadius: 8, background: "var(--petrol)", color: "#fff", border: "none", cursor: "pointer" }}>
+        <button
+          type="button"
+          onClick={() => void saveDraft()}
+          disabled={busy || allOrganizations}
+          style={{ padding: "10px 18px", borderRadius: 8, background: "var(--petrol)", color: "#fff", border: "none", cursor: "pointer" }}
+        >
           Save
         </button>
       </div>

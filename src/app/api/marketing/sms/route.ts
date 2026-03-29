@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getMarketingAccess, parseTenantIdParam } from "@/lib/marketing/access";
+import {
+  applyMarketingTenantIdsFilter,
+  getMarketingAccess,
+  marketingScopeTenantIds,
+  resolveMarketingTenantScope,
+} from "@/lib/marketing/access";
 
 export async function GET(req: Request) {
   const supabase = await createSupabaseServerClient();
@@ -14,21 +19,16 @@ export async function GET(req: Request) {
   if (!isSuperAdmin && tenantIds.length === 0) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const url = new URL(req.url);
-  let tenantId = parseTenantIdParam(url, tenantIds);
-  if (isSuperAdmin) {
-    const q = (url.searchParams.get("tenantId") ?? "").trim();
-    if (!q) return NextResponse.json({ error: "tenantId required" }, { status: 400 });
-    tenantId = q;
-  } else if (!tenantId) {
-    return NextResponse.json({ error: "tenantId required" }, { status: 400 });
-  }
+  const resolved = await resolveMarketingTenantScope(supabase, url, { tenantIds, isSuperAdmin });
+  if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: resolved.status });
+  const scopeIds = marketingScopeTenantIds(resolved.scope);
+  const filtered = applyMarketingTenantIdsFilter(
+    supabase.from("marketing_sms").select("*").order("created_at", { ascending: false }).limit(100),
+    scopeIds,
+  );
+  if (!filtered) return NextResponse.json({ sms: [] });
 
-  const { data, error } = await supabase
-    .from("marketing_sms")
-    .select("*")
-    .eq("tenant_id", tenantId!)
-    .order("created_at", { ascending: false })
-    .limit(100);
+  const { data, error } = await filtered;
   if (error) {
     if (error.code === "42P01") return NextResponse.json({ sms: [] });
     return NextResponse.json({ error: error.message }, { status: 500 });

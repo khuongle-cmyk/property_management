@@ -138,7 +138,7 @@ export default function ConditionalWorkspaceChrome({
         @media (min-width: 768px) {
           .vw-main-shell {
             padding: 24px 24px 28px 24px !important;
-            margin-left: 270px;
+            margin-left: 220px;
           }
         }
       `}</style>

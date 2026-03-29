@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -40,7 +40,7 @@ import {
 } from "@/lib/budget/aggregates";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { REPORT_READER_ROLES } from "@/lib/reports/report-access";
-import { loadScopedPropertiesForUser } from "@/lib/properties/scoped";
+import { loadScopedPropertiesForUser, type ScopedPropertyRow } from "@/lib/properties/scoped";
 import type { ConsolidatedAnnualPL } from "@/lib/budget/consolidated-pl";
 
 type BudgetMeta = {
@@ -158,7 +158,8 @@ export default function BudgetPage() {
   const [hcLines, setHcLines] = useState<LineRow[]>([]);
   const [capexLines, setCapexLines] = useState<LineRow[]>([]);
   const [occLines, setOccLines] = useState<LineRow[]>([]);
-  const [properties, setProperties] = useState<{ id: string; name: string | null }[]>([]);
+  const [properties, setProperties] = useState<ScopedPropertyRow[]>([]);
+  const importFileInputRef = useRef<HTMLInputElement>(null);
   const [propertyFilter, setPropertyFilter] = useState<string | null>(null);
   const [view, setView] = useState<"monthly" | "quarterly" | "annual">("monthly");
   const [tab, setTab] = useState<TabId>("overview");
@@ -274,7 +275,7 @@ export default function BudgetPage() {
         setCanManage(roles.some((r) => ["owner", "manager", "super_admin"].includes(r)));
       }
       const scoped = await loadScopedPropertiesForUser(supabase, user.id);
-      if (!c) setProperties((scoped.properties as { id: string; name: string | null }[]) ?? []);
+      if (!c) setProperties(scoped.properties ?? []);
       if (tid) await loadBudgets(tid);
       if (!c) setReady(true);
     })();
@@ -283,9 +284,15 @@ export default function BudgetPage() {
     };
   }, [router, loadBudgets]);
 
+  /** Super admins load all properties globally; portfolio + API must only use the active tenant. */
+  const propertiesForTenant = useMemo(
+    () => (tenantId ? properties.filter((p) => p.tenant_id === tenantId) : []),
+    [properties, tenantId],
+  );
+
   useEffect(() => {
-    setPortfolioPropIds(new Set(properties.map((p) => p.id)));
-  }, [tenantId, properties]);
+    setPortfolioPropIds(new Set(propertiesForTenant.map((p) => p.id)));
+  }, [tenantId, propertiesForTenant]);
 
   useEffect(() => {
     if (!tenantId) return;
@@ -375,7 +382,8 @@ export default function BudgetPage() {
   }
 
   function applyCombination(c: { property_ids: string[]; include_admin: boolean }) {
-    setPortfolioPropIds(new Set(c.property_ids));
+    const allowed = new Set(propertiesForTenant.map((p) => p.id));
+    setPortfolioPropIds(new Set(c.property_ids.filter((id) => allowed.has(id))));
     setPortfolioIncludeAdmin(c.include_admin);
     setMsg("Applied — click Update portfolio view to recalculate.");
   }
@@ -491,7 +499,7 @@ export default function BudgetPage() {
     if (administration) {
       name = prompt("Administration budget name?", `${y} Administration`) ?? `${y} Administration`;
     } else {
-      const plist = properties.map((p) => `${p.id.slice(0, 8)}… ${p.name ?? ""}`).join("\n");
+      const plist = propertiesForTenant.map((p) => `${p.id.slice(0, 8)}… ${p.name ?? ""}`).join("\n");
       const pid = (prompt(`Property UUID for this budget:\n${plist}\n\nPaste property id:`) ?? "").trim();
       if (!pid) return;
       property_id = pid;
@@ -626,7 +634,7 @@ export default function BudgetPage() {
             const pnm =
               sc === "administration"
                 ? "Administration"
-                : properties.find((p) => p.id === b.property_id)?.name ?? "Property";
+                : propertiesForTenant.find((p) => p.id === b.property_id)?.name ?? "Property";
             return (
               <option key={b.id} value={b.id}>
                 {b.budget_year} · {pnm} · {b.name} ({b.status})
@@ -640,32 +648,61 @@ export default function BudgetPage() {
           </button>
         )}
         {canManage && (
-          <label style={{ padding: "8px 12px", border: "1px solid #ccc", borderRadius: 6, cursor: "pointer" }}>
-            Import Excel
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                console.log("[budget] Import Excel clicked", { selectedId, hasInput: !!importFileInputRef.current });
+                if (!selectedId) {
+                  setMsg("Select a budget in the dropdown first, then import.");
+                  return;
+                }
+                importFileInputRef.current?.click();
+              }}
+              style={{ padding: "8px 12px", border: "1px solid #ccc", borderRadius: 6, background: "#fff", cursor: "pointer" }}
+            >
+              Import Excel
+            </button>
             <input
+              ref={importFileInputRef}
               type="file"
-              accept=".xlsx,.xls"
-              hidden
+              accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+              style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
+              tabIndex={-1}
+              aria-hidden
               onChange={async (e) => {
                 const f = e.target.files?.[0];
-                if (!f || !selectedId) return;
+                console.log("[budget] Import Excel file input change", { fileName: f?.name, size: f?.size, selectedId });
+                if (!f) return;
+                if (!selectedId) {
+                  setMsg("Select a budget first.");
+                  e.target.value = "";
+                  return;
+                }
                 const fd = new FormData();
                 fd.set("budgetId", selectedId);
                 fd.set("file", f);
-                const r = await fetch("/api/budget/import", { method: "POST", body: fd });
-                setMsg(r.ok ? "Import complete." : await r.text());
-                loadBundle(selectedId);
+                try {
+                  const r = await fetch("/api/budget/import", { method: "POST", body: fd });
+                  const text = await r.text();
+                  console.log("[budget] Import Excel response", { ok: r.ok, status: r.status, text: text.slice(0, 200) });
+                  setMsg(r.ok ? "Import complete." : text);
+                  if (r.ok) loadBundle(selectedId);
+                } catch (err) {
+                  console.error("[budget] Import Excel fetch failed", err);
+                  setMsg(err instanceof Error ? err.message : "Import failed");
+                }
                 e.target.value = "";
               }}
             />
-          </label>
+          </>
         )}
         <button type="button" onClick={() => exportXlsx()} disabled={!selectedId} style={{ padding: "8px 12px" }}>
           Export Excel
         </button>
         <select value={propertyFilter ?? ""} onChange={(e) => setPropertyFilter(e.target.value || null)} style={{ padding: 8 }}>
           <option value="">All properties</option>
-          {properties.map((p) => (
+          {propertiesForTenant.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name ?? p.id}
             </option>
@@ -692,7 +729,7 @@ export default function BudgetPage() {
         )}
       </div>
 
-      {tenantId && properties.length > 0 ? (
+      {tenantId && propertiesForTenant.length > 0 ? (
         <section
           style={{
             border: "1px solid #e4e4e7",
@@ -715,7 +752,7 @@ export default function BudgetPage() {
               marginBottom: 12,
             }}
           >
-            {properties.map((p) => (
+            {propertiesForTenant.map((p) => (
               <label key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
                 <input
                   type="checkbox"
@@ -1175,7 +1212,7 @@ export default function BudgetPage() {
       {selectedId && budget && tab === "headcount" && <HeadcountSection lines={hcLines} year={year} onSave={saveHeadcount} canManage={canManage} />}
 
       {selectedId && budget && tab === "capex" && (
-        <CapexSection lines={capexLines} onSave={saveCapex} canManage={canManage} properties={properties} />
+        <CapexSection lines={capexLines} onSave={saveCapex} canManage={canManage} properties={propertiesForTenant} />
       )}
 
       {selectedId && budget && tab === "occupancy" && (

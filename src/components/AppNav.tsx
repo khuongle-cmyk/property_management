@@ -12,25 +12,53 @@ import {
 } from "@/lib/nav/nav-flags";
 
 const navFont = "var(--font-dm-sans), sans-serif";
+const SIDEBAR_W = 220;
+const COLLAPSE_STORAGE_KEY = "vw-sidebar-collapsed";
 
-const itemStyle = (active: boolean, b: { white: string; secondary: string }): CSSProperties => ({
-  display: "block",
-  padding: "10px 12px",
-  borderRadius: 8,
-  textDecoration: "none",
+type NavItem = { href: string; label: string; visible: boolean };
+
+function itemStyle(active: boolean, b: { white: string; secondary: string }): CSSProperties {
+  return {
+    display: "block",
+    padding: "6px 12px",
+    borderRadius: 6,
+    textDecoration: "none",
+    fontFamily: navFont,
+    fontSize: 13,
+    fontWeight: active ? 500 : 400,
+    color: b.white,
+    background: active ? b.secondary : "transparent",
+    transition: "background 120ms ease",
+  };
+}
+
+const sectionLabelStyle: CSSProperties = {
+  color: "rgba(255,255,255,0.72)",
   fontFamily: navFont,
-  fontSize: 14,
-  fontWeight: active ? 500 : 400,
-  color: b.white,
-  background: active ? b.secondary : "transparent",
-  transition: "background 120ms ease",
-});
+  fontSize: 10,
+  fontWeight: 500,
+  letterSpacing: 0.08,
+  textTransform: "uppercase",
+  padding: "4px 12px",
+};
 
 function navLinkIsActive(pathname: string, href: string): boolean {
   if (href === "/super-admin") {
     return pathname === "/super-admin" || pathname.startsWith("/super-admin/");
   }
   return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+function loadCollapsedFromStorage(): Record<string, boolean> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(COLLAPSE_STORAGE_KEY);
+    if (!raw) return {};
+    const p = JSON.parse(raw) as unknown;
+    return typeof p === "object" && p !== null && !Array.isArray(p) ? (p as Record<string, boolean>) : {};
+  } catch {
+    return {};
+  }
 }
 
 type AppNavProps = {
@@ -54,14 +82,18 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [loggedIn, setLoggedIn] = useState(appNavInitial.loggedIn);
   const [displayName, setDisplayName] = useState(appNavInitial.displayName);
-  const [email, setEmail] = useState(appNavInitial.email);
+  const [, setEmail] = useState(appNavInitial.email);
   const [isSuperAdmin, setIsSuperAdmin] = useState(appNavInitial.isSuperAdmin);
-  const [showManageBookings, setShowManageBookings] = useState(appNavInitial.showManageBookings);
   const [showOwnerDashboard, setShowOwnerDashboard] = useState(appNavInitial.showOwnerDashboard);
   const [showRoomsNav, setShowRoomsNav] = useState(appNavInitial.showRoomsNav);
   const [showCrmNav, setShowCrmNav] = useState(appNavInitial.showCrmNav);
   const [showReportsNav, setShowReportsNav] = useState(appNavInitial.showReportsNav);
   const [showMarketingNav, setShowMarketingNav] = useState(appNavInitial.showMarketingNav);
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    setCollapsed(loadCollapsedFromStorage());
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -77,7 +109,6 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
         setDisplayName(LOGGED_OUT_APP_NAV_INITIAL.displayName);
         setEmail(LOGGED_OUT_APP_NAV_INITIAL.email);
         setIsSuperAdmin(false);
-        setShowManageBookings(false);
         setShowOwnerDashboard(false);
         setShowRoomsNav(false);
         setShowCrmNav(false);
@@ -102,7 +133,6 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
       const flags = computeAppNavFlagsFromRoles(roles);
       setIsSuperAdmin(flags.isSuperAdmin);
       setShowReportsNav(flags.showReportsNav);
-      setShowManageBookings(flags.showManageBookings);
       setShowOwnerDashboard(flags.showOwnerDashboard);
       setShowRoomsNav(flags.showRoomsNav);
       setShowCrmNav(flags.showCrmNav);
@@ -117,118 +147,195 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
     setMobileOpen(false);
   }, [pathname]);
 
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMobileOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [mobileOpen]);
+
   async function onLogout() {
     const supabase = getSupabaseClient();
     await supabase.auth.signOut();
     router.push("/login");
   }
 
-  const sections: Array<{ title: string; items: Array<{ href: string; label: string; visible: boolean }> }> = [
-    {
-      title: "OVERVIEW",
-      items: [
-        { href: "/dashboard", label: "Dashboard", visible: showOwnerDashboard },
-        { href: "/dashboard", label: "Properties", visible: loggedIn },
-        { href: "/offices", label: "Offices", visible: loggedIn && showRoomsNav },
-        { href: "/meeting-rooms", label: "Meeting rooms", visible: loggedIn && showRoomsNav },
-        { href: "/venues", label: "Venues", visible: loggedIn && showRoomsNav },
-        { href: "/coworking", label: "Coworking / Hot desks", visible: loggedIn && showRoomsNav },
-        { href: "/virtual-office", label: "Virtual Office", visible: loggedIn && showRoomsNav },
-        { href: "/rooms", label: "Rooms (all products)", visible: loggedIn && showRoomsNav },
-        { href: "/rooms/furniture", label: "Furniture", visible: loggedIn && showRoomsNav },
-        { href: "/floor-plans", label: "🏗️ Floor Plans", visible: loggedIn && showRoomsNav },
-      ],
-    },
-    {
-      title: "BOOKINGS",
-      items: [
-        { href: "/bookings", label: "Calendar", visible: loggedIn },
-        { href: "/bookings/new", label: "Make a Booking", visible: loggedIn },
-        { href: "/bookings/my", label: "My Bookings", visible: loggedIn },
-      ],
-    },
-    {
-      title: "CRM",
-      items: [
-        { href: "/crm", label: "Pipeline", visible: loggedIn && showCrmNav },
-        { href: "/crm/contacts", label: "Contacts", visible: loggedIn && showCrmNav },
-      ],
-    },
-    {
-      title: "MARKETING",
-      items: [
-        { href: "/marketing", label: "📊 Marketing dashboard", visible: loggedIn && showMarketingNav },
-        { href: "/marketing/campaigns", label: "📋 Campaigns", visible: loggedIn && showMarketingNav },
-        { href: "/marketing/email", label: "📧 Email campaigns", visible: loggedIn && showMarketingNav },
-        { href: "/marketing/sms", label: "💬 SMS campaigns", visible: loggedIn && showMarketingNav },
-        { href: "/marketing/social", label: "📱 Social media", visible: loggedIn && showMarketingNav },
-        { href: "/marketing/events", label: "🎉 Events", visible: loggedIn && showMarketingNav },
-        { href: "/marketing/offers", label: "🏷️ Offers & discounts", visible: loggedIn && showMarketingNav },
-        { href: "/marketing/referrals", label: "👥 Referrals", visible: loggedIn && showMarketingNav },
-        { href: "/marketing/analytics", label: "📈 Analytics", visible: loggedIn && showMarketingNav },
-      ],
-    },
-    {
-      title: "WORK",
-      items: [{ href: "/tasks", label: "Tasks", visible: loggedIn }],
-    },
-    {
-      title: "FINANCE",
-      items: [
-        { href: "/bookings/manage", label: "Invoices", visible: loggedIn && showManageBookings },
-        { href: "/reports", label: "Reports", visible: loggedIn && showReportsNav },
-        { href: "/budget", label: "Budget & Forecast", visible: loggedIn && showReportsNav },
-      ],
-    },
-    {
-      title: "ADMIN",
-      items: [
-        { href: "/settings", label: "Settings", visible: loggedIn },
-        { href: "/super-admin", label: "Super Admin", visible: loggedIn && isSuperAdmin },
-      ],
-    },
+  function toggleSection(sectionId: string) {
+    setCollapsed((prev) => {
+      const next = { ...prev, [sectionId]: !prev[sectionId] };
+      try {
+        localStorage.setItem(COLLAPSE_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }
+
+  const overviewItems: NavItem[] = [
+    { href: "/dashboard", label: "Dashboard", visible: showOwnerDashboard },
+    { href: "/dashboard", label: "Properties", visible: loggedIn },
   ];
 
-  const navScroll = (
+  const spacesItems: NavItem[] = [
+    { href: "/offices", label: "Offices", visible: loggedIn && showRoomsNav },
+    { href: "/meeting-rooms", label: "Meeting rooms", visible: loggedIn && showRoomsNav },
+    { href: "/venues", label: "Venues", visible: loggedIn && showRoomsNav },
+    { href: "/coworking", label: "Coworking / Hot desks", visible: loggedIn && showRoomsNav },
+    { href: "/virtual-office", label: "Virtual Office", visible: loggedIn && showRoomsNav },
+    { href: "/rooms", label: "Rooms (all products)", visible: loggedIn && showRoomsNav },
+    { href: "/rooms/furniture", label: "Furniture", visible: loggedIn && showRoomsNav },
+    { href: "/floor-plans", label: "Floor Plans", visible: loggedIn && showRoomsNav },
+  ];
+
+  const bookingsItems: NavItem[] = [
+    { href: "/bookings/calendar", label: "Calendar", visible: loggedIn },
+    { href: "/bookings/new", label: "Make a Booking", visible: loggedIn },
+    { href: "/bookings/my", label: "My Bookings", visible: loggedIn },
+  ];
+
+  const crmItems: NavItem[] = [
+    { href: "/crm", label: "Pipeline", visible: loggedIn && showCrmNav },
+    { href: "/crm/contacts", label: "Contacts", visible: loggedIn && showCrmNav },
+  ];
+
+  const workItems: NavItem[] = [{ href: "/tasks", label: "Tasks", visible: loggedIn }];
+
+  const financeItems: NavItem[] = [
+    { href: "/reports", label: "Reports", visible: loggedIn && showReportsNav },
+    { href: "/budget", label: "Budget & Forecast", visible: loggedIn && showReportsNav },
+  ];
+
+  const marketingItems: NavItem[] = [
+    { href: "/marketing", label: "Marketing dashboard", visible: loggedIn && showMarketingNav },
+  ];
+
+  const adminItems: NavItem[] = [
+    { href: "/settings", label: "Settings", visible: loggedIn },
+    { href: "/super-admin", label: "Super Admin", visible: loggedIn && isSuperAdmin },
+  ];
+
+  const collapsibleSections: Array<{ id: string; title: string; items: NavItem[] }> = [
+    { id: "spaces", title: "Spaces", items: spacesItems },
+    { id: "bookings", title: "Bookings", items: bookingsItems },
+    { id: "crm", title: "CRM", items: crmItems },
+    { id: "work", title: "Work", items: workItems },
+    { id: "finance", title: "Finance", items: financeItems },
+    { id: "marketing", title: "Marketing", items: marketingItems },
+  ];
+
+  function renderNavLinks(items: NavItem[]) {
+    const visible = items.filter((i) => i.visible);
+    if (!visible.length) return null;
+    return (
+      <div style={{ display: "grid", gap: 2 }}>
+        {visible.map((i) => {
+          const active = navLinkIsActive(pathname ?? "", i.href);
+          return (
+            <Link key={i.href + i.label} href={i.href} style={itemStyle(active, b)}>
+              {i.label}
+            </Link>
+          );
+        })}
+      </div>
+    );
+  }
+
+  function renderStaticSection(title: string, items: NavItem[]) {
+    const links = renderNavLinks(items);
+    if (!links) return null;
+    return (
+      <section>
+        <div style={sectionLabelStyle}>{title}</div>
+        {links}
+      </section>
+    );
+  }
+
+  function renderCollapsibleSection(id: string, title: string, items: NavItem[]) {
+    const visibleItems = items.filter((i) => i.visible);
+    if (!visibleItems.length) return null;
+    const isCollapsed = Boolean(collapsed[id]);
+    return (
+      <section>
+        <button
+          type="button"
+          onClick={() => toggleSection(id)}
+          aria-expanded={!isCollapsed}
+          style={{
+            ...sectionLabelStyle,
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            margin: 0,
+            border: "none",
+            background: "transparent",
+            cursor: "pointer",
+            color: "rgba(255,255,255,0.72)",
+            textAlign: "left",
+          }}
+        >
+          <span>{title}</span>
+          <span
+            aria-hidden
+            style={{
+              display: "inline-block",
+              transition: "transform 0.2s ease",
+              transform: isCollapsed ? "rotate(-90deg)" : "rotate(0deg)",
+              fontSize: 10,
+              lineHeight: 1,
+            }}
+          >
+            ▼
+          </span>
+        </button>
+        {!isCollapsed ? renderNavLinks(items) : null}
+      </section>
+    );
+  }
+
+  const navScrollInner = (
     <>
-      <div style={{ padding: 18, borderBottom: "1px solid rgba(255,255,255,0.12)", flexShrink: 0 }}>
+      <div
+        style={{
+          padding: "10px 12px",
+          borderBottom: "1px solid rgba(255,255,255,0.12)",
+          flexShrink: 0,
+        }}
+      >
         <img
           src={brand.logo_white_url ?? brand.logo_url ?? ""}
           alt={brand.brand_name}
-          style={{ width: "100%", maxWidth: 190, height: "auto", display: "block" }}
+          style={{
+            width: "100%",
+            maxWidth: 148,
+            height: "auto",
+            maxHeight: 36,
+            objectFit: "contain",
+            objectPosition: "left center",
+            display: "block",
+          }}
         />
       </div>
-      <nav style={{ display: "grid", gap: 14, padding: 14 }}>
-        {sections.map((group) => {
-          const visibleItems = group.items.filter((i) => i.visible);
-          if (!visibleItems.length) return null;
+      <nav style={{ display: "grid", gap: 8, padding: "10px 0 12px" }}>
+        {renderStaticSection("Overview", overviewItems)}
+        {collapsibleSections.map((sec) => {
+          const block = renderCollapsibleSection(sec.id, sec.title, sec.items);
+          if (!block) return null;
           return (
-            <section key={group.title}>
-              <div
-                style={{
-                  color: "rgba(255,255,255,0.72)",
-                  fontFamily: navFont,
-                  fontSize: 11,
-                  fontWeight: 500,
-                  letterSpacing: 0.6,
-                  margin: "2px 0 8px",
-                }}
-              >
-                {group.title}
-              </div>
-              <div style={{ display: "grid", gap: 6 }}>
-                {visibleItems.map((i) => {
-                  const active = navLinkIsActive(pathname ?? "", i.href);
-                  return (
-                    <Link key={i.href + i.label} href={i.href} style={itemStyle(active, b)}>
-                      {i.label}
-                    </Link>
-                  );
-                })}
-              </div>
-            </section>
+            <div key={sec.id}>{block}</div>
           );
         })}
+        {renderStaticSection("Admin", adminItems)}
       </nav>
     </>
   );
@@ -237,59 +344,49 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
     <div
       style={{
         borderTop: "1px solid rgba(255,255,255,0.12)",
-        padding: 14,
+        padding: "10px 12px",
         display: "grid",
-        gap: 8,
+        gap: 6,
         flexShrink: 0,
         background: b.sidebar,
       }}
     >
       {loggedIn ? (
         <>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <div
               style={{
-                width: 34,
-                height: 34,
+                width: 28,
+                height: 28,
                 borderRadius: "50%",
                 background: b.secondary,
                 color: b.white,
                 display: "grid",
                 placeItems: "center",
                 fontWeight: 700,
+                fontSize: 11,
+                flexShrink: 0,
               }}
             >
               {(displayName[0] ?? "U").toUpperCase()}
             </div>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 13, color: b.white, fontWeight: 600, lineHeight: 1.3 }}>{displayName}</div>
-              <div
-                style={{
-                  fontSize: 11,
-                  color: "rgba(255,255,255,0.72)",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-              >
-                {email}
-              </div>
+            <div style={{ minWidth: 0, fontSize: 12, color: b.white, fontWeight: 500, lineHeight: 1.25 }}>
+              {displayName}
             </div>
           </div>
-          <Link href="/settings" style={itemStyle(pathname === "/settings" || pathname.startsWith("/settings/"), b)}>
-            Settings
-          </Link>
           <button
             type="button"
             onClick={() => void onLogout()}
             style={{
               textAlign: "left",
-              padding: "10px 12px",
-              borderRadius: 8,
+              padding: "6px 12px",
+              borderRadius: 6,
               border: "1px solid rgba(255,255,255,0.24)",
               background: "transparent",
               color: b.white,
               cursor: "pointer",
+              fontFamily: navFont,
+              fontSize: 13,
             }}
           >
             Logout
@@ -312,7 +409,7 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
     <>
       <aside
         style={{
-          width: 270,
+          width: SIDEBAR_W,
           background: b.sidebar,
           position: "fixed",
           top: 0,
@@ -326,15 +423,8 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
         }}
         className="vw-sidebar-desktop"
       >
-        <div
-          style={{
-            flex: 1,
-            minHeight: 0,
-            overflowY: "auto",
-            WebkitOverflowScrolling: "touch",
-          }}
-        >
-          {navScroll}
+        <div className="vw-sidebar-scroll" style={{ flex: 1, minHeight: 0, WebkitOverflowScrolling: "touch" }}>
+          {navScrollInner}
         </div>
         {navFooter}
       </aside>
@@ -361,7 +451,7 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
           type="button"
           onClick={() => setMobileOpen((s) => !s)}
           aria-expanded={mobileOpen}
-          aria-label="Open menu"
+          aria-label={mobileOpen ? "Close menu" : "Open menu"}
           style={{
             border: "1px solid rgba(255,255,255,0.35)",
             background: "transparent",
@@ -378,66 +468,89 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
           ☰
         </button>
       </header>
-      {mobileOpen ? (
-        <div
+
+      <div
+        className={`vw-mobile-nav-layer ${mobileOpen ? "vw-mobile-nav-layer--open" : ""}`}
+        style={{
+          position: "fixed",
+          left: 0,
+          right: 0,
+          top: "var(--vw-mobile-header-h, 52px)",
+          bottom: 0,
+          zIndex: 90,
+          pointerEvents: mobileOpen ? "auto" : "none",
+          visibility: mobileOpen ? "visible" : "hidden",
+        }}
+        aria-hidden={!mobileOpen}
+      >
+        <button
+          type="button"
+          aria-label="Close menu"
+          className="vw-mobile-nav-backdrop"
           style={{
-            position: "fixed",
+            position: "absolute",
             inset: 0,
-            top: "var(--vw-mobile-header-h, 52px)",
-            zIndex: 90,
-            display: "flex",
-            flexDirection: "row",
-            alignItems: "stretch",
+            border: "none",
+            cursor: "pointer",
+            padding: 0,
+            margin: 0,
+            background: "rgba(0,0,0,0.4)",
+            opacity: 0,
+            transition: "opacity 0.3s ease",
           }}
-          role="presentation"
+          onClick={() => setMobileOpen(false)}
+        />
+        <aside
+          className="vw-mobile-nav-drawer"
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: SIDEBAR_W,
+            maxWidth: "min(220px, 88vw)",
+            height: "100%",
+            background: b.sidebar,
+            display: "flex",
+            flexDirection: "column",
+            fontFamily: navFont,
+            overflow: "hidden",
+            boxShadow: "4px 0 24px rgba(0,0,0,0.2)",
+            transform: "translateX(-100%)",
+            transition: "transform 0.3s ease",
+          }}
+          onClick={(e) => e.stopPropagation()}
         >
-          <aside
-            style={{
-              width: "min(300px, 88vw)",
-              maxWidth: 300,
-              height: "100%",
-              background: b.sidebar,
-              display: "flex",
-              flexDirection: "column",
-              fontFamily: navFont,
-              overflow: "hidden",
-              boxShadow: "4px 0 24px rgba(0,0,0,0.2)",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div
-              style={{
-                flex: 1,
-                minHeight: 0,
-                overflowY: "auto",
-                WebkitOverflowScrolling: "touch",
-                overscrollBehavior: "contain",
-              }}
-            >
-              {navScroll}
-            </div>
-            {navFooter}
-          </aside>
-          <button
-            type="button"
-            aria-label="Close menu"
-            style={{
-              flex: 1,
-              minWidth: 0,
-              border: "none",
-              cursor: "pointer",
-              background: "rgba(0,0,0,0.45)",
-              padding: 0,
-            }}
-            onClick={() => setMobileOpen(false)}
-          />
-        </div>
-      ) : null}
+          <div className="vw-sidebar-scroll" style={{ flex: 1, minHeight: 0, WebkitOverflowScrolling: "touch" }}>
+            {navScrollInner}
+          </div>
+          {navFooter}
+        </aside>
+      </div>
+
       <style>{`
         .vw-sidebar-mobile-top { display: flex; }
+        .vw-sidebar-scroll {
+          overflow-y: auto;
+          scrollbar-width: thin;
+          scrollbar-color: rgba(255,255,255,0.28) transparent;
+        }
+        .vw-sidebar-scroll::-webkit-scrollbar {
+          width: 6px;
+        }
+        .vw-sidebar-scroll::-webkit-scrollbar-thumb {
+          background: rgba(255,255,255,0.28);
+          border-radius: 3px;
+        }
+        .vw-mobile-nav-layer--open .vw-mobile-nav-backdrop {
+          opacity: 1 !important;
+        }
+        .vw-mobile-nav-layer--open .vw-mobile-nav-drawer {
+          transform: translateX(0) !important;
+        }
         @media (min-width: 768px) {
           .vw-sidebar-desktop { display: flex !important; }
           .vw-sidebar-mobile-top { display: none !important; }
+          .vw-mobile-nav-layer { display: none !important; }
         }
       `}</style>
     </>

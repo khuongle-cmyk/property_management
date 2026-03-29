@@ -14,12 +14,12 @@ type Row = {
 };
 
 export default function MarketingAnalyticsPage() {
-  const { tenantId, querySuffix, loading: ctxLoading } = useMarketingTenant();
+  const { querySuffix, dataReady } = useMarketingTenant();
   const [rows, setRows] = useState<Row[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    if (ctxLoading || !tenantId) return;
+    if (!dataReady) return;
     let c = false;
     void (async () => {
       const res = await fetch(`/api/marketing/analytics-data${querySuffix}`, { cache: "no-store" });
@@ -32,7 +32,7 @@ export default function MarketingAnalyticsPage() {
     return () => {
       c = true;
     };
-  }, [tenantId, querySuffix, ctxLoading]);
+  }, [dataReady, querySuffix]);
 
   const bySource = useMemo(() => {
     const m = new Map<string, { source: string; leads: number; spend: number; revenue: number }>();
@@ -46,7 +46,7 @@ export default function MarketingAnalyticsPage() {
     return [...m.values()].sort((a, b) => b.revenue - a.revenue);
   }, [rows]);
 
-  if (ctxLoading || !tenantId) return null;
+  if (!dataReady) return null;
 
   return (
     <div style={{ display: "grid", gap: 20 }}>

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useMarketingTenant } from "@/contexts/MarketingTenantContext";
+import { pathWithMarketingScope } from "@/lib/marketing/access";
 
 type SmsRow = {
   id: string;
@@ -15,12 +16,12 @@ type SmsRow = {
 };
 
 export default function MarketingSmsPage() {
-  const { tenantId, querySuffix, loading: ctxLoading } = useMarketingTenant();
+  const { querySuffix, dataReady } = useMarketingTenant();
   const [rows, setRows] = useState<SmsRow[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    if (ctxLoading || !tenantId) return;
+    if (!dataReady) return;
     let c = false;
     void (async () => {
       const res = await fetch(`/api/marketing/sms${querySuffix}`, { cache: "no-store" });
@@ -33,15 +34,18 @@ export default function MarketingSmsPage() {
     return () => {
       c = true;
     };
-  }, [tenantId, querySuffix, ctxLoading]);
+  }, [dataReady, querySuffix]);
 
-  if (ctxLoading || !tenantId) return null;
+  if (!dataReady) return null;
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
         <h2 style={{ margin: 0, flex: 1, fontSize: "1.25rem" }}>SMS campaigns</h2>
-        <Link href="/marketing/sms/new" style={{ padding: "10px 16px", borderRadius: 8, background: "var(--petrol)", color: "#fff", textDecoration: "none" }}>
+        <Link
+          href={pathWithMarketingScope("/marketing/sms/new", querySuffix)}
+          style={{ padding: "10px 16px", borderRadius: 8, background: "var(--petrol)", color: "#fff", textDecoration: "none" }}
+        >
           New SMS
         </Link>
       </div>

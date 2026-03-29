@@ -1,9 +1,16 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { budgetApiErrorPayload } from "@/lib/budget/api-errors";
 import { getMembershipContext, userCanViewBudget } from "@/lib/budget/server-access";
 
 export async function GET(req: Request) {
-  const supabase = await createSupabaseServerClient();
+  let supabase;
+  try {
+    supabase = await createSupabaseServerClient();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Server configuration error";
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -77,6 +84,8 @@ export async function POST(req: Request) {
     })
     .select("*")
     .single();
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    return NextResponse.json(budgetApiErrorPayload(error.message), { status: 500 });
+  }
   return NextResponse.json({ combination: data });
 }

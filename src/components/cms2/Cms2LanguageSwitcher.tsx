@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { languages, type CmsMarketingLocale } from "@/lib/cms2/marketing-locales";
 import type { CmsPublicUi } from "@/lib/cms2/public-ui";
@@ -28,21 +28,6 @@ const LANG_ITEM_STYLE = {
   fontWeight: 400,
   color: "#2c3e3e",
 } as const;
-
-const DRAWER_ROW: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 12,
-  minHeight: 48,
-  padding: "0 4px",
-  fontFamily: "'DM Sans', sans-serif",
-  fontSize: 16,
-  fontWeight: 400,
-  color: "#2c3e3e",
-  textDecoration: "none",
-  boxSizing: "border-box",
-  width: "100%",
-};
 
 export function Cms2LanguageSwitcher({
   theme: _theme,
@@ -99,39 +84,74 @@ export function Cms2LanguageSwitcher({
 
   if (variant === "drawer") {
     return (
-      <ul
-        className="cms2-lang-drawer-list"
-        role="list"
-        style={{ listStyle: "none", margin: 0, padding: 0, width: "100%" }}
-      >
-        {languages.map((opt) => {
-          const active = currentLocale === opt.code;
-          return (
-            <li key={opt.code} style={{ margin: 0 }}>
+      <div className="cms2-lang-drawer-flags" style={{ width: "100%" }}>
+        <div
+          style={{
+            fontSize: 12,
+            color: "rgba(44, 62, 62, 0.55)",
+            fontFamily: "'DM Sans', sans-serif",
+            marginBottom: 10,
+            fontWeight: 400,
+          }}
+        >
+          {tx(ui, "lang.title")}
+        </div>
+        <div
+          role="list"
+          style={{
+            display: "flex",
+            flexDirection: "row",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          {languages.map((opt) => {
+            const active = currentLocale === opt.code;
+            return (
               <Link
+                key={opt.code}
                 href={hrefFor(opt.code)}
                 scroll={false}
+                role="listitem"
+                title={opt.name}
+                aria-label={opt.name}
+                aria-current={active ? "true" : undefined}
                 onClick={() => onNavigate?.()}
                 style={{
-                  ...DRAWER_ROW,
-                  fontWeight: active ? 600 : 400,
-                  color: active ? PETROL : "#2c3e3e",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 40,
+                  height: 32,
+                  borderRadius: 8,
+                  border: active ? `2px solid ${PETROL}` : "2px solid transparent",
+                  boxSizing: "border-box",
+                  textDecoration: "none",
+                  padding: 2,
+                  background: active ? "rgba(26, 74, 74, 0.06)" : "transparent",
+                  transition: "border-color 0.15s ease, background 0.15s ease",
                 }}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={FLAG_URLS[opt.code]}
                   alt=""
-                  width={22}
-                  height={16}
-                  style={{ borderRadius: 2, objectFit: "cover", flexShrink: 0 }}
+                  width={28}
+                  height={21}
+                  style={{
+                    borderRadius: 4,
+                    objectFit: "cover",
+                    display: "block",
+                    width: 28,
+                    height: 21,
+                  }}
                 />
-                <span>{opt.name}</span>
               </Link>
-            </li>
-          );
-        })}
-      </ul>
+            );
+          })}
+        </div>
+      </div>
     );
   }
 

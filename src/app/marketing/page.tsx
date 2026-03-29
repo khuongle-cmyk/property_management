@@ -19,6 +19,7 @@ import {
 import { useMarketingTenant } from "@/contexts/MarketingTenantContext";
 
 type DashboardJson = {
+  /** Single-tenant id or `"all"` when super admin aggregates every organization */
   tenantId: string;
   monthRange: { start: string; end: string };
   kpis: {
@@ -68,13 +69,13 @@ function Kpi({ label, value }: { label: string; value: string }) {
 }
 
 export default function MarketingDashboardPage() {
-  const { tenantId, querySuffix, loading: ctxLoading } = useMarketingTenant();
+  const { querySuffix, loading: ctxLoading, dataReady } = useMarketingTenant();
   const [data, setData] = useState<DashboardJson | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (ctxLoading || !tenantId) return;
+    if (!dataReady) return;
     let cancelled = false;
     (async () => {
       setLoading(true);
@@ -97,7 +98,7 @@ export default function MarketingDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [tenantId, querySuffix, ctxLoading]);
+  }, [dataReady, querySuffix]);
 
   const channelData = useMemo(() => {
     if (!data) return [];
@@ -129,7 +130,7 @@ export default function MarketingDashboardPage() {
     }));
   }, [data]);
 
-  if (ctxLoading || !tenantId) return null;
+  if (!dataReady) return null;
   if (loading) return <p style={{ opacity: 0.8 }}>Loading dashboard…</p>;
   if (err) return <p style={{ color: "#b42318" }}>{err}</p>;
   if (!data) return null;

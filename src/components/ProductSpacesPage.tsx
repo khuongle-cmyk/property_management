@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { spaceTypeLabel } from "@/lib/rooms/labels";
 
-type ProductType = "office" | "conference_room" | "venue" | "hot_desk";
+type ProductType = "office" | "conference_room" | "venue" | "hot_desk" | "meeting_room";
 
 type SpaceRow = {
   id: string;
@@ -64,10 +64,14 @@ function overlapHours(startA: Date, endA: Date, startB: Date, endB: Date): numbe
 export default function ProductSpacesPage({
   title,
   productType,
+  spaceTypes,
   publicPath,
 }: {
   title: string;
-  productType: ProductType;
+  /** Single type filter (use with `spaceTypes` unset). */
+  productType?: ProductType;
+  /** Multiple DB `space_type` values (e.g. meeting_room + conference_room). */
+  spaceTypes?: string[];
   publicPath: string;
 }) {
   const [loading, setLoading] = useState(true);
@@ -84,13 +88,23 @@ export default function ProductSpacesPage({
       setError(null);
       const supabase = getSupabaseClient();
 
-      const { data: spacesData, error: sErr } = await supabase
+      const types =
+        spaceTypes && spaceTypes.length > 0 ? spaceTypes : productType ? [productType] : [];
+      if (types.length === 0) {
+        if (!cancelled) setError("Configure productType or spaceTypes.");
+        if (!cancelled) setLoading(false);
+        return;
+      }
+
+      let spaceQuery = supabase
         .from("bookable_spaces")
         .select(
           "id,property_id,name,floor,size_m2,capacity,space_type,space_status,hourly_price,half_day_price_eur,full_day_price_eur,daily_price_eur,min_booking_hours,requires_approval,amenity_projector,amenity_video_conferencing,amenity_whiteboard,amenity_kitchen_access,amenity_reception_service,monthly_rent_eur",
         )
-        .eq("space_type", productType)
         .order("name", { ascending: true });
+      spaceQuery = types.length === 1 ? spaceQuery.eq("space_type", types[0]!) : spaceQuery.in("space_type", types);
+
+      const { data: spacesData, error: sErr } = await spaceQuery;
       if (sErr) {
         if (!cancelled) setError(sErr.message);
         if (!cancelled) setLoading(false);
@@ -151,7 +165,7 @@ export default function ProductSpacesPage({
     for (const s of spaces) {
       const rows = bookings.filter((b) => b.space_id === s.id && (b.status ?? "") !== "cancelled");
       const revenue =
-        productType === "office"
+        s.space_type === "office"
           ? (s.space_status === "occupied" ? Number(s.monthly_rent_eur ?? 0) : 0)
           : rows.reduce((sum, b) => sum + Number(b.total_price ?? 0), 0);
       const bookedHours = rows.reduce((sum, b) => {
@@ -165,7 +179,7 @@ export default function ProductSpacesPage({
       map.set(s.id, { revenue, utilizationPct });
     }
     return map;
-  }, [bookings, productType, spaces]);
+  }, [bookings, spaces]);
 
   if (loading) return <p>Loading {title.toLowerCase()}...</p>;
   if (error) return <p style={{ color: "#b00020" }}>Failed to load {title.toLowerCase()}: {error}</p>;
@@ -220,7 +234,7 @@ export default function ProductSpacesPage({
                 {s.daily_price_eur != null ? ` · Daily EUR ${s.daily_price_eur}` : ""}
                 {s.min_booking_hours != null ? ` · Min ${s.min_booking_hours}h` : ""}
               </div>
-              {productType === "venue" ? (
+              {s.space_type === "venue" ? (
                 <div style={{ fontSize: 13 }}>
                   Event types: Corporate events, workshops, networking · Booking mode: <strong>{bookingMode}</strong> · Catering: {s.amenity_kitchen_access ? "Yes" : "No"} · AV included: {s.amenity_video_conferencing || s.amenity_projector ? "Yes" : "No"} · Evening/weekend: custom quote
                 </div>

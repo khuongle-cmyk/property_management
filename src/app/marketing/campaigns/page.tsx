@@ -17,7 +17,7 @@ type Campaign = {
 };
 
 export default function MarketingCampaignsPage() {
-  const { tenantId, querySuffix, loading: ctxLoading } = useMarketingTenant();
+  const { tenantId, querySuffix, loading: ctxLoading, dataReady, allOrganizations } = useMarketingTenant();
   const [rows, setRows] = useState<Campaign[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -25,7 +25,7 @@ export default function MarketingCampaignsPage() {
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
-    if (ctxLoading || !tenantId) return;
+    if (!dataReady) return;
     let c = false;
     (async () => {
       setLoading(true);
@@ -40,11 +40,11 @@ export default function MarketingCampaignsPage() {
     return () => {
       c = true;
     };
-  }, [tenantId, querySuffix, ctxLoading]);
+  }, [dataReady, querySuffix]);
 
   async function createCampaign(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (allOrganizations || !tenantId || !name.trim()) return;
     setCreating(true);
     const res = await fetch("/api/marketing/campaigns", {
       method: "POST",
@@ -61,18 +61,24 @@ export default function MarketingCampaignsPage() {
     setName("");
   }
 
-  if (ctxLoading || !tenantId) return null;
+  if (!dataReady) return null;
   if (loading) return <p>Loading…</p>;
 
   return (
     <div style={{ display: "grid", gap: 20 }}>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
         <h2 style={{ margin: 0, flex: 1, fontSize: "1.25rem" }}>Campaigns</h2>
-        <Link href="/marketing/email" style={{ color: "var(--petrol, #1a4a4a)" }}>
+        <Link href={`/marketing/email${querySuffix}`} style={{ color: "var(--petrol, #1a4a4a)" }}>
           Email campaigns →
         </Link>
       </div>
       {err ? <p style={{ color: "#b42318" }}>{err}</p> : null}
+
+      {allOrganizations ? (
+        <p style={{ margin: 0, fontSize: 14, color: "rgba(26,74,74,0.8)" }}>
+          Select a single organization above to create a campaign.
+        </p>
+      ) : null}
 
       <form onSubmit={(e) => void createCampaign(e)} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
         <input
@@ -83,7 +89,7 @@ export default function MarketingCampaignsPage() {
         />
         <button
           type="submit"
-          disabled={creating}
+          disabled={creating || allOrganizations}
           style={{
             padding: "10px 16px",
             borderRadius: 8,

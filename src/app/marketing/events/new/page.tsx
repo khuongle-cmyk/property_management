@@ -5,10 +5,11 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { useMarketingTenant } from "@/contexts/MarketingTenantContext";
+import { pathWithMarketingScope } from "@/lib/marketing/access";
 
 export default function NewEventPage() {
   const router = useRouter();
-  const { tenantId, loading: ctxLoading } = useMarketingTenant();
+  const { tenantId, querySuffix, loading: ctxLoading, dataReady, allOrganizations } = useMarketingTenant();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [eventType, setEventType] = useState("networking");
@@ -35,7 +36,7 @@ export default function NewEventPage() {
   }, [tenantId]);
 
   async function submit() {
-    if (!tenantId || !name.trim() || !start || !end) return;
+    if (allOrganizations || !tenantId || !name.trim() || !start || !end) return;
     setBusy(true);
     setMsg(null);
     const res = await fetch("/api/marketing/events", {
@@ -59,14 +60,25 @@ export default function NewEventPage() {
     const j = (await res.json()) as { event?: { id: string }; error?: string };
     setBusy(false);
     if (!res.ok) setMsg(j.error ?? "Failed");
-    else router.push(`/marketing/events/${j.event!.id}`);
+    else router.push(pathWithMarketingScope(`/marketing/events/${j.event!.id}`, querySuffix));
   }
 
-  if (ctxLoading || !tenantId) return null;
+  if (ctxLoading || !dataReady) return null;
+  if (allOrganizations) {
+    return (
+      <div style={{ maxWidth: 560, display: "grid", gap: 14 }}>
+        <p style={{ margin: 0, fontSize: 15, color: "rgba(26,74,74,0.85)" }}>
+          Select a single organization in the header to create an event.
+        </p>
+        <Link href={pathWithMarketingScope("/marketing/events", querySuffix)}>← Back</Link>
+      </div>
+    );
+  }
+  if (!tenantId) return null;
 
   return (
     <div style={{ maxWidth: 560, display: "grid", gap: 14 }}>
-      <Link href="/marketing/events">← Back</Link>
+      <Link href={pathWithMarketingScope("/marketing/events", querySuffix)}>← Back</Link>
       <h2 style={{ margin: 0 }}>New event</h2>
       {msg ? <p style={{ color: "#b42318" }}>{msg}</p> : null}
       <input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} style={inp} />
