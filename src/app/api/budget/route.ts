@@ -76,21 +76,25 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Forbidden for tenant" }, { status: 403 });
   }
 
+  const rawScope = String(body.budget_scope ?? "property").toLowerCase();
   const budget_scope =
-    String(body.budget_scope ?? "property").toLowerCase() === "administration" ? "administration" : "property";
+    rawScope === "administration" ? "administration" : rawScope === "combined" ? "combined" : "property";
 
-  const name =
-    String(body.name ?? "").trim() ||
-    (budget_scope === "administration"
-      ? `Administration ${body.budget_year ?? new Date().getFullYear()}`
-      : `Budget ${body.budget_year ?? new Date().getFullYear()}`);
   const budget_year = Number(body.budget_year);
   if (!Number.isFinite(budget_year) || budget_year < 2000 || budget_year > 2100) {
     return NextResponse.json({ error: "Invalid budget_year" }, { status: 400 });
   }
 
+  const name =
+    String(body.name ?? "").trim() ||
+    (budget_scope === "administration"
+      ? `Administration ${budget_year}`
+      : budget_scope === "combined"
+        ? `Portfolio ${budget_year}`
+        : `Budget ${budget_year}`);
+
   const property_id =
-    budget_scope === "administration" ? null : String(body.property_id ?? "").trim() || null;
+    budget_scope === "property" ? String(body.property_id ?? "").trim() || null : null;
   if (budget_scope === "property" && !property_id) {
     return NextResponse.json({ error: "property_id required for property budgets" }, { status: 400 });
   }

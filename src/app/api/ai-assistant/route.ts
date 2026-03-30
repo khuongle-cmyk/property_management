@@ -27,13 +27,15 @@ function buildSystemPrompt(pack: Awaited<ReturnType<typeof buildAssistantContext
 }
 
 export async function POST(req: Request) {
-  if (!process.env.ANTHROPIC_API_KEY?.trim()) {
-    return NextResponse.json({ error: "ANTHROPIC_API_KEY not configured" }, { status: 500 });
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  console.log("API key exists:", !!apiKey);
+  console.log("API key prefix:", apiKey?.substring(0, 10));
+  if (!apiKey) {
+    console.error("ANTHROPIC_API_KEY is missing from environment");
+    return Response.json({ error: "ANTHROPIC_API_KEY not configured" }, { status: 500 });
   }
 
-  const anthropic = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY!,
-  });
+  const anthropic = new Anthropic({ apiKey });
 
   const model = process.env.ANTHROPIC_ASSISTANT_MODEL?.trim() || "claude-sonnet-4-20250514";
 

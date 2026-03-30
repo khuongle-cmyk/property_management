@@ -202,8 +202,11 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
     { href: "/bookings/my", label: "My Bookings", visible: loggedIn },
   ];
 
-  const crmItems: NavItem[] = [
+  const salesItems: NavItem[] = [
     { href: "/crm", label: "Pipeline", visible: loggedIn && showCrmNav },
+  ];
+
+  const crmItems: NavItem[] = [
     { href: "/crm/contacts", label: "Contacts", visible: loggedIn && showCrmNav },
   ];
 
@@ -225,6 +228,7 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
 
   /** Section order: Overview + Admin are static; these match product nav spec. */
   const collapsibleSections: Array<{ id: string; title: string; items: NavItem[] }> = [
+    { id: "sales", title: "Sales", items: salesItems },
     { id: "crm", title: "CRM", items: crmItems },
     { id: "marketing", title: "Marketing", items: marketingItems },
     { id: "spaces", title: "Spaces", items: spacesItems },

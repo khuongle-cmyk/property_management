@@ -72,7 +72,40 @@ function NewFloorPlanForm() {
       if (bgFile) {
         const fd = new FormData();
         fd.append("file", bgFile);
-        await fetch(`/api/floor-plans/${encodeURIComponent(json.id)}/background`, { method: "POST", body: fd });
+        const bgRes = await fetch(`/api/floor-plans/${encodeURIComponent(json.id)}/background`, {
+          method: "POST",
+          body: fd,
+        });
+        let bgJson: { fallback?: boolean; error?: string; detected_scale?: number | null } = {};
+        try {
+          bgJson = (await bgRes.json()) as { fallback?: boolean; error?: string; detected_scale?: number | null };
+        } catch {
+          /* non-JSON body */
+        }
+        const isPdf = (bgFile.name ?? "").toLowerCase().endsWith(".pdf");
+        if (bgRes.ok && isPdf) {
+          try {
+            if (typeof bgJson.detected_scale === "number" && Number.isFinite(bgJson.detected_scale) && bgJson.detected_scale > 0) {
+              sessionStorage.setItem("floor_plan_detected_scale", String(Math.round(bgJson.detected_scale)));
+              sessionStorage.removeItem("floor_plan_pdf_scale_unknown");
+            } else {
+              sessionStorage.setItem("floor_plan_pdf_scale_unknown", "1");
+              sessionStorage.removeItem("floor_plan_detected_scale");
+            }
+          } catch {
+            /* storage unavailable */
+          }
+        }
+        if (!bgRes.ok || bgJson.fallback === true) {
+          try {
+            sessionStorage.setItem(
+              "floor_plan_bg_upload_warning",
+              "Background upload failed — please upload a PNG or JPG image instead.",
+            );
+          } catch {
+            /* storage unavailable */
+          }
+        }
       }
 
       router.push(`/floor-plans/${json.id}/edit`);

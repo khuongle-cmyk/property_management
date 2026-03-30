@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  serverExternalPackages: ["pdf2pic", "gm", "dxf"],
+  serverExternalPackages: ["pdf2pic", "gm", "dxf", "pdfjs-dist"],
   images: {
     remotePatterns: [
       {

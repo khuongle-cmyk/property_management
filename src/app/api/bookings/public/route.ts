@@ -71,11 +71,26 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Offices are not bookable by the hour here" }, { status: 409 });
   }
   const st = (row.space_status ?? "").toLowerCase();
-  if (st !== "available" && st !== "vacant") {
-    return NextResponse.json({ error: "Space is not available" }, { status: 409 });
+  const allowedStatuses = new Set(["available", "vacant", "active"]);
+  if (!allowedStatuses.has(st)) {
+    return NextResponse.json({ error: "Space is not available for booking" }, { status: 400 });
   }
   if (row.is_published === false) {
     return NextResponse.json({ error: "Space is not available for public booking" }, { status: 409 });
+  }
+
+  const { data: overlapping, error: overlapErr } = await admin
+    .from("bookings")
+    .select("id")
+    .eq("space_id", spaceId)
+    .eq("status", "confirmed")
+    .lt("start_at", end.toISOString())
+    .gt("end_at", start.toISOString());
+  if (overlapErr) {
+    return NextResponse.json({ error: overlapErr.message }, { status: 500 });
+  }
+  if (overlapping && overlapping.length > 0) {
+    return NextResponse.json({ error: "Space already booked for this time" }, { status: 400 });
   }
 
   const { data: inserted, error: insErr } = await admin

@@ -5,9 +5,37 @@ import { FLOOR_PLANS_STORAGE_BUCKET } from "@/lib/floor-plans/storage-bucket";
 
 const MAX_BYTES = 40 * 1024 * 1024;
 
+/** First match of architectural scale 1:N in PDF text; returns N (e.g. 150 for "1:150"). */
+async function detectScaleFromPdfBuffer(buf: Buffer): Promise<number | undefined> {
+  try {
+    const pdfjs = await import("pdfjs-dist");
+    const data = new Uint8Array(buf.length);
+    data.set(buf);
+    const pdf = await pdfjs.getDocument({ data, useSystemFonts: true }).promise;
+    const page = await pdf.getPage(1);
+    const textContent = await page.getTextContent();
+    const text = textContent.items
+      .map((item) => {
+        if (item && typeof item === "object" && "str" in item && typeof (item as { str: unknown }).str === "string") {
+          return (item as { str: string }).str;
+        }
+        return "";
+      })
+      .join(" ");
+    const m = text.match(/1:\s*(\d+)/);
+    if (!m) return undefined;
+    const n = parseInt(m[1], 10);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  } catch (e) {
+    console.warn("[floor-plans/background] PDF scale detection failed", e);
+    return undefined;
+  }
+}
+
 /**
  * POST multipart: field "file" — PDF, PNG, JPEG, WebP, or SVG.
- * Uploads to Supabase Storage and sets floor_plans.background_image_url.
+ * PDFs are stored as application/pdf; the editor renders the first page in the browser (PDF.js).
+ * Other types upload to Supabase Storage and set floor_plans.background_image_url.
  */
 export async function handleFloorPlanBackgroundUpload(req: Request, floorPlanId: string) {
   if (!floorPlanId?.trim()) {
@@ -56,33 +84,9 @@ export async function handleFloorPlanBackgroundUpload(req: Request, floorPlanId:
   let ext: string;
 
   if (lower.endsWith(".pdf")) {
-    const buf = Buffer.from(await file.arrayBuffer());
-    try {
-      const { fromBuffer } = await import("pdf2pic");
-      const converter = fromBuffer(buf, {
-        density: 200,
-        format: "png",
-        width: 2400,
-        height: 2400,
-        preserveAspectRatio: true,
-      });
-      const page = await converter(1, { responseType: "buffer" });
-      const b = page.buffer;
-      if (!b || !Buffer.isBuffer(b)) throw new Error("pdf2pic returned no buffer");
-      uploadBuffer = b;
-      contentType = "image/png";
-      ext = "png";
-    } catch (e) {
-      return NextResponse.json(
-        {
-          error: e instanceof Error ? e.message : "PDF conversion failed",
-          hint:
-            "Server PDF raster needs GraphicsMagick/ImageMagick + Ghostscript, or upload a PNG/JPEG. You can also open the editor and use the browser PDF fallback.",
-          fallback: true,
-        },
-        { status: 503 },
-      );
-    }
+    uploadBuffer = Buffer.from(await file.arrayBuffer());
+    contentType = "application/pdf";
+    ext = "pdf";
   } else if (lower.endsWith(".svg")) {
     const buf = Buffer.from(await file.arrayBuffer());
     try {
@@ -137,5 +141,14 @@ export async function handleFloorPlanBackgroundUpload(req: Request, floorPlanId:
     .eq("id", floorPlanId);
   if (uErr) return NextResponse.json({ error: uErr.message }, { status: 500 });
 
-  return NextResponse.json({ publicUrl, url: publicUrl, path });
+  const base = { publicUrl, url: publicUrl, path };
+  if (lower.endsWith(".pdf")) {
+    const detectedScale = await detectScaleFromPdfBuffer(uploadBuffer);
+    return NextResponse.json({
+      ...base,
+      detected_scale: detectedScale ?? null,
+    });
+  }
+
+  return NextResponse.json(base);
 }

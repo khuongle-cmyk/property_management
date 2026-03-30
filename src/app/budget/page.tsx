@@ -144,6 +144,8 @@ const TABS = [
 ] as const;
 type TabId = (typeof TABS)[number];
 
+type NewBudgetScope = "property" | "administration" | "combined";
+
 export default function BudgetPage() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
@@ -207,6 +209,15 @@ export default function BudgetPage() {
     Array<{ id: string; name: string; property_ids: string[]; include_admin: boolean }>
   >([]);
   const [comboSaving, setComboSaving] = useState(false);
+
+  const [newBudgetOpen, setNewBudgetOpen] = useState(false);
+  const [newBudgetYear, setNewBudgetYear] = useState(() => new Date().getFullYear() + 1);
+  const [newBudgetScope, setNewBudgetScope] = useState<NewBudgetScope>("property");
+  const [newBudgetPropertyId, setNewBudgetPropertyId] = useState("");
+  const [newBudgetName, setNewBudgetName] = useState("");
+  const [newBudgetNameTouched, setNewBudgetNameTouched] = useState(false);
+  const [newBudgetSaving, setNewBudgetSaving] = useState(false);
+  const [newBudgetError, setNewBudgetError] = useState<string | null>(null);
 
   const year = budget?.budget_year ?? new Date().getFullYear();
   const budgetScope = (budget?.budget_scope ?? "property").toLowerCase();
@@ -413,6 +424,41 @@ export default function BudgetPage() {
     return properties.filter((p) => p.tenant_id === tenantId);
   }, [properties, tenantId, isSuperAdmin]);
 
+  const suggestNewBudgetName = useCallback(
+    (scope: NewBudgetScope, y: number, propertyId: string) => {
+      if (scope === "administration") return `Administration · ${y} Annual Budget`;
+      if (scope === "combined") return `Portfolio · ${y} Annual Budget`;
+      const p = propertiesForTenant.find((x) => x.id === propertyId);
+      const label = (p?.name ?? "").trim() || "Property";
+      return `${label} · ${y} Annual Budget`;
+    },
+    [propertiesForTenant],
+  );
+
+  useEffect(() => {
+    if (!newBudgetOpen || newBudgetNameTouched) return;
+    setNewBudgetName(suggestNewBudgetName(newBudgetScope, newBudgetYear, newBudgetPropertyId));
+  }, [
+    newBudgetOpen,
+    newBudgetNameTouched,
+    newBudgetScope,
+    newBudgetYear,
+    newBudgetPropertyId,
+    suggestNewBudgetName,
+  ]);
+
+  useEffect(() => {
+    if (!newBudgetOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !newBudgetSaving) {
+        e.preventDefault();
+        setNewBudgetOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [newBudgetOpen, newBudgetSaving]);
+
   useEffect(() => {
     setPortfolioPropIds(new Set(propertiesForTenant.map((p) => p.id)));
   }, [tenantId, propertiesForTenant]);
@@ -613,23 +659,50 @@ export default function BudgetPage() {
     }));
   }
 
-  async function newBudget() {
+  function openNewBudgetModal() {
     if (!tenantId) return;
-    const y = Number(prompt("Budget year?", String(new Date().getFullYear())));
-    if (!Number.isFinite(y)) return;
-    const scopeAns = (prompt("Budget type: (1) Property  (2) Administration — enter 1 or 2", "1") ?? "1").trim();
-    const administration = scopeAns === "2" || scopeAns.toLowerCase().startsWith("a");
-    let property_id: string | null = null;
-    let name: string;
-    if (administration) {
-      name = prompt("Administration budget name?", `${y} Administration`) ?? `${y} Administration`;
-    } else {
-      const plist = propertiesForTenant.map((p) => `${p.id.slice(0, 8)}… ${p.name ?? ""}`).join("\n");
-      const pid = (prompt(`Property UUID for this budget:\n${plist}\n\nPaste property id:`) ?? "").trim();
-      if (!pid) return;
-      property_id = pid;
-      name = prompt("Budget name?", `${y} Property budget`) ?? `${y} Property`;
+    const y = new Date().getFullYear() + 1;
+    const firstId = propertiesForTenant[0]?.id ?? "";
+    setNewBudgetYear(y);
+    setNewBudgetScope("property");
+    setNewBudgetPropertyId(firstId);
+    setNewBudgetNameTouched(false);
+    setNewBudgetError(null);
+    setNewBudgetName(suggestNewBudgetName("property", y, firstId));
+    setNewBudgetOpen(true);
+  }
+
+  async function submitNewBudget() {
+    if (!tenantId) return;
+    setNewBudgetError(null);
+    const y = Math.round(Number(newBudgetYear));
+    if (!Number.isFinite(y) || y < 2000 || y > 2100) {
+      setNewBudgetError("Enter a valid budget year between 2000 and 2100.");
+      return;
     }
+    let property_id: string | null = null;
+    let budget_scope: string;
+    if (newBudgetScope === "property") {
+      const pid = newBudgetPropertyId.trim();
+      if (!pid) {
+        setNewBudgetError("Select a property for a property budget.");
+        return;
+      }
+      if (!propertiesForTenant.some((p) => p.id === pid)) {
+        setNewBudgetError("Selected property is not in your available list.");
+        return;
+      }
+      property_id = pid;
+      budget_scope = "property";
+    } else if (newBudgetScope === "administration") {
+      budget_scope = "administration";
+    } else {
+      budget_scope = "combined";
+    }
+    const name =
+      newBudgetName.trim() ||
+      suggestNewBudgetName(newBudgetScope, y, newBudgetPropertyId);
+    setNewBudgetSaving(true);
     const r = await fetch("/api/budget", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -637,17 +710,27 @@ export default function BudgetPage() {
         tenant_id: tenantId,
         budget_year: y,
         name,
-        budget_scope: administration ? "administration" : "property",
+        budget_scope,
         property_id,
       }),
     });
+    setNewBudgetSaving(false);
     if (!r.ok) {
-      alert(await r.text());
+      let detail = await r.text();
+      try {
+        const j = JSON.parse(detail) as { error?: string };
+        if (j.error) detail = j.error;
+      } catch {
+        /* keep text */
+      }
+      setNewBudgetError(detail || "Could not create budget.");
       return;
     }
     const j = (await r.json()) as { budget: BudgetMeta };
     await loadBudgets(tenantId);
     setSelectedId(j.budget.id);
+    setNewBudgetOpen(false);
+    setMsg("Budget created.");
   }
 
   async function exportXlsx() {
@@ -759,7 +842,9 @@ export default function BudgetPage() {
             const pnm =
               sc === "administration"
                 ? "Administration"
-                : propertiesForTenant.find((p) => p.id === b.property_id)?.name ?? "Property";
+                : sc === "combined"
+                  ? "Portfolio"
+                  : propertiesForTenant.find((p) => p.id === b.property_id)?.name ?? "Property";
             return (
               <option key={b.id} value={b.id}>
                 {b.budget_year} · {pnm} · {b.name} ({b.status})
@@ -768,7 +853,7 @@ export default function BudgetPage() {
           })}
         </select>
         {canManage && (
-          <button type="button" onClick={() => newBudget()} style={{ padding: "8px 12px" }}>
+          <button type="button" onClick={() => openNewBudgetModal()} style={{ padding: "8px 12px" }}>
             New budget
           </button>
         )}
@@ -1610,6 +1695,224 @@ export default function BudgetPage() {
           }}
         />
       )}
+
+      {newBudgetOpen ? (
+        <div
+          role="presentation"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1000,
+            background: "rgba(15, 23, 42, 0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 20,
+          }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget && !newBudgetSaving) setNewBudgetOpen(false);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="new-budget-title"
+            style={{
+              width: "100%",
+              maxWidth: 460,
+              background: "#fff",
+              borderRadius: 12,
+              boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)",
+              border: "1px solid #e4e4e7",
+              padding: "24px 26px",
+              maxHeight: "min(90vh, 640px)",
+              overflowY: "auto",
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <h2 id="new-budget-title" style={{ margin: "0 0 6px", fontSize: 20, fontWeight: 700, color: "#0f172a" }}>
+              New budget
+            </h2>
+            <p style={{ margin: "0 0 20px", fontSize: 13, color: "#64748b" }}>
+              Create a draft budget for your organization. You can edit lines after it is created.
+            </p>
+
+            <div style={{ display: "grid", gap: 18 }}>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontWeight: 600, fontSize: 14, color: "#334155" }}>Budget year</span>
+                <input
+                  type="number"
+                  min={2000}
+                  max={2100}
+                  value={newBudgetYear}
+                  onChange={(e) => setNewBudgetYear(Number(e.target.value))}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 8,
+                    border: "1px solid #cbd5e1",
+                    fontSize: 15,
+                    maxWidth: 140,
+                  }}
+                />
+              </label>
+
+              <fieldset style={{ margin: 0, padding: 0, border: "none" }}>
+                <legend style={{ fontWeight: 600, fontSize: 14, color: "#334155", marginBottom: 8 }}>Budget type</legend>
+                <div style={{ display: "grid", gap: 10 }}>
+                  {(
+                    [
+                      { value: "property" as const, label: "Property budget", sub: "For a specific property" },
+                      { value: "administration" as const, label: "Administration budget", sub: "Central costs" },
+                      { value: "combined" as const, label: "Portfolio budget", sub: "All properties combined" },
+                    ] as const
+                  ).map((opt) => (
+                    <label
+                      key={opt.value}
+                      style={{
+                        display: "flex",
+                        gap: 10,
+                        alignItems: "flex-start",
+                        padding: "10px 12px",
+                        borderRadius: 8,
+                        border: `1px solid ${newBudgetScope === opt.value ? "#1a4a4a" : "#e2e8f0"}`,
+                        background: newBudgetScope === opt.value ? "#f0fdfa" : "#fafafa",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="new-budget-scope"
+                        checked={newBudgetScope === opt.value}
+                        onChange={() => {
+                          setNewBudgetScope(opt.value);
+                          setNewBudgetError(null);
+                        }}
+                        style={{ marginTop: 3, accentColor: "#1a4a4a" }}
+                      />
+                      <span>
+                        <span style={{ display: "block", fontWeight: 600, fontSize: 14, color: "#0f172a" }}>{opt.label}</span>
+                        <span style={{ display: "block", fontSize: 12, color: "#64748b", marginTop: 2 }}>{opt.sub}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+
+              {newBudgetScope === "property" ? (
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontWeight: 600, fontSize: 14, color: "#334155" }}>Property</span>
+                  <select
+                    value={newBudgetPropertyId}
+                    onChange={(e) => {
+                      setNewBudgetPropertyId(e.target.value);
+                      setNewBudgetError(null);
+                    }}
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      border: "1px solid #cbd5e1",
+                      fontSize: 14,
+                      background: "#fff",
+                    }}
+                  >
+                    {propertiesForTenant.length === 0 ? (
+                      <option value="">No properties available</option>
+                    ) : (
+                      propertiesForTenant.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name?.trim() ? p.name : p.id}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                  {propertiesForTenant.length === 0 ? (
+                    <span style={{ fontSize: 12, color: "#b45309" }}>Add or scope properties before creating a property budget.</span>
+                  ) : null}
+                </label>
+              ) : null}
+
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontWeight: 600, fontSize: 14, color: "#334155" }}>Budget name</span>
+                <input
+                  type="text"
+                  value={newBudgetName}
+                  onChange={(e) => {
+                    setNewBudgetNameTouched(true);
+                    setNewBudgetName(e.target.value);
+                  }}
+                  placeholder={suggestNewBudgetName(newBudgetScope, newBudgetYear, newBudgetPropertyId)}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 8,
+                    border: "1px solid #cbd5e1",
+                    fontSize: 14,
+                  }}
+                />
+              </label>
+
+              {newBudgetError ? (
+                <p style={{ margin: 0, fontSize: 13, color: "#b91c1c", background: "#fef2f2", padding: "10px 12px", borderRadius: 8 }}>
+                  {newBudgetError}
+                </p>
+              ) : null}
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "flex-end", marginTop: 4 }}>
+                <button
+                  type="button"
+                  disabled={newBudgetSaving}
+                  onClick={() => !newBudgetSaving && setNewBudgetOpen(false)}
+                  style={{
+                    padding: "10px 18px",
+                    borderRadius: 8,
+                    border: "1px solid #cbd5e1",
+                    background: "#fff",
+                    fontWeight: 600,
+                    fontSize: 14,
+                    cursor: newBudgetSaving ? "default" : "pointer",
+                    color: "#334155",
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={
+                    newBudgetSaving ||
+                    !tenantId ||
+                    (newBudgetScope === "property" &&
+                      (propertiesForTenant.length === 0 || !String(newBudgetPropertyId).trim()))
+                  }
+                  onClick={() => void submitNewBudget()}
+                  style={{
+                    padding: "10px 20px",
+                    borderRadius: 8,
+                    border: "none",
+                    background:
+                      newBudgetSaving ||
+                      !tenantId ||
+                      (newBudgetScope === "property" &&
+                        (propertiesForTenant.length === 0 || !String(newBudgetPropertyId).trim()))
+                        ? "#94a3b8"
+                        : "#1a4a4a",
+                    color: "#fff",
+                    fontWeight: 600,
+                    fontSize: 14,
+                    cursor:
+                      newBudgetSaving ||
+                      !tenantId ||
+                      (newBudgetScope === "property" &&
+                        (propertiesForTenant.length === 0 || !String(newBudgetPropertyId).trim()))
+                        ? "not-allowed"
+                        : "pointer",
+                  }}
+                >
+                  {newBudgetSaving ? "Creating…" : "Create"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <p style={{ marginTop: 32, fontSize: 14 }}>
         <Link href="/reports">Reports</Link>

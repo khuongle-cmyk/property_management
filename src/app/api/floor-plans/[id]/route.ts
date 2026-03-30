@@ -114,8 +114,6 @@ async function syncRooms(
       color: r.color ?? null,
       shape: r.shape ?? "rect",
       polygon_points: r.polygon_points ?? null,
-      label_x: r.label_x ?? null,
-      label_y: r.label_y ?? null,
       is_rentable: r.is_rentable ?? true,
       metadata: r.metadata ?? {},
     };

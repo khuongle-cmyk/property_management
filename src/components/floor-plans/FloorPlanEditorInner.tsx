@@ -59,15 +59,16 @@ type ElementRow = {
   label: string | null;
 };
 
-type Tool = "select" | "rect" | "wall";
-type ScalePreset = "1:50" | "1:100" | "1:200" | "custom";
-type GridMode = "show" | "hide" | "dots";
+type Tool = "select" | "move" | "rect" | "wall" | "calibrate";
 
-const SCALE_PRESET_CM: Record<Exclude<ScalePreset, "custom">, number> = {
-  "1:50": 2,
-  "1:100": 1,
-  "1:200": 0.5,
-};
+const MAX_HISTORY = 50;
+
+type RoomsElementsSnapshot = { rooms: RoomRow[]; elements: ElementRow[] };
+
+function cloneSnapshot(rooms: RoomRow[], elements: ElementRow[]): RoomsElementsSnapshot {
+  return { rooms: structuredClone(rooms), elements: structuredClone(elements) };
+}
+type GridMode = "show" | "hide" | "dots";
 
 const DEFAULT_CM_PER_PIXEL = 10;
 
@@ -119,6 +120,133 @@ function hitTestRoom(wx: number, wy: number, rooms: RoomRow[]): string | null {
     }
   }
   return null;
+}
+
+const MIN_ROOM_PX = 8;
+const HANDLE_SCREEN_PX = 8;
+
+type ResizeHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+
+function isRectLikeRoom(r: RoomRow): boolean {
+  if (r.shape === "polygon" && Array.isArray(r.polygon_points) && (r.polygon_points as number[]).length >= 6) {
+    return false;
+  }
+  return true;
+}
+
+function cursorForResizeHandle(h: ResizeHandle): string {
+  switch (h) {
+    case "nw":
+    case "se":
+      return "nwse-resize";
+    case "ne":
+    case "sw":
+      return "nesw-resize";
+    case "e":
+    case "w":
+      return "ew-resize";
+    case "n":
+    case "s":
+      return "ns-resize";
+    default:
+      return "default";
+  }
+}
+
+/** Hit test resize handles; corners checked before edges so corners win near intersections. */
+function hitTestResizeHandle(wx: number, wy: number, r: RoomRow, zoom: number): ResizeHandle | null {
+  if (!isRectLikeRoom(r)) return null;
+  const hitR = 6 / zoom;
+  const { x, y, width: w, height: h } = r;
+  const centers: Record<ResizeHandle, [number, number]> = {
+    nw: [x, y],
+    ne: [x + w, y],
+    sw: [x, y + h],
+    se: [x + w, y + h],
+    n: [x + w / 2, y],
+    s: [x + w / 2, y + h],
+    e: [x + w, y + h / 2],
+    w: [x, y + h / 2],
+  };
+  const order: ResizeHandle[] = ["nw", "ne", "sw", "se", "n", "e", "s", "w"];
+  for (const key of order) {
+    const [cx, cy] = centers[key];
+    if (Math.hypot(wx - cx, wy - cy) <= hitR) return key;
+  }
+  return null;
+}
+
+function applyResizeFromDelta(
+  handle: ResizeHandle,
+  ox: number,
+  oy: number,
+  ow: number,
+  oh: number,
+  dx: number,
+  dy: number,
+  fpW: number,
+  fpH: number,
+): { x: number; y: number; width: number; height: number } {
+  const MIN = MIN_ROOM_PX;
+  let x = ox;
+  let y = oy;
+  let w = ow;
+  let h = oh;
+  switch (handle) {
+    case "se":
+      w = Math.max(MIN, ow + dx);
+      h = Math.max(MIN, oh + dy);
+      x = ox;
+      y = oy;
+      break;
+    case "nw":
+      w = Math.max(MIN, ow - dx);
+      h = Math.max(MIN, oh - dy);
+      x = ox + ow - w;
+      y = oy + oh - h;
+      break;
+    case "ne":
+      w = Math.max(MIN, ow + dx);
+      h = Math.max(MIN, oh - dy);
+      x = ox;
+      y = oy + oh - h;
+      break;
+    case "sw":
+      w = Math.max(MIN, ow - dx);
+      h = Math.max(MIN, oh + dy);
+      x = ox + ow - w;
+      y = oy;
+      break;
+    case "e":
+      w = Math.max(MIN, ow + dx);
+      h = oh;
+      x = ox;
+      y = oy;
+      break;
+    case "w":
+      w = Math.max(MIN, ow - dx);
+      h = oh;
+      x = ox + ow - w;
+      y = oy;
+      break;
+    case "s":
+      w = ow;
+      h = Math.max(MIN, oh + dy);
+      x = ox;
+      y = oy;
+      break;
+    case "n":
+      w = ow;
+      h = Math.max(MIN, oh - dy);
+      x = ox;
+      y = oy + oh - h;
+      break;
+  }
+  w = Math.max(MIN, Math.min(w, fpW));
+  h = Math.max(MIN, Math.min(h, fpH));
+  x = Math.max(0, Math.min(fpW - w, x));
+  y = Math.max(0, Math.min(fpH - h, y));
+  return { x, y, width: w, height: h };
 }
 
 /** Real-world size from room geometry and scale (cm per pixel). */
@@ -184,22 +312,75 @@ function loadBackgroundImage(url: string): Promise<HTMLImageElement | null> {
   });
 }
 
+function backgroundUrlIsPdf(url: string): boolean {
+  try {
+    return new URL(url).pathname.toLowerCase().endsWith(".pdf");
+  } catch {
+    const base = url.split("?")[0].split("#")[0];
+    return base.toLowerCase().endsWith(".pdf");
+  }
+}
+
+/** Render first PDF page to an image via PDF.js (client-only). */
+async function loadBackgroundPdf(url: string): Promise<HTMLImageElement | null> {
+  try {
+    console.log("[PDF background] fetching URL:", url);
+    const pdfjs = await import("pdfjs-dist");
+    console.log("[PDF background] PDF.js loaded successfully");
+    if (!pdfjs.GlobalWorkerOptions.workerSrc) {
+      pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+    }
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.log("[PDF background] fetch failed:", res.status, res.statusText);
+      return null;
+    }
+    console.log("[PDF background] fetch succeeded");
+    const data = new Uint8Array(await res.arrayBuffer());
+    const pdf = await pdfjs.getDocument({ data }).promise;
+    const page = await pdf.getPage(1);
+    const scale = 2;
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement("canvas");
+    const w = Math.ceil(viewport.width);
+    const h = Math.ceil(viewport.height);
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    const dataUrl = canvas.toDataURL("image/png");
+    return await new Promise<HTMLImageElement | null>((resolve) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => resolve(null);
+      img.src = dataUrl;
+    });
+  } catch (err) {
+    console.error("[PDF background]", err);
+    return null;
+  }
+}
+
 function parseCanvasData(raw: Record<string, unknown> | undefined): {
   cmPerPixel: number;
-  scalePreset: ScalePreset;
   gridMode: GridMode;
 } {
   const g = raw?.grid_mode;
   const gridMode: GridMode = g === "hide" || g === "dots" ? g : "show";
-  const presetRaw = raw?.scale_preset;
-  const scalePreset: ScalePreset =
-    presetRaw === "1:50" || presetRaw === "1:100" || presetRaw === "1:200" || presetRaw === "custom" ? presetRaw : "custom";
   let cmPerPixel = num(raw?.cm_per_pixel, NaN);
   if (!Number.isFinite(cmPerPixel) || cmPerPixel <= 0) cmPerPixel = DEFAULT_CM_PER_PIXEL;
-  return { cmPerPixel, scalePreset, gridMode };
+  return { cmPerPixel, gridMode };
 }
 
-export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: string }) {
+export default function FloorPlanEditorInner({
+  floorPlanId,
+  detectedScale,
+}: {
+  floorPlanId: string;
+  /** Architectural scale from PDF (1:N → N), or null if PDF had no scale text, or undefined if not applicable. */
+  detectedScale?: number | null;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const minimapRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -216,29 +397,48 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  const [exportingPdf, setExportingPdf] = useState(false);
   const [dirty, setDirty] = useState(false);
   /** Bumps when background image ref is set/cleared so draw() re-runs. */
   const [bgEpoch, setBgEpoch] = useState(0);
 
   const [cmPerPixel, setCmPerPixel] = useState(DEFAULT_CM_PER_PIXEL);
-  const [scalePreset, setScalePreset] = useState<ScalePreset>("custom");
-  const [customCmInput, setCustomCmInput] = useState(String(DEFAULT_CM_PER_PIXEL));
   const [gridMode, setGridMode] = useState<GridMode>("show");
+  const [pdfScaleDetectedBannerDismissed, setPdfScaleDetectedBannerDismissed] = useState(false);
+  const [pdfScaleUnknownBannerDismissed, setPdfScaleUnknownBannerDismissed] = useState(false);
+  const appliedPdfDetectedScaleRef = useRef(false);
 
   const [draftRect, setDraftRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [draftWall, setDraftWall] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+  const [draftCalibrate, setDraftCalibrate] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+  const [calibrateDialog, setCalibrateDialog] = useState<{ pixelLength: number } | null>(null);
+  const [calibrateMetersDraft, setCalibrateMetersDraft] = useState("");
   const [drag, setDrag] = useState<{ roomId: string; startX: number; startY: number; origX: number; origY: number } | null>(null);
+  const [resize, setResize] = useState<{
+    roomId: string;
+    handle: ResizeHandle;
+    startX: number;
+    startY: number;
+    orig: { x: number; y: number; width: number; height: number };
+  } | null>(null);
+  /** Select tool only: hover target for cursor (handles use ResizeHandle; room body uses "move"). */
+  const [selectHover, setSelectHover] = useState<ResizeHandle | "move" | null>(null);
   const [panDrag, setPanDrag] = useState<{ startClientX: number; startClientY: number; startPanX: number; startPanY: number } | null>(
     null,
   );
   const [spaceDown, setSpaceDown] = useState(false);
+
+  const undoStackRef = useRef<RoomsElementsSnapshot[]>([]);
+  const redoStackRef = useRef<RoomsElementsSnapshot[]>([]);
+  const skipHistoryRef = useRef(false);
+  const [undoLen, setUndoLen] = useState(0);
+  const [redoLen, setRedoLen] = useState(0);
 
   const roomsRef = useRef(rooms);
   const elementsRef = useRef(elements);
   const planRef = useRef(plan);
   const cmRef = useRef(cmPerPixel);
   const gridModeRef = useRef(gridMode);
-  const scalePresetRef = useRef(scalePreset);
   const panRef = useRef(pan);
   const zoomRef = useRef(zoom);
   useEffect(() => {
@@ -247,10 +447,48 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
     planRef.current = plan;
     cmRef.current = cmPerPixel;
     gridModeRef.current = gridMode;
-    scalePresetRef.current = scalePreset;
     panRef.current = pan;
     zoomRef.current = zoom;
-  }, [rooms, elements, plan, cmPerPixel, gridMode, scalePreset, pan, zoom]);
+  }, [rooms, elements, plan, cmPerPixel, gridMode, pan, zoom]);
+
+  const commitHistory = useCallback(() => {
+    if (skipHistoryRef.current) return;
+    const snap = cloneSnapshot(roomsRef.current, elementsRef.current);
+    undoStackRef.current = [...undoStackRef.current.slice(-(MAX_HISTORY - 1)), snap];
+    redoStackRef.current = [];
+    setUndoLen(undoStackRef.current.length);
+    setRedoLen(0);
+  }, []);
+
+  const applyUndo = useCallback(() => {
+    if (undoStackRef.current.length === 0) return;
+    const snapshot = undoStackRef.current.pop()!;
+    const cur = cloneSnapshot(roomsRef.current, elementsRef.current);
+    redoStackRef.current = [...redoStackRef.current.slice(-(MAX_HISTORY - 1)), cur];
+    skipHistoryRef.current = true;
+    setRooms(snapshot.rooms);
+    setElements(snapshot.elements);
+    skipHistoryRef.current = false;
+    setUndoLen(undoStackRef.current.length);
+    setRedoLen(redoStackRef.current.length);
+    setSelectedId((sid) => (sid && snapshot.rooms.some((r) => r.id === sid) ? sid : null));
+    setDirty(true);
+  }, []);
+
+  const applyRedo = useCallback(() => {
+    if (redoStackRef.current.length === 0) return;
+    const snapshot = redoStackRef.current.pop()!;
+    const cur = cloneSnapshot(roomsRef.current, elementsRef.current);
+    undoStackRef.current = [...undoStackRef.current.slice(-(MAX_HISTORY - 1)), cur];
+    skipHistoryRef.current = true;
+    setRooms(snapshot.rooms);
+    setElements(snapshot.elements);
+    skipHistoryRef.current = false;
+    setUndoLen(undoStackRef.current.length);
+    setRedoLen(redoStackRef.current.length);
+    setSelectedId((sid) => (sid && snapshot.rooms.some((r) => r.id === sid) ? sid : null));
+    setDirty(true);
+  }, []);
 
   const ppm = ppmFromCmPerPixel(cmPerPixel);
   const fpW = plan ? Math.max(1, num(plan.width_meters, 20) * ppm) : 800;
@@ -345,8 +583,6 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
       cm = 100 / scaleNum;
     }
     setCmPerPixel(cm);
-    setCustomCmInput(String(cm));
-    setScalePreset(parsed.scalePreset);
     setGridMode(parsed.gridMode);
 
     setPlan({
@@ -380,12 +616,26 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
         style: (el.style ?? {}) as Record<string, unknown>,
       })),
     );
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    setUndoLen(0);
+    setRedoLen(0);
     setLoading(false);
   }, [floorPlanId]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (loading) return;
+    if (appliedPdfDetectedScaleRef.current) return;
+    if (detectedScale == null || !Number.isFinite(detectedScale) || detectedScale <= 0) return;
+    appliedPdfDetectedScaleRef.current = true;
+    // 1:N with 1 px ≈ 1 mm on paper → cm/px = N/100 (e.g. 1:150 → 1.5 cm/px).
+    setCmPerPixel(detectedScale / 100);
+    setDirty(true);
+  }, [loading, detectedScale]);
 
   useEffect(() => {
     const onResize = () => {
@@ -407,7 +657,7 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
     }
     const url = plan.background_image_url;
     let cancelled = false;
-    void loadBackgroundImage(url).then((img) => {
+    void (backgroundUrlIsPdf(url) ? loadBackgroundPdf(url) : loadBackgroundImage(url)).then((img) => {
       if (cancelled) return;
       backgroundImageRef.current = img;
       setBgEpoch((n) => n + 1);
@@ -458,11 +708,34 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
     };
   }, []);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        applyUndo();
+        return;
+      }
+      if (mod && e.key === "z" && e.shiftKey) {
+        e.preventDefault();
+        applyRedo();
+        return;
+      }
+      if (mod && e.key === "y") {
+        e.preventDefault();
+        applyRedo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [applyUndo, applyRedo]);
+
   const buildCanvasData = useCallback(() => {
     const p = planRef.current;
     const base = { ...(p?.canvas_data ?? {}) };
     base.cm_per_pixel = cmRef.current;
-    base.scale_preset = scalePresetRef.current;
     base.grid_mode = gridModeRef.current;
     return base;
   }, []);
@@ -535,20 +808,117 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
     setTimeout(() => setSaveState("idle"), 1600);
   }, [floorPlanId, buildCanvasData]);
 
+  const exportFloorPlanPdf = useCallback(async () => {
+    const p = planRef.current;
+    if (!p) return;
+    setExportingPdf(true);
+    try {
+      const fw = Math.max(1, Math.floor(fpW));
+      const fh = Math.max(1, Math.floor(fpH));
+      const outW = fw * 2;
+      const outH = fh * 2;
+      const c = document.createElement("canvas");
+      c.width = outW;
+      c.height = outH;
+      const ctx = c.getContext("2d");
+      if (!ctx) return;
+      ctx.setTransform(2, 0, 0, 2, 0, 0);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, fw, fh);
+      const bgImg = backgroundImageRef.current;
+      if (bgImg && p.show_background) {
+        drawImageContain(ctx, bgImg, 0, 0, fw, fh, 1);
+      }
+      const rs = roomsRef.current;
+      const els = elementsRef.current;
+      for (const el of els) {
+        if (el.element_type !== "wall" || !el.points || el.points.length < 4) continue;
+        const [x1, y1, x2, y2] = el.points;
+        const sw = num(el.style?.strokeWidth, 3);
+        ctx.strokeStyle = String(el.style?.stroke ?? "#374151");
+        ctx.lineWidth = sw;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+      }
+      for (const r of rs) {
+        const rt = (FLOOR_PLAN_ROOM_TYPES as readonly string[]).includes(r.room_type)
+          ? (r.room_type as FloorPlanRoomType)
+          : "other";
+        const { fill, stroke } = ROOM_TYPE_COLORS[rt];
+        ctx.fillStyle = r.color ?? fill;
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = 2;
+        if (r.shape === "polygon" && Array.isArray(r.polygon_points) && (r.polygon_points as number[]).length >= 6) {
+          const pts = r.polygon_points as number[];
+          ctx.beginPath();
+          ctx.moveTo(r.x + pts[0], r.y + pts[1]);
+          for (let i = 2; i < pts.length; i += 2) ctx.lineTo(r.x + pts[i], r.y + pts[i + 1]);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+        } else {
+          ctx.fillRect(r.x, r.y, r.width, r.height);
+          ctx.strokeRect(r.x, r.y, r.width, r.height);
+        }
+        const label = [r.room_number, r.room_name].filter(Boolean).join(" · ") || "Room";
+        ctx.fillStyle = "#111827";
+        ctx.font = "12px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(label, r.x + r.width / 2, r.y + r.height / 2);
+      }
+      const { jsPDF } = await import("jspdf");
+      const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+      pdf.setProperties({ title: p.name });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const imgData = c.toDataURL("image/png");
+      const imgAspect = outW / outH;
+      const pageAspect = pageW / pageH;
+      let drawW: number;
+      let drawH: number;
+      let offX: number;
+      let offY: number;
+      if (imgAspect > pageAspect) {
+        drawW = pageW;
+        drawH = pageW / imgAspect;
+        offX = 0;
+        offY = (pageH - drawH) / 2;
+      } else {
+        drawH = pageH;
+        drawW = pageH * imgAspect;
+        offX = (pageW - drawW) / 2;
+        offY = 0;
+      }
+      pdf.addImage(imgData, "PNG", offX, offY, drawW, drawH);
+      const rawName = p.name?.trim() || "floor-plan";
+      const safeName = rawName.replace(/[/\\?%*:|"<>]/g, "-").slice(0, 120) || "floor-plan";
+      pdf.save(`${safeName}.pdf`);
+    } catch (e) {
+      console.error("[floor-plan] PDF export", e);
+      setError("PDF export failed");
+    } finally {
+      setExportingPdf(false);
+    }
+  }, [fpW, fpH]);
+
   useEffect(() => {
     if (!dirty) return;
     const t = setInterval(() => void save(false), 30000);
     return () => clearInterval(t);
   }, [dirty, save]);
 
-  const clientToWorld = useCallback(
-    (clientX: number, clientY: number) => {
+  const getCanvasPoint = useCallback(
+    (e: { clientX: number; clientY: number }) => {
       const canvas = canvasRef.current;
       if (!canvas) return { x: 0, y: 0 };
       const rect = canvas.getBoundingClientRect();
-      const sx = ((clientX - rect.left) * canvas.width) / rect.width;
-      const sy = ((clientY - rect.top) * canvas.height) / rect.height;
-      return { x: (sx - pan.x) / zoom, y: (sy - pan.y) / zoom };
+      return {
+        x: (e.clientX - rect.left - pan.x) / zoom,
+        y: (e.clientY - rect.top - pan.y) / zoom,
+      };
     },
     [pan.x, pan.y, zoom],
   );
@@ -685,6 +1055,23 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
         ctx.strokeStyle = "#2563eb";
         ctx.lineWidth = 3 / zoom;
         ctx.strokeRect(r.x - 1, r.y - 1, r.width + 2, r.height + 2);
+        if (tool === "select" && isRectLikeRoom(r)) {
+          const hh = HANDLE_SCREEN_PX / 2 / zoom;
+          const hx = [r.x, r.x + r.width / 2, r.x + r.width];
+          const hy = [r.y, r.y + r.height / 2, r.y + r.height];
+          ctx.fillStyle = "#ffffff";
+          ctx.strokeStyle = "#2563eb";
+          ctx.lineWidth = 1.5 / zoom;
+          for (let i = 0; i < 3; i++) {
+            for (let j = 0; j < 3; j++) {
+              if (i === 1 && j === 1) continue;
+              const cx = hx[i];
+              const cy = hy[j];
+              ctx.fillRect(cx - hh, cy - hh, hh * 2, hh * 2);
+              ctx.strokeRect(cx - hh, cy - hh, hh * 2, hh * 2);
+            }
+          }
+        }
       }
       const label = [r.room_number, r.room_name].filter(Boolean).join(" · ") || "Room";
       ctx.fillStyle = "#111827";
@@ -715,6 +1102,26 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
       ctx.setLineDash([]);
     }
 
+    if (draftCalibrate) {
+      const { x1, y1, x2, y2 } = draftCalibrate;
+      const len = Math.hypot(x2 - x1, y2 - y1);
+      ctx.strokeStyle = "#dc2626";
+      ctx.fillStyle = "#991b1b";
+      ctx.lineWidth = 2 / zoom;
+      ctx.setLineDash([10 / zoom, 5 / zoom]);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      const mx = (x1 + x2) / 2;
+      const my = (y1 + y2) / 2;
+      ctx.font = `${13 / zoom}px system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillText(`${len.toFixed(1)} px`, mx, my - 6 / zoom);
+    }
+
     ctx.restore();
   }, [
     plan,
@@ -723,6 +1130,7 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
     selectedId,
     draftRect,
     draftWall,
+    draftCalibrate,
     pan,
     zoom,
     fpW,
@@ -732,11 +1140,16 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
     viewport.w,
     viewport.h,
     gridMode,
+    tool,
   ]);
 
   useEffect(() => {
     draw();
   }, [draw]);
+
+  useEffect(() => {
+    if (tool !== "select") setSelectHover(null);
+  }, [tool]);
 
   const drawMinimap = useCallback(() => {
     const mini = minimapRef.current;
@@ -785,27 +1198,8 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
     drawMinimap();
   }, [drawMinimap]);
 
-  const applyPreset = (preset: ScalePreset) => {
-    setScalePreset(preset);
-    if (preset !== "custom") {
-      const cm = SCALE_PRESET_CM[preset];
-      setCmPerPixel(cm);
-      setCustomCmInput(String(cm));
-    }
-    setDirty(true);
-  };
-
-  const applyCustomCm = (raw: string) => {
-    setCustomCmInput(raw);
-    const v = parseFloat(raw.replace(",", "."));
-    if (!Number.isFinite(v) || v <= 0) return;
-    setCmPerPixel(v);
-    setScalePreset("custom");
-    setDirty(true);
-  };
-
   const finalizeRect = (x: number, y: number, w: number, h: number) => {
-    if (w < 8 || h < 8) return;
+    if (w < MIN_ROOM_PX || h < MIN_ROOM_PX) return;
     const id = crypto.randomUUID();
     const meta = { ...defaultMetadata() } as Record<string, unknown>;
     const cm = cmRef.current;
@@ -813,6 +1207,7 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
     meta.size_m2 = areaM2;
     meta.width_meters = widthM;
     meta.height_meters = heightM;
+    commitHistory();
     const roomNumber = nextRoomNumber(roomsRef.current);
     const newRow: RoomRow = {
       id,
@@ -841,6 +1236,7 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
   const finalizeWall = (x1: number, y1: number, x2: number, y2: number) => {
     const len = Math.hypot(x2 - x1, y2 - y1);
     if (len < 4) return;
+    commitHistory();
     const id = crypto.randomUUID();
     const newEl: ElementRow = {
       id,
@@ -870,10 +1266,10 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
       return;
     }
 
-    const w = clientToWorld(e.clientX, e.clientY);
+    const w = getCanvasPoint(e);
     const inFloor = w.x >= 0 && w.y >= 0 && w.x <= fpW && w.y <= fpH;
 
-    if (spaceDown && e.button === 0) {
+    if ((spaceDown || tool === "move") && e.button === 0) {
       e.preventDefault();
       canvas.setPointerCapture(e.pointerId);
       const p0 = panRef.current;
@@ -895,16 +1291,46 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
       return;
     }
 
-    const hit = hitTestRoom(w.x, w.y, rooms);
-    if (hit) {
-      const r = rooms.find((x) => x.id === hit);
-      if (r) {
-        setSelectedId(hit);
-        canvas.setPointerCapture(e.pointerId);
-        setDrag({ roomId: hit, startX: w.x, startY: w.y, origX: r.x, origY: r.y });
+    if (tool === "calibrate") {
+      canvas.setPointerCapture(e.pointerId);
+      const cx = Math.max(0, Math.min(fpW, w.x));
+      const cy = Math.max(0, Math.min(fpH, w.y));
+      setDraftCalibrate({ x1: cx, y1: cy, x2: cx, y2: cy });
+      return;
+    }
+
+    if (tool === "select" && selectedId) {
+      const sr = rooms.find((x) => x.id === selectedId);
+      if (sr && isRectLikeRoom(sr)) {
+        const rh = hitTestResizeHandle(w.x, w.y, sr, zoom);
+        if (rh) {
+          commitHistory();
+          canvas.setPointerCapture(e.pointerId);
+          setResize({
+            roomId: sr.id,
+            handle: rh,
+            startX: w.x,
+            startY: w.y,
+            orig: { x: sr.x, y: sr.y, width: sr.width, height: sr.height },
+          });
+          return;
+        }
       }
-    } else {
-      setSelectedId(null);
+    }
+
+    if (tool === "select") {
+      const hit = hitTestRoom(w.x, w.y, rooms);
+      if (hit) {
+        const r = rooms.find((x) => x.id === hit);
+        if (r) {
+          commitHistory();
+          setSelectedId(hit);
+          canvas.setPointerCapture(e.pointerId);
+          setDrag({ roomId: hit, startX: w.x, startY: w.y, origX: r.x, origY: r.y });
+        }
+      } else {
+        setSelectedId(null);
+      }
     }
   };
 
@@ -913,9 +1339,15 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
       const dx = e.clientX - panDrag.startClientX;
       const dy = e.clientY - panDrag.startClientY;
       setPan({ x: panDrag.startPanX + dx, y: panDrag.startPanY + dy });
-        return;
-      }
-    const w = clientToWorld(e.clientX, e.clientY);
+      return;
+    }
+    const w = getCanvasPoint(e);
+    if (draftCalibrate) {
+      const cx = Math.max(0, Math.min(fpW, w.x));
+      const cy = Math.max(0, Math.min(fpH, w.y));
+      setDraftCalibrate({ ...draftCalibrate, x2: cx, y2: cy });
+      return;
+    }
     if (draftRect) {
       const x0 = draftRect.x;
       const y0 = draftRect.y;
@@ -926,6 +1358,26 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
       setDraftWall({ ...draftWall, x2: w.x, y2: w.y });
       return;
     }
+    if (resize) {
+      const dx = w.x - resize.startX;
+      const dy = w.y - resize.startY;
+      const { x, y, width, height } = applyResizeFromDelta(
+        resize.handle,
+        resize.orig.x,
+        resize.orig.y,
+        resize.orig.width,
+        resize.orig.height,
+        dx,
+        dy,
+        fpW,
+        fpH,
+      );
+      setRooms((prev) =>
+        prev.map((r) => (r.id === resize.roomId ? { ...r, x, y, width, height } : r)),
+      );
+      setDirty(true);
+      return;
+    }
     if (drag) {
       const dx = w.x - drag.startX;
       const dy = w.y - drag.startY;
@@ -933,6 +1385,30 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
         prev.map((r) => (r.id === drag.roomId ? { ...r, x: drag.origX + dx, y: drag.origY + dy } : r)),
       );
       setDirty(true);
+      return;
+    }
+    if (
+      tool === "select" &&
+      !panDrag &&
+      !draftCalibrate &&
+      !draftRect &&
+      !draftWall
+    ) {
+      const sel = selectedId ? rooms.find((r) => r.id === selectedId) : null;
+      if (sel && isRectLikeRoom(sel)) {
+        const h = hitTestResizeHandle(w.x, w.y, sel, zoom);
+        if (h) {
+          setSelectHover((p) => (p === h ? p : h));
+          return;
+        }
+      }
+      if (hitTestRoom(w.x, w.y, rooms)) {
+        setSelectHover((p) => (p === "move" ? p : "move"));
+        return;
+      }
+      setSelectHover((p) => (p === null ? p : null));
+    } else if (selectHover !== null) {
+      setSelectHover(null);
     }
   };
 
@@ -947,6 +1423,21 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
       }
       return;
     }
+    if (draftCalibrate) {
+      const { x1, y1, x2, y2 } = draftCalibrate;
+      const pixelLength = Math.hypot(x2 - x1, y2 - y1);
+      setDraftCalibrate(null);
+      try {
+        canvas.releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      if (pixelLength >= 5) {
+        setCalibrateMetersDraft("");
+        setCalibrateDialog({ pixelLength });
+      }
+      return;
+    }
     if (draftRect) {
       const { x, y, w, h } = draftRect;
       setDraftRect(null);
@@ -955,9 +1446,9 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
       } catch {
         /* ignore */
       }
-      if (w >= 8 && h >= 8) finalizeRect(x, y, w, h);
-          return;
-        }
+      if (w >= MIN_ROOM_PX && h >= MIN_ROOM_PX) finalizeRect(x, y, w, h);
+      return;
+    }
     if (draftWall) {
       const { x1, y1, x2, y2 } = draftWall;
       setDraftWall(null);
@@ -967,8 +1458,17 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
         /* ignore */
       }
       finalizeWall(x1, y1, x2, y2);
-        return;
+      return;
+    }
+    if (resize) {
+      setResize(null);
+      try {
+        canvas.releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
       }
+      return;
+    }
     if (drag) {
       setDrag(null);
       try {
@@ -981,7 +1481,8 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
 
   const onDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!plan) return;
-    const w = clientToWorld(e.clientX, e.clientY);
+    if (tool === "calibrate") return;
+    const w = getCanvasPoint(e);
     if (w.x < 0 || w.y < 0 || w.x > fpW || w.y > fpH) return;
     if (hitTestRoom(w.x, w.y, rooms)) return;
     fitToView();
@@ -991,12 +1492,14 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
 
   const updateSelected = (patch: Partial<RoomRow>) => {
     if (!selectedId) return;
+    commitHistory();
     setRooms((prev) => prev.map((r) => (r.id === selectedId ? { ...r, ...patch } : r)));
     setDirty(true);
   };
 
   const deleteSelectedRoom = () => {
     if (!selectedId) return;
+    commitHistory();
     setRooms((prev) => prev.filter((r) => r.id !== selectedId));
     setSelectedId(null);
     setDirty(true);
@@ -1008,6 +1511,28 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
     if (!selectedRoom) return null;
     return roomDimsMeters(selectedRoom, cmPerPixel);
   }, [selectedRoom, cmPerPixel]);
+
+  useEffect(() => {
+    if (!calibrateDialog) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setCalibrateDialog(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [calibrateDialog]);
+
+  const confirmCalibrate = () => {
+    if (!calibrateDialog) return;
+    const meters = parseFloat(calibrateMetersDraft.replace(",", "."));
+    if (!Number.isFinite(meters) || meters <= 0) return;
+    const cm = (meters * 100) / calibrateDialog.pixelLength;
+    setCmPerPixel(cm);
+    setDirty(true);
+    setCalibrateDialog(null);
+  };
 
   if (loading) return <p style={{ padding: 24 }}>Loading…</p>;
   if (error && !plan) return <p style={{ padding: 24, color: "#b00020" }}>{error}</p>;
@@ -1023,28 +1548,232 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
   });
 
   return (
-    <main style={{ maxWidth: 1200, margin: "0 auto", padding: "16px" }}>
+    <main
+      style={{
+        maxWidth: 1600,
+        margin: "0 auto",
+        padding: "16px",
+        width: "100%",
+        boxSizing: "border-box",
+        overflowX: "auto",
+      }}
+    >
       <div style={{ marginBottom: 12, display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
         <Link href="/floor-plans">← Floor planner</Link>
         <h1 style={{ margin: 0, flex: "1 1 auto", fontSize: 20 }}>{plan.name}</h1>
         <button
           type="button"
           onClick={() => void save(true)}
+          disabled={exportingPdf}
           style={{
             padding: "8px 16px",
             background: "#1a4a4a",
             color: "#fff",
             border: "none",
             borderRadius: 8,
-            cursor: "pointer",
+            cursor: exportingPdf ? "default" : "pointer",
             fontWeight: 600,
+            opacity: exportingPdf ? 0.6 : 1,
           }}
         >
           {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : "Save"}
         </button>
+        <button
+          type="button"
+          onClick={() => void exportFloorPlanPdf()}
+          disabled={exportingPdf}
+          style={{
+            padding: "8px 16px",
+            background: exportingPdf ? "#94a3b8" : "#0f766e",
+            color: "#fff",
+            border: "none",
+            borderRadius: 8,
+            cursor: exportingPdf ? "wait" : "pointer",
+            fontWeight: 600,
+          }}
+        >
+          {exportingPdf ? "Exporting…" : "Export PDF"}
+        </button>
       </div>
 
+      {typeof detectedScale === "number" && detectedScale > 0 && !pdfScaleDetectedBannerDismissed ? (
+        <div
+          role="status"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            marginBottom: 12,
+            padding: "10px 14px",
+            background: "#ecfdf5",
+            color: "#14532d",
+            border: "1px solid #6ee7b7",
+            borderRadius: 10,
+            fontSize: 14,
+          }}
+        >
+          <span style={{ flex: "1 1 auto", minWidth: 0 }}>
+            Scale 1:{detectedScale} detected from PDF and applied automatically. You can adjust it using the Calibrate tool.
+          </span>
+          <button
+            type="button"
+            aria-label="Dismiss"
+            onClick={() => setPdfScaleDetectedBannerDismissed(true)}
+            style={{
+              flexShrink: 0,
+              width: 32,
+              height: 32,
+              padding: 0,
+              lineHeight: 1,
+              borderRadius: 8,
+              border: "1px solid #34d399",
+              background: "#fff",
+              cursor: "pointer",
+              fontSize: 18,
+              color: "#14532d",
+            }}
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
+
+      {detectedScale === null && !pdfScaleUnknownBannerDismissed ? (
+        <div
+          role="status"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            marginBottom: 12,
+            padding: "10px 14px",
+            background: "#fffbeb",
+            color: "#92400e",
+            border: "1px solid #fcd34d",
+            borderRadius: 10,
+            fontSize: 14,
+          }}
+        >
+          <span style={{ flex: "1 1 auto", minWidth: 0 }}>
+            Could not detect scale automatically — use the Calibrate tool in the toolbar to set the scale manually.
+          </span>
+          <button
+            type="button"
+            aria-label="Dismiss"
+            onClick={() => setPdfScaleUnknownBannerDismissed(true)}
+            style={{
+              flexShrink: 0,
+              width: 32,
+              height: 32,
+              padding: 0,
+              lineHeight: 1,
+              borderRadius: 8,
+              border: "1px solid #fbbf24",
+              background: "#fff",
+              cursor: "pointer",
+              fontSize: 18,
+              color: "#92400e",
+            }}
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
+
       {error ? <p style={{ color: "#b00020", marginBottom: 8 }}>{error}</p> : null}
+
+      {calibrateDialog ? (
+        <div
+          role="dialog"
+          aria-modal
+          aria-labelledby="calibrate-dialog-title"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1000,
+            background: "rgba(15, 23, 42, 0.4)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+          }}
+          onClick={() => setCalibrateDialog(null)}
+        >
+          <div
+            style={{
+              background: "#fff",
+              padding: 20,
+              borderRadius: 12,
+              boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+              minWidth: 300,
+              maxWidth: "100%",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div id="calibrate-dialog-title" style={{ fontWeight: 600, marginBottom: 12, fontSize: 15 }}>
+              Enter real-world length (meters):
+            </div>
+            <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b" }}>
+              Line length: {calibrateDialog.pixelLength.toFixed(1)} floor-plan pixels
+            </p>
+            <input
+              type="number"
+              min={0.001}
+              step={0.01}
+              value={calibrateMetersDraft}
+              onChange={(e) => setCalibrateMetersDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  confirmCalibrate();
+                }
+              }}
+              autoFocus
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                marginBottom: 14,
+                borderRadius: 8,
+                border: "1px solid #cbd5e1",
+                fontSize: 16,
+                boxSizing: "border-box",
+              }}
+            />
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={() => setCalibrateDialog(null)}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: 8,
+                  border: "1px solid #cbd5e1",
+                  background: "#fff",
+                  cursor: "pointer",
+                  fontSize: 14,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => confirmCalibrate()}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: "#1a4a4a",
+                  color: "#fff",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  fontSize: 14,
+                }}
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div
         style={{
@@ -1063,11 +1792,43 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
         <button type="button" onClick={() => setTool("select")} style={toolbarBtn(tool === "select")}>
           Select
         </button>
+        <button type="button" onClick={() => setTool("move")} style={toolbarBtn(tool === "move")} title="Pan the view (same as Space+drag)">
+          Move
+        </button>
         <button type="button" onClick={() => setTool("rect")} style={toolbarBtn(tool === "rect")}>
           Draw Room
         </button>
         <button type="button" onClick={() => setTool("wall")} style={toolbarBtn(tool === "wall")}>
           Draw Wall
+        </button>
+
+        <span style={{ width: 1, height: 22, background: "#cbd5e1", margin: "0 4px" }} />
+
+        <button
+          type="button"
+          onClick={() => applyUndo()}
+          disabled={undoLen === 0}
+          title="Undo (Ctrl+Z)"
+          style={{
+            ...toolbarBtn(false),
+            opacity: undoLen === 0 ? 0.45 : 1,
+            cursor: undoLen === 0 ? "default" : "pointer",
+          }}
+        >
+          Undo
+        </button>
+        <button
+          type="button"
+          onClick={() => applyRedo()}
+          disabled={redoLen === 0}
+          title="Redo (Ctrl+Shift+Z)"
+          style={{
+            ...toolbarBtn(false),
+            opacity: redoLen === 0 ? 0.45 : 1,
+            cursor: redoLen === 0 ? "default" : "pointer",
+          }}
+        >
+          Redo
         </button>
 
         <span style={{ width: 1, height: 22, background: "#cbd5e1", margin: "0 4px" }} />
@@ -1110,34 +1871,26 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
 
         <span style={{ width: 1, height: 22, background: "#cbd5e1", margin: "0 4px" }} />
 
-        <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
-          Scale
-          <select
-            value={scalePreset}
-            onChange={(e) => applyPreset(e.target.value as ScalePreset)}
-            style={{ padding: "4px 8px", borderRadius: 6, fontSize: 13 }}
-            title="Drawing scale: 1:100 ≈ 1 cm per pixel → 100 px ≈ 1 m"
-          >
-            <option value="1:50">1:50</option>
-            <option value="1:100">1:100</option>
-            <option value="1:200">1:200</option>
-            <option value="custom">Custom</option>
-          </select>
-        </label>
-        {scalePreset === "custom" ? (
-          <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 4 }}>
-            1 px ={" "}
-                  <input
-              type="number"
-              min={0.1}
-              step={0.1}
-              value={customCmInput}
-              onChange={(e) => applyCustomCm(e.target.value)}
-              style={{ width: 64, padding: 4 }}
-            />{" "}
-            cm
-                </label>
-        ) : null}
+        <span style={{ fontWeight: 600, fontSize: 13, color: "#334155" }}>Scale</span>
+        <button
+          type="button"
+          onClick={() => setTool("calibrate")}
+          style={toolbarBtn(tool === "calibrate")}
+          title="Draw a line along a known distance, then enter its real length in meters"
+        >
+          Calibrate
+        </button>
+        <span
+          style={{
+            fontSize: 12,
+            color: "#0f172a",
+            fontVariantNumeric: "tabular-nums",
+            whiteSpace: "nowrap",
+          }}
+          title="Real-world distance represented by one floor-plan pixel"
+        >
+          1 px = {cmPerPixel.toFixed(2)} cm
+        </span>
 
         <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
           Grid
@@ -1174,12 +1927,28 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
       </div>
 
       <p style={{ margin: "0 0 12px", fontSize: 12, color: "#64748b" }}>
-        Scroll wheel: zoom · Middle-drag or Space+drag: pan · Double-click empty: fit · 1 px = {cmPerPixel.toFixed(2)} cm (
-        {ppmFromCmPerPixel(cmPerPixel).toFixed(2)} px/m)
+        Scroll wheel: zoom · Middle-drag or Space+drag: pan · Double-click empty: fit · Calibrate tool: set scale from a known length
       </p>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "flex-start" }}>
-        <div ref={wrapRef} style={{ flex: "1 1 480px", minWidth: 280, position: "relative" }}>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "row",
+          flexWrap: "nowrap",
+          gap: 16,
+          alignItems: "flex-start",
+          width: "100%",
+          minWidth: 0,
+        }}
+      >
+        <div
+          ref={wrapRef}
+          style={{
+            flex: "1 1 0%",
+            minWidth: 0,
+            position: "relative",
+          }}
+        >
           <canvas
             ref={canvasRef}
             tabIndex={0}
@@ -1187,18 +1956,32 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
             onPointerCancel={onPointerUp}
+            onPointerLeave={() => setSelectHover(null)}
             onDoubleClick={onDoubleClick}
             onAuxClick={(e) => e.button === 1 && e.preventDefault()}
-              style={{
-                display: "block",
+            style={{
+              display: "block",
+              maxWidth: "100%",
               border: "1px solid #e5e7eb",
               borderRadius: 12,
               cursor:
-                tool === "rect" || tool === "wall"
-                  ? "crosshair"
-                  : spaceDown
+                (tool === "move" || spaceDown) && panDrag
+                  ? "grabbing"
+                  : tool === "move" || spaceDown
                     ? "grab"
-                    : "default",
+                    : resize
+                      ? cursorForResizeHandle(resize.handle)
+                      : drag
+                        ? "grabbing"
+                        : tool === "rect" || tool === "wall" || tool === "calibrate"
+                          ? "crosshair"
+                          : tool === "select"
+                            ? selectHover === "move"
+                              ? "move"
+                              : selectHover
+                                ? cursorForResizeHandle(selectHover)
+                                : "default"
+                            : "default",
               touchAction: "none",
               outline: "none",
             }}
@@ -1232,7 +2015,20 @@ export default function FloorPlanEditorInner({ floorPlanId }: { floorPlanId: str
           />
         </div>
 
-        <aside style={{ width: 300, minWidth: 260, border: "1px solid #e5e7eb", borderRadius: 12, padding: 14, fontSize: 14 }}>
+        <aside
+          style={{
+            flex: "0 0 300px",
+            width: 300,
+            minWidth: 260,
+            maxWidth: 300,
+            boxSizing: "border-box",
+            border: "1px solid #e5e7eb",
+            borderRadius: 12,
+            padding: 14,
+            fontSize: 14,
+            alignSelf: "stretch",
+          }}
+        >
           <div style={{ fontWeight: 600, marginBottom: 10 }}>Room properties</div>
           {selectedRoom && selectedDims ? (
             <div style={{ display: "grid", gap: 10 }}>
