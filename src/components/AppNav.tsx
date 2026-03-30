@@ -225,7 +225,7 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
 
   /** Section order: Overview + Admin are static; these match product nav spec. */
   const collapsibleSections: Array<{ id: string; title: string; items: NavItem[] }> = [
-    { id: "crm", title: "CRM", items: crmItems },
+    { id: "crm", title: "CRM & Sales", items: crmItems },
     { id: "marketing", title: "Marketing", items: marketingItems },
     { id: "spaces", title: "Spaces", items: spacesItems },
     { id: "bookings", title: "Bookings", items: bookingsItems },
