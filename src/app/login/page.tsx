@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
 import { useState } from "react";
 import { useBrand } from "@/components/BrandProvider";
+import { setAppScopeCookie, setUserTypeCookie } from "@/lib/auth/user-type-cookie";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 
 export default function LoginPage() {
@@ -22,28 +23,78 @@ export default function LoginPage() {
 
     try {
       const supabase = getSupabaseClient();
-      const { error } = await supabase.auth.signInWithPassword({
+      const { error: signErr } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
-      if (error) {
+      if (signErr) {
         setLoading(false);
-        setError(error.message);
+        setError(signErr.message);
         return;
       }
 
-      const { data: memberships } = await supabase.from("memberships").select("role");
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        setLoading(false);
+        setError("Could not load session.");
+        return;
+      }
+
+      const { data: customerRow, error: cuErr } = await supabase
+        .from("customer_users")
+        .select("id")
+        .eq("auth_user_id", user.id)
+        .maybeSingle();
+
+      if (cuErr) {
+        setLoading(false);
+        setError(cuErr.message);
+        await supabase.auth.signOut();
+        return;
+      }
+
+      if (customerRow) {
+        setUserTypeCookie("customer");
+        setAppScopeCookie("portal");
+        router.push("/portal");
+        setLoading(false);
+        return;
+      }
+
+      const { data: memberships, error: mErr } = await supabase.from("memberships").select("role");
+      if (mErr) {
+        setLoading(false);
+        setError(mErr.message);
+        await supabase.auth.signOut();
+        return;
+      }
+
       const roles = (memberships ?? []).map((m) => (m.role ?? "").toLowerCase());
-      if (roles.includes("super_admin")) {
-        router.push("/super-admin");
+      if (roles.length === 0) {
+        setLoading(false);
+        setError("Account not found");
+        await supabase.auth.signOut();
         return;
       }
-      if (roles.includes("owner")) {
+
+      setUserTypeCookie("admin");
+
+      const dashboardRoles = new Set(["super_admin", "admin", "owner", "manager"]);
+      const hasDashboardAccess = roles.some((r) => dashboardRoles.has(r));
+
+      if (hasDashboardAccess) {
+        setAppScopeCookie("dashboard");
         router.push("/dashboard");
+        setLoading(false);
         return;
       }
+
+      setAppScopeCookie("workspace");
       router.push("/bookings");
+      setLoading(false);
     } catch (err) {
       setLoading(false);
       setError(err instanceof Error ? err.message : "Failed to sign in.");
@@ -73,32 +124,32 @@ export default function LoginPage() {
         </p>
 
         <form onSubmit={onSubmit} style={{ display: "grid", gap: 12 }}>
-        <label style={{ display: "grid", gap: 6 }}>
-          <span>Email</span>
-          <input
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            type="email"
-            required
-            style={{ padding: 10, borderRadius: 8, border: "1px solid #ddd" }}
-          />
-        </label>
-        <label style={{ display: "grid", gap: 6 }}>
-          <span>Password</span>
-          <input
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            type="password"
-            required
-            style={{ padding: 10, borderRadius: 8, border: "1px solid #ddd" }}
-          />
-        </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span>Email</span>
+            <input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              type="email"
+              required
+              style={{ padding: 10, borderRadius: 8, border: "1px solid #ddd" }}
+            />
+          </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span>Password</span>
+            <input
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              type="password"
+              required
+              style={{ padding: 10, borderRadius: 8, border: "1px solid #ddd" }}
+            />
+          </label>
 
-        {error ? (
-          <p style={{ margin: 0, color: "#b00020" }}>{error}</p>
-        ) : (
-          <div style={{ height: 18 }} />
-        )}
+          {error ? (
+            <p style={{ margin: 0, color: "#b00020" }}>{error}</p>
+          ) : (
+            <div style={{ height: 18 }} />
+          )}
 
           <button
             disabled={loading}
@@ -124,4 +175,3 @@ export default function LoginPage() {
     </main>
   );
 }
-

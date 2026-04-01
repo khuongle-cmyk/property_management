@@ -7,6 +7,8 @@ export default function LogoutButton() {
   const router = useRouter();
 
   async function onLogout() {
+    const { clearAuthCookies } = await import("@/lib/auth/user-type-cookie");
+    clearAuthCookies();
     const supabase = getSupabaseClient();
     await supabase.auth.signOut();
     router.push("/login");

@@ -1,9 +1,9 @@
-/** Status values that allow hourly / calendar bookings (legacy + rooms upgrade). */
-export const HOURLY_BOOKABLE_SPACE_STATUSES = ["available", "vacant"] as const;
+/** Status values that allow hourly / calendar bookings (legacy + rooms + public API). */
+export const HOURLY_BOOKABLE_SPACE_STATUSES = ["available", "vacant", "active"] as const;
 
 export function isHourlyBookableSpaceStatus(status: string | null | undefined): boolean {
   const s = (status ?? "").toLowerCase().trim();
-  return s === "available" || s === "vacant";
+  return s === "available" || s === "vacant" || s === "active";
 }
 
 /** Treat null/undefined as published (older rows). */

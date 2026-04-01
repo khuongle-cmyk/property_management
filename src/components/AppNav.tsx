@@ -15,7 +15,21 @@ const navFont = "var(--font-dm-sans), sans-serif";
 const SIDEBAR_W = 220;
 const COLLAPSE_STORAGE_KEY = "vw-sidebar-collapsed";
 
-type NavItem = { href: string; label: string; visible: boolean };
+type NavItem = { href: string; label: string; visible: boolean; icon?: "building" };
+
+function BuildingIcon({ color = "currentColor" }: { color?: string }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden style={{ flexShrink: 0 }}>
+      <path
+        d="M3 21h18M6 21V7.5a1 1 0 011-1h2V3.5a1 1 0 011-1h4a1 1 0 011 1V6.5h2a1 1 0 011 1V21M9 21v-4h2v4M13 21v-4h2v4M9 9h.01M9 13h.01M13 9h.01M13 13h.01"
+        stroke={color}
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 function itemStyle(active: boolean, b: { white: string; secondary: string }): CSSProperties {
   return {
@@ -162,6 +176,8 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
   }, [mobileOpen]);
 
   async function onLogout() {
+    const { clearAuthCookies } = await import("@/lib/auth/user-type-cookie");
+    clearAuthCookies();
     const supabase = getSupabaseClient();
     await supabase.auth.signOut();
     router.push("/login");
@@ -194,7 +210,10 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
     { href: "/rooms/furniture", label: "Furniture", visible: loggedIn && showRoomsNav },
   ];
 
-  const toolsItems: NavItem[] = [{ href: "/floor-plans", label: "Floor planner", visible: loggedIn && showRoomsNav }];
+  const toolsItems: NavItem[] = [
+    { href: "/floor-plans", label: "Floor planner", visible: loggedIn && showRoomsNav },
+    { href: "/tools/contract-tool", label: "Contract tool", visible: loggedIn && showRoomsNav },
+  ];
 
   const bookingsItems: NavItem[] = [
     { href: "/bookings/calendar", label: "Calendar", visible: loggedIn },
@@ -223,6 +242,7 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
 
   const adminItems: NavItem[] = [
     { href: "/settings", label: "Settings", visible: loggedIn },
+    { href: "/admin/customers", label: "Customers", visible: loggedIn && isSuperAdmin, icon: "building" },
     { href: "/super-admin", label: "Super Admin", visible: loggedIn && isSuperAdmin },
   ];
 
@@ -246,7 +266,12 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
         {visible.map((i) => {
           const active = navLinkIsActive(pathname ?? "", i.href);
           return (
-            <Link key={i.href + i.label} href={i.href} style={itemStyle(active, b)}>
+            <Link
+              key={i.href + i.label}
+              href={i.href}
+              style={{ ...itemStyle(active, b), display: "flex", alignItems: "center", gap: 8 }}
+            >
+              {i.icon === "building" ? <BuildingIcon color={b.white} /> : null}
               {i.label}
             </Link>
           );

@@ -35,6 +35,7 @@ export const CMS2_RESERVED_SLUGS = new Set([
   "budget",
   "marketing",
   "floor-plans",
+  "tools",
 ]);
 
 export function isReservedOrgSlug(slug: string): boolean {

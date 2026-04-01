@@ -27,6 +27,12 @@ export default function ConditionalWorkspaceChrome({
   appNavInitial: AppNavInitialState;
 }) {
   const pathname = usePathname();
+
+  /** Customer portal uses its own shell (sidebar + branding); no admin AppNav. */
+  if (pathname?.startsWith("/portal") || pathname?.startsWith("/customer-portal")) {
+    return <>{children}</>;
+  }
+
   const publicSite = isPublicMarketingPath(pathname);
 
   if (publicSite) {

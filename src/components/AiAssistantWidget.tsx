@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
+import { getSupabaseClient } from "@/lib/supabase/browser";
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
 
@@ -94,19 +95,41 @@ async function consumeAiStream(res: Response, onDelta: (chunk: string) => void):
 }
 
 export default function AiAssistantWidget() {
+  const supabase = getSupabaseClient();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  const hiddenOnPublicRoute =
+    pathname === "/login" ||
+    pathname === "/invite" ||
+    pathname === "/book/public" ||
+    (pathname?.startsWith("/offers/") ?? false) ||
+    (pathname?.startsWith("/contact/") ?? false);
 
   const quick = useMemo(() => quickActionsForPath(pathname), [pathname]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, open]);
+
+  useEffect(() => {
+    let cancelled = false;
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (cancelled) return;
+      setIsLoggedIn(Boolean(user));
+      setAuthChecked(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase]);
 
   const sendPrompt = useCallback(
     async (text: string) => {
@@ -164,6 +187,8 @@ export default function AiAssistantWidget() {
     },
     [messages, pathname, streaming],
   );
+
+  if (hiddenOnPublicRoute || !authChecked || !isLoggedIn) return null;
 
   return (
     <div

@@ -122,6 +122,65 @@ function hitTestRoom(wx: number, wy: number, rooms: RoomRow[]): string | null {
   return null;
 }
 
+const MIN_WALL_PX = 4;
+
+function distToSegment(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 1e-12) return Math.hypot(px - x1, py - y1);
+  let t = ((px - x1) * dx + (py - y1) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const qx = x1 + t * dx;
+  const qy = y1 + t * dy;
+  return Math.hypot(px - qx, py - qy);
+}
+
+function wallStrokeHitThresholdWorld(el: ElementRow, zoom: number): number {
+  const sw = num(el.style?.strokeWidth, 3);
+  return Math.max(6 / zoom, (sw / 2 + 5) / zoom);
+}
+
+type WallHitPart = "p0" | "p1" | "body";
+
+function hitTestWall(wx: number, wy: number, elements: ElementRow[], zoom: number): { elementId: string; part: WallHitPart } | null {
+  const endR = 6 / zoom;
+  for (let i = elements.length - 1; i >= 0; i--) {
+    const el = elements[i];
+    if (el.element_type !== "wall" || !el.points || el.points.length < 4) continue;
+    const [x1, y1, x2, y2] = el.points;
+    if (Math.hypot(wx - x1, wy - y1) <= endR) return { elementId: el.id, part: "p0" };
+    if (Math.hypot(wx - x2, wy - y2) <= endR) return { elementId: el.id, part: "p1" };
+    const thresh = wallStrokeHitThresholdWorld(el, zoom);
+    if (distToSegment(wx, wy, x1, y1, x2, y2) <= thresh) return { elementId: el.id, part: "body" };
+  }
+  return null;
+}
+
+function clampWallEndpointsToFloor(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  fpW: number,
+  fpH: number,
+): [number, number, number, number] {
+  const cx1 = Math.max(0, Math.min(fpW, x1));
+  const cy1 = Math.max(0, Math.min(fpH, y1));
+  const cx2 = Math.max(0, Math.min(fpW, x2));
+  const cy2 = Math.max(0, Math.min(fpH, y2));
+  return [cx1, cy1, cx2, cy2];
+}
+
+function bboxFromWallPoints(x1: number, y1: number, x2: number, y2: number) {
+  return {
+    x: Math.min(x1, x2),
+    y: Math.min(y1, y2),
+    width: Math.abs(x2 - x1),
+    height: Math.abs(y2 - y1),
+  };
+}
+
 const MIN_ROOM_PX = 8;
 const HANDLE_SCREEN_PX = 8;
 
@@ -394,6 +453,8 @@ export default function FloorPlanEditorInner({
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 24, y: 24 });
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
+  const selectedElementIdRef = useRef<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
@@ -403,6 +464,8 @@ export default function FloorPlanEditorInner({
   const [bgEpoch, setBgEpoch] = useState(0);
 
   const [cmPerPixel, setCmPerPixel] = useState(DEFAULT_CM_PER_PIXEL);
+  const [cmScaleInputStr, setCmScaleInputStr] = useState(() => DEFAULT_CM_PER_PIXEL.toFixed(2));
+  const cmScaleInputRef = useRef<HTMLInputElement>(null);
   const [gridMode, setGridMode] = useState<GridMode>("show");
   const [pdfScaleDetectedBannerDismissed, setPdfScaleDetectedBannerDismissed] = useState(false);
   const [pdfScaleUnknownBannerDismissed, setPdfScaleUnknownBannerDismissed] = useState(false);
@@ -422,7 +485,14 @@ export default function FloorPlanEditorInner({
     orig: { x: number; y: number; width: number; height: number };
   } | null>(null);
   /** Select tool only: hover target for cursor (handles use ResizeHandle; room body uses "move"). */
-  const [selectHover, setSelectHover] = useState<ResizeHandle | "move" | null>(null);
+  const [selectHover, setSelectHover] = useState<ResizeHandle | "move" | "wall-body" | "wall-endpoint" | null>(null);
+  const [wallDrag, setWallDrag] = useState<{
+    elementId: string;
+    mode: "body" | "p0" | "p1";
+    startX: number;
+    startY: number;
+    orig: [number, number, number, number];
+  } | null>(null);
   const [panDrag, setPanDrag] = useState<{ startClientX: number; startClientY: number; startPanX: number; startPanY: number } | null>(
     null,
   );
@@ -451,6 +521,10 @@ export default function FloorPlanEditorInner({
     zoomRef.current = zoom;
   }, [rooms, elements, plan, cmPerPixel, gridMode, pan, zoom]);
 
+  useEffect(() => {
+    selectedElementIdRef.current = selectedElementId;
+  }, [selectedElementId]);
+
   const commitHistory = useCallback(() => {
     if (skipHistoryRef.current) return;
     const snap = cloneSnapshot(roomsRef.current, elementsRef.current);
@@ -472,6 +546,7 @@ export default function FloorPlanEditorInner({
     setUndoLen(undoStackRef.current.length);
     setRedoLen(redoStackRef.current.length);
     setSelectedId((sid) => (sid && snapshot.rooms.some((r) => r.id === sid) ? sid : null));
+    setSelectedElementId((eid) => (eid && snapshot.elements.some((el) => el.id === eid) ? eid : null));
     setDirty(true);
   }, []);
 
@@ -487,8 +562,14 @@ export default function FloorPlanEditorInner({
     setUndoLen(undoStackRef.current.length);
     setRedoLen(redoStackRef.current.length);
     setSelectedId((sid) => (sid && snapshot.rooms.some((r) => r.id === sid) ? sid : null));
+    setSelectedElementId((eid) => (eid && snapshot.elements.some((el) => el.id === eid) ? eid : null));
     setDirty(true);
   }, []);
+
+  useEffect(() => {
+    if (document.activeElement === cmScaleInputRef.current) return;
+    setCmScaleInputStr(cmPerPixel.toFixed(2));
+  }, [cmPerPixel]);
 
   const ppm = ppmFromCmPerPixel(cmPerPixel);
   const fpW = plan ? Math.max(1, num(plan.width_meters, 20) * ppm) : 800;
@@ -726,11 +807,22 @@ export default function FloorPlanEditorInner({
       if (mod && e.key === "y") {
         e.preventDefault();
         applyRedo();
+        return;
+      }
+      if ((e.key === "Delete" || e.key === "Backspace") && selectedElementIdRef.current) {
+        e.preventDefault();
+        const wid = selectedElementIdRef.current;
+        if (wid) {
+          commitHistory();
+          setElements((prev) => prev.filter((el) => el.id !== wid));
+          setSelectedElementId(null);
+          setDirty(true);
+        }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [applyUndo, applyRedo]);
+  }, [applyUndo, applyRedo, commitHistory]);
 
   const buildCanvasData = useCallback(() => {
     const p = planRef.current;
@@ -1023,8 +1115,9 @@ export default function FloorPlanEditorInner({
       if (el.element_type !== "wall" || !el.points || el.points.length < 4) continue;
       const [x1, y1, x2, y2] = el.points;
       const sw = num(el.style?.strokeWidth, 3);
-      ctx.strokeStyle = String(el.style?.stroke ?? "#374151");
-      ctx.lineWidth = sw / zoom;
+      const wallSel = tool === "select" && el.id === selectedElementId;
+      ctx.strokeStyle = wallSel ? "#2563eb" : String(el.style?.stroke ?? "#374151");
+      ctx.lineWidth = (wallSel ? sw + 2 : sw) / zoom;
       ctx.beginPath();
       ctx.moveTo(x1, y1);
       ctx.lineTo(x2, y2);
@@ -1081,6 +1174,24 @@ export default function FloorPlanEditorInner({
       ctx.fillText(label, r.x + r.width / 2, r.y + r.height / 2);
     }
 
+    if (tool === "select" && selectedElementId) {
+      const wel = elements.find((elem) => elem.id === selectedElementId && elem.element_type === "wall" && elem.points && elem.points.length >= 4);
+      if (wel && wel.points) {
+        const [x1, y1, x2, y2] = wel.points as [number, number, number, number];
+        const hh = HANDLE_SCREEN_PX / 2 / zoom;
+        ctx.fillStyle = "#2563eb";
+        ctx.strokeStyle = "#1e40af";
+        ctx.lineWidth = 1.25 / zoom;
+        for (const [cx, cy] of [
+          [x1, y1],
+          [x2, y2],
+        ] as const) {
+          ctx.fillRect(cx - hh, cy - hh, hh * 2, hh * 2);
+          ctx.strokeRect(cx - hh, cy - hh, hh * 2, hh * 2);
+        }
+      }
+    }
+
     if (draftRect && draftRect.w !== 0 && draftRect.h !== 0) {
       const { x, y, w, h } = draftRect;
       ctx.fillStyle = "rgba(37, 99, 235, 0.15)";
@@ -1128,6 +1239,7 @@ export default function FloorPlanEditorInner({
     rooms,
     elements,
     selectedId,
+    selectedElementId,
     draftRect,
     draftWall,
     draftCalibrate,
@@ -1229,6 +1341,7 @@ export default function FloorPlanEditorInner({
       metadata: meta as RoomRow["metadata"],
     };
     setRooms((r) => [...r, newRow]);
+    setSelectedElementId(null);
     setSelectedId(id);
     setDirty(true);
   };
@@ -1319,18 +1432,42 @@ export default function FloorPlanEditorInner({
     }
 
     if (tool === "select") {
-      const hit = hitTestRoom(w.x, w.y, rooms);
-      if (hit) {
-        const r = rooms.find((x) => x.id === hit);
+      const roomHit = hitTestRoom(w.x, w.y, rooms);
+      if (roomHit) {
+        const r = rooms.find((x) => x.id === roomHit);
         if (r) {
           commitHistory();
-          setSelectedId(hit);
+          setSelectedElementId(null);
+          setSelectedId(roomHit);
           canvas.setPointerCapture(e.pointerId);
-          setDrag({ roomId: hit, startX: w.x, startY: w.y, origX: r.x, origY: r.y });
+          setDrag({ roomId: roomHit, startX: w.x, startY: w.y, origX: r.x, origY: r.y });
         }
-      } else {
-        setSelectedId(null);
+        return;
       }
+
+      const wallHit = hitTestWall(w.x, w.y, elements, zoom);
+      if (wallHit) {
+        const el = elements.find((x) => x.id === wallHit.elementId);
+        if (el?.points && el.points.length >= 4) {
+          commitHistory();
+          setSelectedId(null);
+          setSelectedElementId(wallHit.elementId);
+          const [ox1, oy1, ox2, oy2] = el.points as [number, number, number, number];
+          canvas.setPointerCapture(e.pointerId);
+          const mode = wallHit.part === "p0" ? "p0" : wallHit.part === "p1" ? "p1" : "body";
+          setWallDrag({
+            elementId: el.id,
+            mode,
+            startX: w.x,
+            startY: w.y,
+            orig: [ox1, oy1, ox2, oy2],
+          });
+        }
+        return;
+      }
+
+      setSelectedId(null);
+      setSelectedElementId(null);
     }
   };
 
@@ -1378,6 +1515,43 @@ export default function FloorPlanEditorInner({
       setDirty(true);
       return;
     }
+    if (wallDrag) {
+      const dx = w.x - wallDrag.startX;
+      const dy = w.y - wallDrag.startY;
+      let x1: number;
+      let y1: number;
+      let x2: number;
+      let y2: number;
+      const [ox1, oy1, ox2, oy2] = wallDrag.orig;
+      if (wallDrag.mode === "body") {
+        x1 = ox1 + dx;
+        y1 = oy1 + dy;
+        x2 = ox2 + dx;
+        y2 = oy2 + dy;
+      } else if (wallDrag.mode === "p0") {
+        x1 = ox1 + dx;
+        y1 = oy1 + dy;
+        x2 = ox2;
+        y2 = oy2;
+      } else {
+        x1 = ox1;
+        y1 = oy1;
+        x2 = ox2 + dx;
+        y2 = oy2 + dy;
+      }
+      [x1, y1, x2, y2] = clampWallEndpointsToFloor(x1, y1, x2, y2, fpW, fpH);
+      if (Math.hypot(x2 - x1, y2 - y1) < MIN_WALL_PX) return;
+      const bbox = bboxFromWallPoints(x1, y1, x2, y2);
+      setElements((prev) =>
+        prev.map((el) =>
+          el.id === wallDrag.elementId
+            ? { ...el, points: [x1, y1, x2, y2], x: bbox.x, y: bbox.y, width: bbox.width, height: bbox.height }
+            : el,
+        ),
+      );
+      setDirty(true);
+      return;
+    }
     if (drag) {
       const dx = w.x - drag.startX;
       const dy = w.y - drag.startY;
@@ -1392,7 +1566,10 @@ export default function FloorPlanEditorInner({
       !panDrag &&
       !draftCalibrate &&
       !draftRect &&
-      !draftWall
+      !draftWall &&
+      !resize &&
+      !wallDrag &&
+      !drag
     ) {
       const sel = selectedId ? rooms.find((r) => r.id === selectedId) : null;
       if (sel && isRectLikeRoom(sel)) {
@@ -1404,6 +1581,12 @@ export default function FloorPlanEditorInner({
       }
       if (hitTestRoom(w.x, w.y, rooms)) {
         setSelectHover((p) => (p === "move" ? p : "move"));
+        return;
+      }
+      const wh = hitTestWall(w.x, w.y, elements, zoom);
+      if (wh) {
+        const next: "wall-body" | "wall-endpoint" = wh.part === "body" ? "wall-body" : "wall-endpoint";
+        setSelectHover((p) => (p === next ? p : next));
         return;
       }
       setSelectHover((p) => (p === null ? p : null));
@@ -1469,6 +1652,15 @@ export default function FloorPlanEditorInner({
       }
       return;
     }
+    if (wallDrag) {
+      setWallDrag(null);
+      try {
+        canvas.releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
     if (drag) {
       setDrag(null);
       try {
@@ -1485,10 +1677,26 @@ export default function FloorPlanEditorInner({
     const w = getCanvasPoint(e);
     if (w.x < 0 || w.y < 0 || w.x > fpW || w.y > fpH) return;
     if (hitTestRoom(w.x, w.y, rooms)) return;
+    if (hitTestWall(w.x, w.y, elements, zoom)) return;
     fitToView();
   };
 
   const selectedRoom = useMemo(() => rooms.find((r) => r.id === selectedId) ?? null, [rooms, selectedId]);
+  const selectedWall = useMemo(() => {
+    if (!selectedElementId) return null;
+    return (
+      elements.find(
+        (el) => el.id === selectedElementId && el.element_type === "wall" && el.points && el.points.length >= 4,
+      ) ?? null
+    );
+  }, [elements, selectedElementId]);
+
+  const wallLengthMeters = useMemo(() => {
+    if (!selectedWall?.points || selectedWall.points.length < 4) return null;
+    const [x1, y1, x2, y2] = selectedWall.points;
+    const px = Math.hypot(x2 - x1, y2 - y1);
+    return (px * cmPerPixel) / 100;
+  }, [selectedWall, cmPerPixel]);
 
   const updateSelected = (patch: Partial<RoomRow>) => {
     if (!selectedId) return;
@@ -1504,6 +1712,26 @@ export default function FloorPlanEditorInner({
     setSelectedId(null);
     setDirty(true);
   };
+
+  const deleteSelectedWall = useCallback(() => {
+    const id = selectedElementIdRef.current;
+    if (!id) return;
+    commitHistory();
+    setElements((prev) => prev.filter((el) => el.id !== id));
+    setSelectedElementId(null);
+    setDirty(true);
+  }, [commitHistory]);
+
+  const applyManualCmScale = useCallback(() => {
+    const v = parseFloat(String(cmScaleInputStr).replace(",", "."));
+    if (!Number.isFinite(v) || v <= 0 || v > 1e6) {
+      setCmScaleInputStr(cmPerPixel.toFixed(2));
+      return;
+    }
+    setCmPerPixel(v);
+    setCmScaleInputStr(v.toFixed(2));
+    setDirty(true);
+  }, [cmScaleInputStr, cmPerPixel]);
 
   const zoomPct = Math.round(zoom * 100);
 
@@ -1886,10 +2114,38 @@ export default function FloorPlanEditorInner({
             color: "#0f172a",
             fontVariantNumeric: "tabular-nums",
             whiteSpace: "nowrap",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
           }}
-          title="Real-world distance represented by one floor-plan pixel"
+          title="Real-world distance represented by one floor-plan pixel (edit cm per pixel manually)"
         >
-          1 px = {cmPerPixel.toFixed(2)} cm
+          <span>1 px =</span>
+          <input
+            ref={cmScaleInputRef}
+            type="number"
+            step={0.01}
+            min={0.01}
+            value={cmScaleInputStr}
+            onChange={(e) => setCmScaleInputStr(e.target.value)}
+            onBlur={() => applyManualCmScale()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                applyManualCmScale();
+                (e.target as HTMLInputElement).blur();
+              }
+            }}
+            style={{
+              width: 76,
+              padding: "4px 8px",
+              borderRadius: 6,
+              border: "1px solid #cbd5e1",
+              fontSize: 12,
+              fontVariantNumeric: "tabular-nums",
+            }}
+          />
+          <span>cm</span>
         </span>
 
         <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
@@ -1969,19 +2225,23 @@ export default function FloorPlanEditorInner({
                   ? "grabbing"
                   : tool === "move" || spaceDown
                     ? "grab"
-                    : resize
-                      ? cursorForResizeHandle(resize.handle)
-                      : drag
-                        ? "grabbing"
-                        : tool === "rect" || tool === "wall" || tool === "calibrate"
-                          ? "crosshair"
-                          : tool === "select"
-                            ? selectHover === "move"
-                              ? "move"
-                              : selectHover
-                                ? cursorForResizeHandle(selectHover)
-                                : "default"
-                            : "default",
+                    : wallDrag
+                      ? "grabbing"
+                      : resize
+                        ? cursorForResizeHandle(resize.handle)
+                        : drag
+                          ? "grabbing"
+                          : tool === "rect" || tool === "wall" || tool === "calibrate"
+                            ? "crosshair"
+                            : tool === "select"
+                              ? selectHover === "move" || selectHover === "wall-body"
+                                ? "move"
+                                : selectHover === "wall-endpoint"
+                                  ? "crosshair"
+                                  : selectHover
+                                    ? cursorForResizeHandle(selectHover)
+                                    : "default"
+                              : "default",
               touchAction: "none",
               outline: "none",
             }}
@@ -2029,8 +2289,32 @@ export default function FloorPlanEditorInner({
             alignSelf: "stretch",
           }}
         >
-          <div style={{ fontWeight: 600, marginBottom: 10 }}>Room properties</div>
-          {selectedRoom && selectedDims ? (
+          <div style={{ fontWeight: 600, marginBottom: 10 }}>Properties</div>
+          {selectedWall ? (
+            <div style={{ display: "grid", gap: 12 }}>
+              <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>Wall segment (select tool)</p>
+              <div style={{ fontWeight: 600, fontSize: 15 }}>
+                Length: {(wallLengthMeters ?? 0).toFixed(2)} m
+              </div>
+              <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>Drag the line to move; drag blue handles to resize. Delete/Backspace removes the wall.</p>
+              <button
+                type="button"
+                onClick={deleteSelectedWall}
+                style={{
+                  marginTop: 4,
+                  padding: "8px 12px",
+                  background: "#b91c1c",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 8,
+                  cursor: "pointer",
+                  fontWeight: 600,
+                }}
+              >
+                Delete wall
+              </button>
+            </div>
+          ) : selectedRoom && selectedDims ? (
             <div style={{ display: "grid", gap: 10 }}>
               <label>
                 <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>Number</div>
@@ -2120,7 +2404,7 @@ export default function FloorPlanEditorInner({
             </button>
           </div>
           ) : (
-            <p style={{ color: "#6b7280", margin: 0 }}>Click a room to edit, or draw a new room.</p>
+            <p style={{ color: "#6b7280", margin: 0 }}>Click a room or wall to edit, or draw a new room or wall.</p>
           )}
         </aside>
         </div>

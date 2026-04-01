@@ -101,7 +101,7 @@ export default function NewBookingPage() {
       .from("bookable_spaces")
       .select("id, name, space_type, hourly_price, requires_approval, space_status, is_published")
       .eq("property_id", pid)
-      .in("space_status", ["available", "vacant"])
+      .in("space_status", ["available", "vacant", "active"])
       .not("space_type", "eq", "office")
       .order("name", { ascending: true });
 

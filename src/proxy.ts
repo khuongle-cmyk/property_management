@@ -1,3 +1,7 @@
+/**
+ * Next.js 16+: request interception lives in `src/proxy.ts` with a `proxy` export
+ * (replaces the older `middleware.ts` file). Auth + route guards run here.
+ */
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
@@ -71,7 +75,73 @@ export async function proxy(request: NextRequest) {
     },
   });
 
-  await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const path = request.nextUrl.pathname;
+  const userType = request.cookies.get("user_type")?.value;
+  const appScope = request.cookies.get("app_scope")?.value;
+
+  /** Preserve Supabase session + brand headers on redirects. */
+  function redirectWithCookies(dest: URL) {
+    const redirectRes = NextResponse.redirect(dest);
+    supabaseResponse.cookies.getAll().forEach((c) => {
+      redirectRes.cookies.set(c.name, c.value);
+    });
+    supabaseResponse.headers.forEach((value, key) => {
+      if (key.toLowerCase().startsWith("x-brand")) {
+        redirectRes.headers.set(key, value);
+      }
+    });
+    return redirectRes;
+  }
+
+  const staffDashboardPaths =
+    path.startsWith("/dashboard") ||
+    path.startsWith("/super-admin") ||
+    path.startsWith("/admin/") ||
+    path === "/admin";
+
+  if (path.startsWith("/portal") || path.startsWith("/customer-portal")) {
+    if (!user) {
+      const u = request.nextUrl.clone();
+      u.pathname = "/login";
+      u.searchParams.set("redirect", path);
+      return redirectWithCookies(u);
+    }
+    if (userType !== "customer") {
+      if (appScope === "dashboard") {
+        return redirectWithCookies(new URL("/dashboard", request.url));
+      }
+      return redirectWithCookies(new URL("/bookings", request.url));
+    }
+  } else if (staffDashboardPaths) {
+    if (!user) {
+      const u = request.nextUrl.clone();
+      u.pathname = "/login";
+      return redirectWithCookies(u);
+    }
+    if (userType === "customer") {
+      return redirectWithCookies(new URL("/portal", request.url));
+    }
+    if (userType === "admin" && appScope === "workspace") {
+      return redirectWithCookies(new URL("/bookings", request.url));
+    }
+  } else if (path === "/login" && user) {
+    if (userType === "customer") {
+      return redirectWithCookies(new URL("/portal", request.url));
+    }
+    if (userType === "admin") {
+      if (appScope === "dashboard") {
+        return redirectWithCookies(new URL("/dashboard", request.url));
+      }
+      if (appScope === "workspace") {
+        return redirectWithCookies(new URL("/bookings", request.url));
+      }
+      return redirectWithCookies(new URL("/dashboard", request.url));
+    }
+  }
 
   const host = normalizeHost(request.headers.get("x-forwarded-host") ?? request.headers.get("host"));
   const brandDomain = await detectBrandForHost(host);

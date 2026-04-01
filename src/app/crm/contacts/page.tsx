@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { LEAD_STAGE_LABEL, LEAD_STAGES, type LeadStage } from "@/lib/crm";
+import { normalizeLeadSource, normalizeSpaceType } from "@/lib/crm/lead-import-parse";
 import { formatPropertyLabel } from "@/lib/properties/label";
 import { formatDate } from "@/lib/date/format";
 
@@ -29,6 +30,7 @@ type LeadRow = {
   company_size: string | null;
   industry_sector: string | null;
   interested_space_type: string | null;
+  customer_company_id: string | null;
   created_at: string;
   updated_at: string;
   archived: boolean | null;
@@ -79,12 +81,89 @@ type ContactRecord = {
   yTunnus: string | null;
   tenantId: string | null;
   leadId: string | null;
+  customerCompanyId: string | null;
   readonly: boolean;
 };
 
 type SortBy = "company_az" | "recent_added" | "recent_updated" | "budget_desc" | "move_in_soon";
 type ViewMode = "table" | "card";
 type StatusFilter = "all" | ContactStatus;
+
+/** CRM UI uses public.leads for pipeline contacts (see sql/contract_tool_schema.sql). */
+const PETROL = "#0D4F4F";
+const PETROL_HOVER = "#0a3f3f";
+
+const CONTACT_CREATE_STATUSES = ["Lead", "Pipeline lead", "Active", "Inactive", "Lost"] as const;
+const CONTACT_CREATE_STAGE_LABELS = ["New", "Viewing", "Proposal", "Negotiation", "Contacted", "Won", "Lost"] as const;
+const SPACE_TYPE_OPTIONS = ["Office", "Meeting room", "Venue", "Coworking", "Virtual Office"] as const;
+const SOURCE_OPTIONS = ["Website", "Chatbot", "Referral", "Cold call", "Email campaign", "Walk-in", "Other"] as const;
+const COMPANY_SIZE_OPTIONS = ["1-5", "6-10", "11-25", "26-50", "51-100", "100+"] as const;
+
+function mapUiStageToLeadStage(label: string): LeadStage {
+  const m: Record<string, LeadStage> = {
+    New: "new",
+    Viewing: "viewing",
+    Proposal: "offer_sent",
+    Negotiation: "negotiation",
+    Contacted: "contacted",
+    Won: "won",
+    Lost: "lost",
+  };
+  return m[label] ?? "new";
+}
+
+function mapUiSourceToDbSource(ui: string): string {
+  const raw: Record<string, string> = {
+    Website: "website",
+    Chatbot: "chatbot",
+    Referral: "referral",
+    "Cold call": "phone",
+    "Email campaign": "email",
+    "Walk-in": "other",
+    Other: "other",
+  };
+  return normalizeLeadSource(raw[ui] ?? "other");
+}
+
+function mapUiSpaceTypeToDb(ui: string): string | null {
+  if (ui === "Virtual Office") return null;
+  const raw: Record<string, string> = {
+    Office: "office",
+    "Meeting room": "meeting_room",
+    Venue: "venue",
+    Coworking: "coworking",
+  };
+  const key = raw[ui];
+  if (!key) return null;
+  const n = normalizeSpaceType(key === "coworking" ? "hot_desk" : key);
+  return n;
+}
+
+function spaceTypeDbToUi(raw: string | null | undefined): (typeof SPACE_TYPE_OPTIONS)[number] | "" {
+  const n = normalizeSpaceType(raw ?? undefined);
+  if (n === "office") return "Office";
+  if (n === "meeting_room") return "Meeting room";
+  if (n === "venue") return "Venue";
+  if (n === "hot_desk") return "Coworking";
+  return "";
+}
+
+const defaultCreateForm = () => ({
+  companyName: "",
+  businessId: "",
+  contactPerson: "",
+  email: "",
+  phone: "",
+  contactStatus: "Lead" as (typeof CONTACT_CREATE_STATUSES)[number],
+  stageUi: "New" as (typeof CONTACT_CREATE_STAGE_LABELS)[number],
+  propertyId: "",
+  spaceType: "Office" as (typeof SPACE_TYPE_OPTIONS)[number],
+  source: "Website" as (typeof SOURCE_OPTIONS)[number],
+  companySize: "1-5" as (typeof COMPANY_SIZE_OPTIONS)[number],
+  industry: "",
+  notes: "",
+  assignedAgentUserId: "",
+});
 
 const cardStyle: React.CSSProperties = {
   background: "#fff",
@@ -145,6 +224,42 @@ export default function CrmContactsPage() {
   const [sortBy, setSortBy] = useState<SortBy>("recent_added");
   const [viewMode, setViewMode] = useState<ViewMode>("table");
 
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createSubmitting, setCreateSubmitting] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [assignableUsers, setAssignableUsers] = useState<UserRow[]>([]);
+  const [defaultTenantId, setDefaultTenantId] = useState("");
+  const [createForm, setCreateForm] = useState(defaultCreateForm);
+
+  const [showConvertModal, setShowConvertModal] = useState(false);
+  const [convertSubmitting, setConvertSubmitting] = useState(false);
+  const [convertError, setConvertError] = useState<string | null>(null);
+  const [convertForm, setConvertForm] = useState({
+    tenantId: "",
+    name: "",
+    businessId: "",
+    email: "",
+    phone: "",
+    addressLine: "",
+    city: "",
+    postalCode: "",
+    industry: "",
+    companySize: "",
+    propertyId: "",
+    spaceType: "Office" as (typeof SPACE_TYPE_OPTIONS)[number],
+    contractStart: "",
+    contractEnd: "",
+    notes: "",
+    leadId: "",
+  });
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = window.setTimeout(() => setToast(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [toast]);
+
   async function loadAll() {
     setLoading(true);
     setError(null);
@@ -190,8 +305,32 @@ export default function CrmContactsPage() {
     }
     const props = (propRows ?? []) as PropertyRow[];
     setProperties(props);
-    const allowedPropertyIds = props.map((p) => p.id);
     const propertiesById = new Map(props.map((p) => [p.id, p]));
+
+    let scopeTenantIds = tenantIds;
+    if (superAdmin && scopeTenantIds.length === 0 && props.length > 0) {
+      scopeTenantIds = [...new Set(props.map((p) => p.tenant_id).filter(Boolean))] as string[];
+    }
+    setDefaultTenantId(scopeTenantIds[0] ?? "");
+
+    let assignable: UserRow[] = [];
+    if (scopeTenantIds.length > 0) {
+      const { data: roleMems } = await supabase
+        .from("memberships")
+        .select("user_id")
+        .in("tenant_id", scopeTenantIds)
+        .in("role", ["owner", "manager", "agent", "super_admin"]);
+      const assignIds = [...new Set((roleMems ?? []).map((m) => m.user_id).filter(Boolean))] as string[];
+      if (assignIds.length) {
+        const { data: urows } = await supabase
+          .from("users")
+          .select("id, display_name, email")
+          .in("id", assignIds)
+          .order("display_name", { ascending: true });
+        assignable = (urows ?? []) as UserRow[];
+      }
+    }
+    setAssignableUsers(assignable);
 
     let leadsQuery = supabase.from("leads").select("*").order("created_at", { ascending: false });
     if (!superAdmin) {
@@ -267,6 +406,7 @@ export default function CrmContactsPage() {
         yTunnus: l.business_id,
         tenantId: l.tenant_id,
         leadId: l.id,
+        customerCompanyId: l.customer_company_id ?? null,
         readonly: !editAllowed || roles.includes("customer_service"),
       });
     }
@@ -303,6 +443,7 @@ export default function CrmContactsPage() {
         yTunnus: existing?.yTunnus ?? null,
         tenantId: c.tenant_id,
         leadId: existing?.leadId ?? p?.lead_id ?? null,
+        customerCompanyId: existing?.customerCompanyId ?? null,
         readonly: true,
       });
     }
@@ -436,25 +577,238 @@ export default function CrmContactsPage() {
     await loadAll();
   }
 
+  async function submitCreateContact(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!canEdit) return;
+    const company = createForm.companyName.trim();
+    const contact = createForm.contactPerson.trim();
+    const email = createForm.email.trim().toLowerCase();
+    if (!company || !contact || !email) {
+      setCreateError("Company name, contact person, and email are required.");
+      return;
+    }
+
+    setCreateSubmitting(true);
+    setCreateError(null);
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      setCreateError("You must be signed in.");
+      setCreateSubmitting(false);
+      return;
+    }
+
+    const prop = createForm.propertyId ? properties.find((p) => p.id === createForm.propertyId) : undefined;
+    const tenant_id = prop?.tenant_id ?? defaultTenantId;
+    if (!tenant_id) {
+      setCreateError("Select a property, or ensure your account is linked to an organization.");
+      setCreateSubmitting(false);
+      return;
+    }
+
+    let stage: LeadStage = mapUiStageToLeadStage(createForm.stageUi);
+    const archived = createForm.contactStatus === "Inactive";
+    if (createForm.contactStatus === "Lost") {
+      stage = "lost";
+    }
+
+    const payload = {
+      tenant_id,
+      pipeline_owner: tenant_id,
+      company_name: company,
+      business_id: createForm.businessId.trim() || null,
+      contact_person_name: contact,
+      email,
+      phone: createForm.phone.trim() || null,
+      stage,
+      archived,
+      property_id: createForm.propertyId || null,
+      interested_space_type: mapUiSpaceTypeToDb(createForm.spaceType),
+      source: mapUiSourceToDbSource(createForm.source),
+      company_size: createForm.companySize || null,
+      industry_sector: createForm.industry.trim() || null,
+      notes: createForm.notes.trim() || null,
+      assigned_agent_user_id: createForm.assignedAgentUserId || null,
+      created_by_user_id: user.id,
+    };
+
+    const { error: insErr } = await supabase.from("leads").insert(payload);
+    if (insErr) {
+      setCreateError(insErr.message);
+      setCreateSubmitting(false);
+      return;
+    }
+
+    setShowCreateModal(false);
+    setCreateForm(defaultCreateForm());
+    setToast("Contact created successfully.");
+    await loadAll();
+    setCreateSubmitting(false);
+  }
+
+  function openConvertToCustomer(r: ContactRecord) {
+    if (!r.leadId || !r.tenantId) return;
+    setConvertForm({
+      tenantId: r.tenantId,
+      name: r.companyName,
+      businessId: r.yTunnus ?? "",
+      email: r.email ?? "",
+      phone: r.phone ?? "",
+      addressLine: "",
+      city: "",
+      postalCode: "",
+      industry: r.industry ?? "",
+      companySize: r.companySize ?? "",
+      propertyId: r.propertyId ?? "",
+      spaceType: (spaceTypeDbToUi(r.spaceType) || "Office") as (typeof SPACE_TYPE_OPTIONS)[number],
+      contractStart: "",
+      contractEnd: "",
+      notes: "",
+      leadId: r.leadId,
+    });
+    setConvertError(null);
+    setShowConvertModal(true);
+  }
+
+  async function submitConvertToCustomer(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!canEdit) return;
+    setConvertSubmitting(true);
+    setConvertError(null);
+    const res = await fetch("/api/customer-companies", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tenantId: convertForm.tenantId,
+        propertyId: convertForm.propertyId || null,
+        name: convertForm.name.trim(),
+        businessId: convertForm.businessId || null,
+        email: convertForm.email || null,
+        phone: convertForm.phone || null,
+        addressLine: convertForm.addressLine || null,
+        city: convertForm.city || null,
+        postalCode: convertForm.postalCode || null,
+        industry: convertForm.industry || null,
+        companySize: convertForm.companySize || null,
+        spaceType: convertForm.spaceType || null,
+        contractStart: convertForm.contractStart || null,
+        contractEnd: convertForm.contractEnd || null,
+        notes: convertForm.notes || null,
+        leadId: convertForm.leadId,
+      }),
+    });
+    const json = (await res.json()) as { error?: string };
+    setConvertSubmitting(false);
+    if (!res.ok) {
+      setConvertError(json.error ?? "Could not create customer company.");
+      return;
+    }
+    setShowConvertModal(false);
+    setToast("Customer company created and contact linked.");
+    await loadAll();
+  }
+
   if (loading) return <p>Loading contacts…</p>;
   if (error) return <p style={{ color: "#b91c1c" }}>{error}</p>;
 
+  const pageShell: React.CSSProperties = {
+    width: "100%",
+    maxWidth: "100%",
+    overflow: "hidden",
+    boxSizing: "border-box",
+    padding: "16px",
+  };
+
+  const modalInput: React.CSSProperties = {
+    width: "100%",
+    padding: "10px 12px",
+    borderRadius: 8,
+    border: "1px solid #e5e7eb",
+    fontSize: 14,
+    boxSizing: "border-box",
+  };
+  const modalLabel: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: "#334155", display: "block", marginBottom: 6 };
+
   return (
-    <main style={{ display: "grid", gap: 14 }}>
-      <section style={{ ...cardStyle, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+    <main style={{ ...pageShell, display: "grid", gap: 14 }}>
+      {toast ? (
+        <div
+          role="status"
+          style={{
+            position: "fixed",
+            top: 20,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 10001,
+            background: PETROL,
+            color: "#fff",
+            padding: "12px 20px",
+            borderRadius: 10,
+            fontSize: 14,
+            fontWeight: 600,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.15)",
+          }}
+        >
+          {toast}
+        </div>
+      ) : null}
+
+      <section style={{ ...cardStyle, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", maxWidth: "100%", minWidth: 0 }}>
         <h1 style={{ margin: 0, fontSize: 22 }}>Contacts / Client database</h1>
-        <span style={{ flex: 1 }} />
+        <span style={{ flex: 1, minWidth: 8 }} />
         <Link href="/crm" style={{ color: "#2563eb" }}>CRM Pipeline</Link>
         <Link href="/crm/contacts" style={{ color: "#0f172a", fontWeight: 700 }}>Contacts</Link>
         <Link href="/crm/import" style={{ color: "#2563eb" }}>Import contacts</Link>
+        {canEdit ? (
+          <button
+            type="button"
+            onClick={() => {
+              setCreateForm(defaultCreateForm());
+              setCreateError(null);
+              setShowCreateModal(true);
+            }}
+            style={{
+              background: PETROL,
+              color: "#fff",
+              padding: "8px 16px",
+              borderRadius: 8,
+              border: "none",
+              fontWeight: 600,
+              cursor: "pointer",
+              fontSize: 14,
+            }}
+            onMouseEnter={(ev) => {
+              ev.currentTarget.style.background = PETROL_HOVER;
+            }}
+            onMouseLeave={(ev) => {
+              ev.currentTarget.style.background = PETROL;
+            }}
+          >
+            + Create Contact
+          </button>
+        ) : null}
       </section>
 
-      <section style={{ ...cardStyle, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+      <section
+        style={{
+          ...cardStyle,
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 8,
+          alignItems: "center",
+          marginBottom: 4,
+          maxWidth: "100%",
+          minWidth: 0,
+        }}
+      >
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search company, contact, email, phone, Y-tunnus..."
-          style={{ padding: 10, minWidth: 320, flex: 1 }}
+          style={{ padding: 10, minWidth: 0, flex: "1 1 200px", maxWidth: "100%" }}
         />
         <button type="button" onClick={() => setShowFilters((v) => !v)} style={{ padding: "10px 12px" }}>
           {showFilters ? "Hide filters" : "Show filters"}
@@ -472,9 +826,19 @@ export default function CrmContactsPage() {
         <button type="button" onClick={exportCsv} style={{ padding: "10px 12px" }}>Export CSV</button>
       </section>
 
-      <div style={{ display: "grid", gridTemplateColumns: showFilters ? "280px 1fr" : "1fr", gap: 12 }}>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "row",
+          gap: 12,
+          alignItems: "flex-start",
+          width: "100%",
+          maxWidth: "100%",
+          minWidth: 0,
+        }}
+      >
         {showFilters ? (
-          <aside style={{ ...cardStyle, height: "fit-content", display: "grid", gap: 8 }}>
+          <aside style={{ ...cardStyle, width: 256, flexShrink: 0, height: "fit-content", display: "grid", gap: 8, maxWidth: "100%", boxSizing: "border-box" }}>
             <h3 style={{ margin: 0, fontSize: 16 }}>Filters</h3>
             <label style={{ display: "grid", gap: 4 }}>
               Status
@@ -552,17 +916,17 @@ export default function CrmContactsPage() {
           </aside>
         ) : null}
 
-        <section style={{ ...cardStyle }}>
+        <section style={{ ...cardStyle, flex: 1, minWidth: 0, maxWidth: "100%", overflow: "hidden", boxSizing: "border-box" }}>
           <p style={{ marginTop: 0, color: "#64748b" }}>
             {filtered.length} contact{filtered.length === 1 ? "" : "s"}{isSuperAdmin ? " (super admin scope)" : ""}
           </p>
 
           {viewMode === "table" ? (
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <div style={{ overflowX: "auto", width: "100%", WebkitOverflowScrolling: "touch" }}>
+              <table style={{ width: "100%", minWidth: "max-content", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead>
                   <tr>
-                    {["Company", "Contact", "Email", "Phone", "Status", "Property", "Stage", "Source", "Added", "Assigned agent", "Actions"].map((h) => (
+                    {["Company", "Y-tunnus", "Contact", "Email", "Phone", "Status", "Property", "Stage", "Source", "Added", "Assigned agent", "Actions"].map((h) => (
                       <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "8px 6px" }}>
                         {h}
                       </th>
@@ -575,6 +939,7 @@ export default function CrmContactsPage() {
                       <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>
                         <Link href={`/crm/contacts/${encodeURIComponent(r.id)}`}>{r.companyName}</Link>
                       </td>
+                      <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{r.yTunnus ?? "—"}</td>
                       <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{r.contactName}</td>
                       <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{r.email ?? "—"}</td>
                       <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{r.phone ?? "—"}</td>
@@ -592,6 +957,18 @@ export default function CrmContactsPage() {
                           <>
                             {" · "}
                             <Link href={`/crm/leads/${r.leadId}`}>Edit</Link>
+                            {r.customerCompanyId ? null : (
+                              <>
+                                {" · "}
+                                <button
+                                  type="button"
+                                  onClick={() => openConvertToCustomer(r)}
+                                  style={{ fontSize: 12, color: PETROL, fontWeight: 600, background: "none", border: "none", padding: 0, cursor: "pointer" }}
+                                >
+                                  Convert to Customer
+                                </button>
+                              </>
+                            )}
                             {" · "}
                             <button type="button" onClick={() => void archiveLead(r)} style={{ fontSize: 12 }}>
                               Delete
@@ -605,7 +982,7 @@ export default function CrmContactsPage() {
               </table>
             </div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(250px,1fr))", gap: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(min(250px,100%),1fr))", gap: 10, width: "100%", minWidth: 0 }}>
               {filtered.map((r) => (
                 <article key={r.id} style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
                   <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -637,6 +1014,483 @@ export default function CrmContactsPage() {
           )}
         </section>
       </div>
+
+      {showCreateModal ? (
+        <div
+          role="presentation"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 10000,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            overflowY: "auto",
+          }}
+          onClick={() => {
+            if (!createSubmitting) setShowCreateModal(false);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="create-contact-title"
+            onClick={(ev) => ev.stopPropagation()}
+            style={{
+              background: "#fff",
+              borderRadius: 16,
+              padding: 24,
+              maxWidth: 520,
+              width: "100%",
+              maxHeight: "min(90vh, 900px)",
+              overflowY: "auto",
+              boxSizing: "border-box",
+            }}
+          >
+            <h2 id="create-contact-title" style={{ margin: "0 0 16px", fontSize: 20, fontWeight: 700, color: "#0f172a" }}>
+              Create Contact
+            </h2>
+            <p style={{ margin: "0 0 16px", fontSize: 13, color: "#64748b", lineHeight: 1.45 }}>
+              New records are saved to the CRM pipeline (<code style={{ fontSize: 12 }}>leads</code>).
+            </p>
+            <form onSubmit={(e) => void submitCreateContact(e)} style={{ display: "grid", gap: 14 }}>
+              <label style={modalLabel}>
+                Company name *
+                <input
+                  required
+                  value={createForm.companyName}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, companyName: e.target.value }))}
+                  style={modalInput}
+                />
+              </label>
+              <label style={modalLabel}>
+                Y-tunnus
+                <input
+                  type="text"
+                  value={createForm.businessId}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, businessId: e.target.value }))}
+                  placeholder="e.g. 1234567-8"
+                  style={modalInput}
+                />
+              </label>
+              <label style={modalLabel}>
+                Contact person *
+                <input
+                  required
+                  value={createForm.contactPerson}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, contactPerson: e.target.value }))}
+                  style={modalInput}
+                />
+              </label>
+              <label style={modalLabel}>
+                Email *
+                <input
+                  required
+                  type="email"
+                  value={createForm.email}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, email: e.target.value }))}
+                  style={modalInput}
+                />
+              </label>
+              <label style={modalLabel}>
+                Phone
+                <input
+                  value={createForm.phone}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, phone: e.target.value }))}
+                  style={modalInput}
+                />
+              </label>
+              <label style={modalLabel}>
+                Status
+                <select
+                  value={createForm.contactStatus}
+                  onChange={(e) =>
+                    setCreateForm((f) => ({ ...f, contactStatus: e.target.value as (typeof CONTACT_CREATE_STATUSES)[number] }))
+                  }
+                  style={modalInput}
+                >
+                  {CONTACT_CREATE_STATUSES.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={modalLabel}>
+                Stage
+                <select
+                  value={createForm.stageUi}
+                  onChange={(e) =>
+                    setCreateForm((f) => ({ ...f, stageUi: e.target.value as (typeof CONTACT_CREATE_STAGE_LABELS)[number] }))
+                  }
+                  style={modalInput}
+                >
+                  {CONTACT_CREATE_STAGE_LABELS.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={modalLabel}>
+                Property
+                <select
+                  value={createForm.propertyId}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, propertyId: e.target.value }))}
+                  style={modalInput}
+                >
+                  <option value="">— None —</option>
+                  {properties.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {formatPropertyLabel(p, { includeCity: true })}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={modalLabel}>
+                Space type
+                <select
+                  value={createForm.spaceType}
+                  onChange={(e) =>
+                    setCreateForm((f) => ({ ...f, spaceType: e.target.value as (typeof SPACE_TYPE_OPTIONS)[number] }))
+                  }
+                  style={modalInput}
+                >
+                  {SPACE_TYPE_OPTIONS.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={modalLabel}>
+                Source
+                <select
+                  value={createForm.source}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, source: e.target.value as (typeof SOURCE_OPTIONS)[number] }))}
+                  style={modalInput}
+                >
+                  {SOURCE_OPTIONS.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={modalLabel}>
+                Company size
+                <select
+                  value={createForm.companySize}
+                  onChange={(e) =>
+                    setCreateForm((f) => ({ ...f, companySize: e.target.value as (typeof COMPANY_SIZE_OPTIONS)[number] }))
+                  }
+                  style={modalInput}
+                >
+                  {COMPANY_SIZE_OPTIONS.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={modalLabel}>
+                Industry
+                <input
+                  value={createForm.industry}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, industry: e.target.value }))}
+                  style={modalInput}
+                />
+              </label>
+              <label style={modalLabel}>
+                Notes
+                <textarea
+                  value={createForm.notes}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, notes: e.target.value }))}
+                  rows={4}
+                  style={{ ...modalInput, resize: "vertical", fontFamily: "inherit" }}
+                />
+              </label>
+              <label style={modalLabel}>
+                Assigned agent
+                <select
+                  value={createForm.assignedAgentUserId}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, assignedAgentUserId: e.target.value }))}
+                  style={modalInput}
+                >
+                  <option value="">— None —</option>
+                  {assignableUsers.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.display_name ?? u.email ?? u.id.slice(0, 8)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {createError ? (
+                <p style={{ margin: 0, fontSize: 13, color: "#b91c1c" }}>{createError}</p>
+              ) : null}
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  disabled={createSubmitting}
+                  onClick={() => setShowCreateModal(false)}
+                  style={{
+                    padding: "10px 18px",
+                    borderRadius: 8,
+                    border: "1px solid #e5e7eb",
+                    background: "#fff",
+                    color: "#334155",
+                    fontWeight: 600,
+                    cursor: createSubmitting ? "not-allowed" : "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={createSubmitting}
+                  style={{
+                    padding: "10px 18px",
+                    borderRadius: 8,
+                    border: "none",
+                    background: PETROL,
+                    color: "#fff",
+                    fontWeight: 600,
+                    cursor: createSubmitting ? "not-allowed" : "pointer",
+                    opacity: createSubmitting ? 0.7 : 1,
+                  }}
+                >
+                  {createSubmitting ? "Saving…" : "Create contact"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {showConvertModal ? (
+        <div
+          role="presentation"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 10000,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            overflowY: "auto",
+          }}
+          onClick={() => !convertSubmitting && setShowConvertModal(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="convert-customer-title"
+            onClick={(ev) => ev.stopPropagation()}
+            style={{
+              background: "#fff",
+              borderRadius: 16,
+              padding: 24,
+              maxWidth: 520,
+              width: "100%",
+              maxHeight: "min(90vh, 900px)",
+              overflowY: "auto",
+              boxSizing: "border-box",
+            }}
+          >
+            <h2 id="convert-customer-title" style={{ margin: "0 0 8px", fontSize: 20, fontWeight: 700, color: "#0f172a" }}>
+              Convert to Customer Company
+            </h2>
+            <p style={{ margin: "0 0 16px", fontSize: 13, color: "#64748b", lineHeight: 1.45 }}>
+              Creates a customer company and links this CRM contact. You can invite portal users from Admin → Customers.
+            </p>
+            <form onSubmit={(e) => void submitConvertToCustomer(e)} style={{ display: "grid", gap: 12 }}>
+              <label style={modalLabel}>
+                Company name *
+                <input
+                  required
+                  value={convertForm.name}
+                  onChange={(e) => setConvertForm((f) => ({ ...f, name: e.target.value }))}
+                  style={modalInput}
+                />
+              </label>
+              <label style={modalLabel}>
+                Y-tunnus
+                <input
+                  value={convertForm.businessId}
+                  onChange={(e) => setConvertForm((f) => ({ ...f, businessId: e.target.value }))}
+                  style={modalInput}
+                />
+              </label>
+              <label style={modalLabel}>
+                Email
+                <input
+                  type="email"
+                  value={convertForm.email}
+                  onChange={(e) => setConvertForm((f) => ({ ...f, email: e.target.value }))}
+                  style={modalInput}
+                />
+              </label>
+              <label style={modalLabel}>
+                Phone
+                <input
+                  value={convertForm.phone}
+                  onChange={(e) => setConvertForm((f) => ({ ...f, phone: e.target.value }))}
+                  style={modalInput}
+                />
+              </label>
+              <label style={modalLabel}>
+                Address
+                <input
+                  value={convertForm.addressLine}
+                  onChange={(e) => setConvertForm((f) => ({ ...f, addressLine: e.target.value }))}
+                  style={modalInput}
+                />
+              </label>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <label style={modalLabel}>
+                  City
+                  <input
+                    value={convertForm.city}
+                    onChange={(e) => setConvertForm((f) => ({ ...f, city: e.target.value }))}
+                    style={modalInput}
+                  />
+                </label>
+                <label style={modalLabel}>
+                  Postal code
+                  <input
+                    value={convertForm.postalCode}
+                    onChange={(e) => setConvertForm((f) => ({ ...f, postalCode: e.target.value }))}
+                    style={modalInput}
+                  />
+                </label>
+              </div>
+              <label style={modalLabel}>
+                Industry
+                <input
+                  value={convertForm.industry}
+                  onChange={(e) => setConvertForm((f) => ({ ...f, industry: e.target.value }))}
+                  style={modalInput}
+                />
+              </label>
+              <label style={modalLabel}>
+                Company size
+                <select
+                  value={convertForm.companySize}
+                  onChange={(e) => setConvertForm((f) => ({ ...f, companySize: e.target.value }))}
+                  style={modalInput}
+                >
+                  <option value="">—</option>
+                  {COMPANY_SIZE_OPTIONS.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={modalLabel}>
+                Property
+                <select
+                  value={convertForm.propertyId}
+                  onChange={(e) => setConvertForm((f) => ({ ...f, propertyId: e.target.value }))}
+                  style={modalInput}
+                >
+                  <option value="">— None —</option>
+                  {properties.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {formatPropertyLabel(p, { includeCity: true })}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={modalLabel}>
+                Space type
+                <select
+                  value={convertForm.spaceType}
+                  onChange={(e) =>
+                    setConvertForm((f) => ({ ...f, spaceType: e.target.value as (typeof SPACE_TYPE_OPTIONS)[number] }))
+                  }
+                  style={modalInput}
+                >
+                  {SPACE_TYPE_OPTIONS.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <label style={modalLabel}>
+                  Contract start
+                  <input
+                    type="date"
+                    value={convertForm.contractStart}
+                    onChange={(e) => setConvertForm((f) => ({ ...f, contractStart: e.target.value }))}
+                    style={modalInput}
+                  />
+                </label>
+                <label style={modalLabel}>
+                  Contract end
+                  <input
+                    type="date"
+                    value={convertForm.contractEnd}
+                    onChange={(e) => setConvertForm((f) => ({ ...f, contractEnd: e.target.value }))}
+                    style={modalInput}
+                  />
+                </label>
+              </div>
+              <label style={modalLabel}>
+                Notes
+                <textarea
+                  value={convertForm.notes}
+                  onChange={(e) => setConvertForm((f) => ({ ...f, notes: e.target.value }))}
+                  rows={3}
+                  style={{ ...modalInput, resize: "vertical", fontFamily: "inherit" }}
+                />
+              </label>
+              {convertError ? <p style={{ margin: 0, fontSize: 13, color: "#b91c1c" }}>{convertError}</p> : null}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  disabled={convertSubmitting}
+                  onClick={() => !convertSubmitting && setShowConvertModal(false)}
+                  style={{
+                    padding: "10px 18px",
+                    borderRadius: 8,
+                    border: "1px solid #e5e7eb",
+                    background: "#fff",
+                    fontWeight: 600,
+                    cursor: convertSubmitting ? "not-allowed" : "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={convertSubmitting}
+                  style={{
+                    padding: "10px 18px",
+                    borderRadius: 8,
+                    border: "none",
+                    background: PETROL,
+                    color: "#fff",
+                    fontWeight: 600,
+                    cursor: convertSubmitting ? "not-allowed" : "pointer",
+                    opacity: convertSubmitting ? 0.85 : 1,
+                  }}
+                >
+                  {convertSubmitting ? "Creating…" : "Create & link"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

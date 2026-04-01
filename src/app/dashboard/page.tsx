@@ -15,6 +15,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import AIAssistant from "@/components/AIAssistant";
 import DashboardLayout from "@/components/DashboardLayout";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { VILLAGEWORKS_BRAND } from "@/lib/brand/villageworks";
@@ -35,6 +36,16 @@ type MembershipRow = {
   tenant_id: string | null;
   role: string;
 };
+
+/** Maps `memberships.role` values to VillageWorks AI assistant roles (same logic as /api/chat). */
+function membershipsToAiAssistantRole(rows: MembershipRow[]): "public" | "tenant" | "staff" | "finance" | "admin" {
+  const r = new Set(rows.map((m) => (m.role ?? "").toLowerCase()));
+  if (r.has("super_admin")) return "admin";
+  if (r.has("accounting")) return "finance";
+  if (r.has("owner") || r.has("manager")) return "admin";
+  if (r.has("customer_service") || r.has("maintenance")) return "staff";
+  return "tenant";
+}
 
 type TenantRow = { id: string; name: string };
 type PipelineSettingsRow = {
@@ -159,6 +170,7 @@ export default function DashboardPage() {
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analytics, setAnalytics] = useState<DashboardAnalyticsPayload | null>(null);
   const [analyticsError, setAnalyticsError] = useState<string | null>(null);
+  const [aiAssistantRole, setAiAssistantRole] = useState<"public" | "tenant" | "staff" | "finance" | "admin">("tenant");
 
   useEffect(() => {
     let cancelled = false;
@@ -195,6 +207,8 @@ export default function DashboardPage() {
       }
 
       const membershipRows = (memberships ?? []) as MembershipRow[];
+      if (!cancelled) setAiAssistantRole(membershipsToAiAssistantRole(membershipRows));
+
       const isSuperAdmin = membershipRows.some((m) => (m.role ?? "").toLowerCase() === "super_admin");
       const ownerTenantIds = membershipRows
         .filter((m) => (m.role ?? "").toLowerCase() === "owner")
@@ -1028,6 +1042,10 @@ export default function DashboardPage() {
           }
         }
       `}</style>
+
+      <div style={{ marginTop: 28, maxWidth: 560 }}>
+        <AIAssistant initialRole={aiAssistantRole} />
+      </div>
     </DashboardLayout>
   );
 }
