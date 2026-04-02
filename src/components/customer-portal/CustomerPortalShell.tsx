@@ -71,6 +71,13 @@ function IconUser() {
     </svg>
   );
 }
+function IconMessageSquare() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
 function IconLogout() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
@@ -203,6 +210,7 @@ function CustomerPortalLayoutInner({ children }: { children: ReactNode }) {
     <nav style={{ display: "grid", gap: 4, marginTop: 16 }}>
       <NavLink href="/portal" icon={<IconHome />} label="Dashboard" onNavigate={closeMobile} />
       <NavLink href="/portal/bookings" icon={<IconCalendar />} label="My Bookings" onNavigate={closeMobile} />
+      <NavLink href="/portal/community" icon={<IconMessageSquare />} label="Chat" onNavigate={closeMobile} />
       <NavLink href="/portal/book" icon={<IconCalendarPlus />} label="Make Booking" onNavigate={closeMobile} />
       <NavLink href="/portal/invoices" icon={<IconFileText />} label="Invoices" onNavigate={closeMobile} />
       {isCompanyAdmin ? (
