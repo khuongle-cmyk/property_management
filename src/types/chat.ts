@@ -3,8 +3,8 @@ export interface ChatChannel {
   name: string;
   description: string | null;
   property_id: string | null;
-  scope: "property" | "cross_property";
-  channel_type: "general" | "announcements" | "support" | "social";
+  scope: "property" | "cross_property" | "direct";
+  channel_type: "general" | "announcements" | "support" | "social" | "direct";
   is_archived: boolean;
   created_by: string | null;
   created_at: string;

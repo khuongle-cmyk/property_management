@@ -4,9 +4,11 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { ASSISTANT_LANGUAGES, normalizeAssistantLanguage, type SupportedAssistantLanguage } from "@/lib/voice-assistant/languages";
+import CommunityActivity from "@/components/community/CommunityActivity";
 
 export default function ProfilePage() {
   const router = useRouter();
+  const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [email, setEmail] = useState("");
@@ -25,6 +27,7 @@ export default function ProfilePage() {
         router.replace("/login");
         return;
       }
+      setUserId(user.id);
       setEmail(user.email ?? "");
       const fromMeta = normalizeAssistantLanguage((user.user_metadata?.language as string | undefined) ?? "en");
       setLanguage(fromMeta);
@@ -96,6 +99,12 @@ export default function ProfilePage() {
         </button>
         {msg ? <p style={{ marginTop: 10, color: msg === "Saved." ? "#065f46" : "#b00020" }}>{msg}</p> : null}
       </div>
+
+      {userId ? (
+        <div className="mt-6 rounded-lg bg-white p-6 shadow-sm">
+          <CommunityActivity userId={userId} />
+        </div>
+      ) : null}
     </main>
   );
 }

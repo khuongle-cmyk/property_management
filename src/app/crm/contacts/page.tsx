@@ -7,6 +7,7 @@ import { getSupabaseClient } from "@/lib/supabase/browser";
 import { LEAD_STAGE_LABEL, LEAD_STAGES, type LeadStage } from "@/lib/crm";
 import { normalizeSpaceType } from "@/lib/crm/lead-import-parse";
 import CreateContactModal from "@/components/shared/CreateContactModal";
+import ConfirmModal from "@/components/shared/ConfirmModal";
 import EmailComposer from "@/components/shared/EmailComposer";
 import { formatPropertyLabel } from "@/lib/properties/label";
 import { formatDate } from "@/lib/date/format";
@@ -173,6 +174,7 @@ export default function CrmContactsPage() {
 
   const [emailTarget, setEmailTarget] = useState<ContactRecord | null>(null);
   const [showConvertModal, setShowConvertModal] = useState(false);
+  const [archiveConfirm, setArchiveConfirm] = useState<ContactRecord | null>(null);
   const [convertSubmitting, setConvertSubmitting] = useState(false);
   const [convertError, setConvertError] = useState<string | null>(null);
   const [convertForm, setConvertForm] = useState({
@@ -505,10 +507,8 @@ export default function CrmContactsPage() {
     XLSX.writeFile(wb, "crm_contacts_filtered.xlsx");
   }
 
-  async function archiveLead(record: ContactRecord) {
+  async function performArchiveLead(record: ContactRecord) {
     if (!record.leadId || !canEdit || record.readonly) return;
-    const ok = window.confirm(`Archive lead ${record.companyName}?`);
-    if (!ok) return;
     const { error: uErr } = await supabase.from("leads").update({ archived: true }).eq("id", record.leadId);
     if (uErr) {
       alert(uErr.message);
@@ -878,7 +878,7 @@ export default function CrmContactsPage() {
                               </>
                             )}
                             {" · "}
-                            <button type="button" onClick={() => void archiveLead(r)} style={{ fontSize: 12 }}>
+                            <button type="button" onClick={() => setArchiveConfirm(r)} style={{ fontSize: 12 }}>
                               Delete
                             </button>
                           </>
@@ -1215,6 +1215,24 @@ export default function CrmContactsPage() {
           </div>
         </div>
       ) : null}
+
+      <ConfirmModal
+        isOpen={!!archiveConfirm}
+        title="Archive lead"
+        message={
+          archiveConfirm
+            ? `Are you sure you want to archive lead ${archiveConfirm.companyName}?`
+            : ""
+        }
+        confirmLabel="Archive"
+        variant="danger"
+        onConfirm={() => {
+          const r = archiveConfirm;
+          setArchiveConfirm(null);
+          if (r) void performArchiveLead(r);
+        }}
+        onCancel={() => setArchiveConfirm(null)}
+      />
     </main>
   );
 }

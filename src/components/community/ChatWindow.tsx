@@ -2,10 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { Send, Bot, Pencil, Trash2 } from "lucide-react";
+import { Send, Bot, Pencil, Trash2, MoreHorizontal } from "lucide-react";
 import { useChat } from "@/hooks/useChat";
 import { ChatChannel } from "@/types/chat";
 import { createClient } from "@/lib/supabase/client";
+import { profileToDisplayName, type ShortProfile } from "@/lib/community/display-name";
+import { getUserAvatarColor } from "@/lib/community/user-avatar-color";
+import ConfirmModal from "@/components/shared/ConfirmModal";
 
 interface ChatWindowProps {
   channel: ChatChannel | null;
@@ -31,29 +34,6 @@ function getUserColor(userId: string) {
   return BUBBLE_COLORS[i] as (typeof BUBBLE_COLORS)[number];
 }
 
-function formatDisplayName(firstName: string, lastName: string): string {
-  const capitalFirst = firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase();
-  const lastInitial = lastName ? lastName.charAt(0).toUpperCase() + "." : "";
-  return lastInitial ? `${capitalFirst} ${lastInitial}` : capitalFirst;
-}
-
-function displayFromProfile(row: {
-  first_name: string | null;
-  last_name: string | null;
-}): UserDisplay {
-  const first = (row.first_name ?? "").trim();
-  const last = (row.last_name ?? "").trim();
-  if (!first) {
-    return { name: "Member", initials: "M" };
-  }
-  const name = formatDisplayName(first, last);
-  const capitalFirst = first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
-  const initials = last
-    ? capitalFirst.charAt(0) + last.charAt(0).toUpperCase()
-    : capitalFirst.charAt(0) || "M";
-  return { name, initials };
-}
-
 export default function ChatWindow({ channel, currentUserId }: ChatWindowProps) {
   const { messages, loading, sendMessage, editMessage, deleteMessage, markAsRead } = useChat(
     channel?.id || null,
@@ -63,6 +43,9 @@ export default function ChatWindow({ channel, currentUserId }: ChatWindowProps) 
   const [userNames, setUserNames] = useState<Record<string, UserDisplay>>({});
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [dmPeer, setDmPeer] = useState<{ userId: string; name: string; initials: string } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
 
@@ -84,6 +67,56 @@ export default function ChatWindow({ channel, currentUserId }: ChatWindowProps) 
       editInputRef.current?.select();
     }
   }, [editingMessageId]);
+
+  useEffect(() => {
+    setOpenMenuId(null);
+  }, [editingMessageId]);
+
+  useEffect(() => {
+    if (openMenuId === null) return;
+    const onMouseDown = (e: MouseEvent) => {
+      const root = document.querySelector(
+        `[data-chat-menu-root="${CSS.escape(openMenuId)}"]`,
+      );
+      if (root?.contains(e.target as Node)) return;
+      setOpenMenuId(null);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, [openMenuId]);
+
+  useEffect(() => {
+    if (!channel || channel.scope !== "direct") {
+      setDmPeer(null);
+      return;
+    }
+    let cancelled = false;
+    const run = async () => {
+      const supabase = createClient();
+      const { data: members } = await supabase
+        .from("chat_channel_members")
+        .select("user_id")
+        .eq("channel_id", channel.id);
+      if (cancelled) return;
+      const otherId = (members ?? []).map((m) => m.user_id as string).find((id) => id !== currentUserId);
+      if (!otherId) {
+        setDmPeer(null);
+        return;
+      }
+      const { data: prof } = await supabase
+        .from("user_profiles")
+        .select("user_id, first_name, last_name, display_name")
+        .eq("user_id", otherId)
+        .maybeSingle();
+      if (cancelled) return;
+      const { name, initials } = profileToDisplayName(prof);
+      setDmPeer({ userId: otherId, name, initials });
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [channel, currentUserId]);
 
   useEffect(() => {
     if (loading || !channel) return;
@@ -117,7 +150,7 @@ export default function ChatWindow({ channel, currentUserId }: ChatWindowProps) 
       for (const row of profiles ?? []) {
         const uid = row.user_id as string;
         if (!uid) continue;
-        next[uid] = displayFromProfile(row);
+        next[uid] = profileToDisplayName(row as ShortProfile);
       }
       setUserNames(next);
     };
@@ -165,11 +198,38 @@ export default function ChatWindow({ channel, currentUserId }: ChatWindowProps) 
     fontWeight: 600,
   };
 
+  const isDirect = channel.scope === "direct";
+  const dmHeaderBg = dmPeer ? getUserAvatarColor(dmPeer.userId) : "#1a5c50";
+
   return (
     <div className="flex h-full flex-1 flex-col">
       <div className="border-b border-gray-200 bg-white px-4 py-3">
-        <h3 className="font-semibold text-gray-900">#{channel.name}</h3>
-        {channel.description ? <p className="text-sm text-gray-500">{channel.description}</p> : null}
+        {isDirect ? (
+          dmPeer ? (
+            <div className="flex items-start gap-3">
+              <div
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white"
+                style={{ backgroundColor: dmHeaderBg }}
+              >
+                {dmPeer.initials}
+              </div>
+              <div>
+                <h3 className="font-semibold text-gray-900">{dmPeer.name}</h3>
+                <p className="text-sm text-gray-500">Direct message</p>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <h3 className="font-semibold text-gray-900">Direct message</h3>
+              <p className="text-sm text-gray-500">Loading…</p>
+            </div>
+          )
+        ) : (
+          <>
+            <h3 className="font-semibold text-gray-900">#{channel.name}</h3>
+            {channel.description ? <p className="text-sm text-gray-500">{channel.description}</p> : null}
+          </>
+        )}
       </div>
 
       <div className="flex-1 space-y-3 overflow-y-auto px-4 py-2">
@@ -231,13 +291,71 @@ export default function ChatWindow({ channel, currentUserId }: ChatWindowProps) 
               <div key={msg.id} className={`flex gap-2 ${isOwn ? "flex-row-reverse" : ""}`}>
                 <div style={avatarStyle}>{avatarContent}</div>
                 <div className={`max-w-[70%] ${isOwn ? "text-right" : ""}`}>
-                  <div className="mb-0.5 flex flex-wrap items-baseline gap-2">
+                  <div
+                    className={`mb-0.5 flex flex-wrap items-baseline gap-2 ${isOwn ? "justify-end" : ""}`}
+                  >
                     <span
                       className={`text-xs font-medium ${isAI ? "text-purple-600" : "text-gray-700"}`}
                     >
                       {userName}
                     </span>
-                    <span className="text-xs text-gray-400">{formatTime(msg.created_at)}</span>
+                    {canEditOwn ? (
+                      <span className="inline-flex items-center gap-0.5">
+                        <span className="text-xs text-gray-400">{formatTime(msg.created_at)}</span>
+                        <div
+                          className="relative inline-flex items-center"
+                          data-chat-menu-root={msg.id}
+                        >
+                          <button
+                            type="button"
+                            className="cursor-pointer rounded p-1 text-gray-300 hover:text-gray-500"
+                            aria-label="Message actions"
+                            aria-expanded={openMenuId === msg.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenMenuId((id) => (id === msg.id ? null : msg.id));
+                            }}
+                          >
+                            <MoreHorizontal size={14} />
+                          </button>
+                          {openMenuId === msg.id ? (
+                            <div
+                              className="absolute right-0 top-full z-20 mt-1 min-w-[120px] rounded-md border bg-white py-1 shadow-lg"
+                              style={{ borderColor: "#e5e5e0" }}
+                              role="menu"
+                            >
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                                onClick={() => {
+                                  setEditingMessageId(msg.id);
+                                  setEditContent(msg.content);
+                                  setOpenMenuId(null);
+                                }}
+                              >
+                                <Pencil size={14} />
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+                                onClick={() => {
+                                  setDeleteConfirm(msg.id);
+                                  setOpenMenuId(null);
+                                }}
+                              >
+                                <Trash2 size={14} />
+                                Delete
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-400">{formatTime(msg.created_at)}</span>
+                    )}
                     {msg.is_edited ? (
                       <span className="text-xs text-gray-400">(edited)</span>
                     ) : null}
@@ -284,39 +402,7 @@ export default function ChatWindow({ channel, currentUserId }: ChatWindowProps) 
                       </div>
                     </div>
                   ) : (
-                    <div
-                      className={`group relative inline-block max-w-full ${isOwn ? "ml-auto" : ""}`}
-                    >
-                      {canEditOwn && !isEditing ? (
-                        <div
-                          className="pointer-events-none absolute -top-9 right-0 z-10 flex flex-row gap-1 rounded-md border border-gray-200 bg-white p-1 opacity-0 shadow-sm transition-opacity group-hover:pointer-events-auto group-hover:opacity-100"
-                        >
-                          <button
-                            type="button"
-                            className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-                            aria-label="Edit message"
-                            onClick={() => {
-                              setEditingMessageId(msg.id);
-                              setEditContent(msg.content);
-                            }}
-                          >
-                            <Pencil size={14} />
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-                            aria-label="Delete message"
-                            onClick={() => {
-                              if (window.confirm("Delete this message?")) {
-                                void deleteMessage(msg.id);
-                                if (editingMessageId === msg.id) setEditingMessageId(null);
-                              }
-                            }}
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      ) : null}
+                    <div className={`inline-block max-w-full ${isOwn ? "ml-auto" : ""}`}>
                       <div
                         className="inline-block rounded-lg px-3 py-2 text-sm"
                         style={bubbleStyle}
@@ -340,7 +426,11 @@ export default function ChatWindow({ channel, currentUserId }: ChatWindowProps) 
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={`Message #${channel.name}... (type @AI to ask the assistant)`}
+            placeholder={
+              isDirect
+                ? `${dmPeer ? `Message ${dmPeer.name}` : "Message"}… (type @AI to ask the assistant)`
+                : `Message #${channel.name}… (type @AI to ask the assistant)`
+            }
             className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
             disabled={sending}
           />
@@ -356,6 +446,21 @@ export default function ChatWindow({ channel, currentUserId }: ChatWindowProps) 
           Type <span className="rounded bg-gray-100 px-1 font-mono">@AI</span> to ask the VillageWorks assistant
         </p>
       </div>
+
+      <ConfirmModal
+        isOpen={!!deleteConfirm}
+        title="Delete message"
+        message="Are you sure you want to delete this message? This cannot be undone."
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={() => {
+          if (!deleteConfirm) return;
+          void deleteMessage(deleteConfirm);
+          setDeleteConfirm(null);
+          if (editingMessageId === deleteConfirm) setEditingMessageId(null);
+        }}
+        onCancel={() => setDeleteConfirm(null)}
+      />
     </div>
   );
 }

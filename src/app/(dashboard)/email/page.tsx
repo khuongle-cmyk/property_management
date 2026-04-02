@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import DashboardLayout from "@/components/DashboardLayout";
 import EmailCompanyTimeline from "@/components/email/EmailCompanyTimeline";
 import EmailCompose from "@/components/email/EmailCompose";
@@ -15,9 +16,19 @@ const TABS: Array<{ id: Tab; label: string }> = [
   { id: "properties", label: "Property overview" },
 ];
 
-export default function EmailDashboardPage() {
+function EmailDashboardContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [tab, setTab] = useState<Tab>("inbox");
   const [composeOpen, setComposeOpen] = useState(false);
+
+  useEffect(() => {
+    if (searchParams.get("compose") === "1") {
+      setComposeOpen(true);
+      setTab("inbox");
+      router.replace("/email", { scroll: false });
+    }
+  }, [searchParams, router]);
 
   return (
     <DashboardLayout>
@@ -61,17 +72,20 @@ export default function EmailDashboardPage() {
       </div>
 
       <EmailCompose open={composeOpen} onClose={() => setComposeOpen(false)} />
-
-      {tab !== "inbox" ? (
-        <button
-          type="button"
-          onClick={() => setComposeOpen(true)}
-          className="fixed bottom-8 right-6 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-[#1a5c50] text-2xl font-light text-white shadow-lg transition hover:bg-[#164a42] md:hidden"
-          aria-label="Compose email"
-        >
-          +
-        </button>
-      ) : null}
     </DashboardLayout>
+  );
+}
+
+export default function EmailDashboardPage() {
+  return (
+    <Suspense
+      fallback={
+        <DashboardLayout>
+          <p className="py-12 text-center text-sm text-stone-500">Loading…</p>
+        </DashboardLayout>
+      }
+    >
+      <EmailDashboardContent />
+    </Suspense>
   );
 }

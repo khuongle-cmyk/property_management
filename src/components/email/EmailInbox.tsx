@@ -77,7 +77,7 @@ export default function EmailInbox({ onCompose }: Props) {
   }
 
   return (
-    <div className="relative pb-24">
+    <div className="relative">
       <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-2">
           <label className="text-sm font-medium text-[var(--petrol,#1a4a4a)]/80">
@@ -117,6 +117,13 @@ export default function EmailInbox({ onCompose }: Props) {
             );
           })}
         </div>
+        <button
+          type="button"
+          onClick={onCompose}
+          className="rounded-lg border border-[#1a5c50] bg-[#1a5c50] px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-[#164e44]"
+        >
+          Compose
+        </button>
       </div>
 
       <ul className="mt-6 divide-y divide-stone-200 overflow-hidden rounded-xl border border-stone-200 bg-white shadow-sm">
@@ -181,15 +188,6 @@ export default function EmailInbox({ onCompose }: Props) {
         onClose={() => setSelectedId(null)}
         onMarkRead={markRead}
       />
-
-      <button
-        type="button"
-        onClick={onCompose}
-        className="fixed bottom-8 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-[#1a5c50] text-2xl font-light text-white shadow-lg transition hover:bg-[#164a42] focus:outline-none focus:ring-2 focus:ring-[#1a5c50] focus:ring-offset-2"
-        aria-label="Compose email"
-      >
-        +
-      </button>
     </div>
   );
 }

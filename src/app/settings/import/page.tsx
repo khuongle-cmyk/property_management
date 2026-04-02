@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import type { ImportType } from "@/lib/historical-import/types";
 import { getSupabaseClient } from "@/lib/supabase/browser";
@@ -12,6 +12,7 @@ import {
   parseTuloslaskelmaFromArrayBuffer,
 } from "@/lib/procountor/tuloslaskelma";
 import { formatDateTime } from "@/lib/date/format";
+import ConfirmModal from "@/components/shared/ConfirmModal";
 
 type Software = "generic" | "procountor" | "netvisor" | "visma";
 type PreviewRow = Record<string, string | number | null>;
@@ -227,6 +228,33 @@ export default function SettingsImportPage() {
   const [varjoSummary, setVarjoSummary] = useState<string | null>(null);
   const [varjoBusy, setVarjoBusy] = useState(false);
 
+  const confirmPromiseRef = useRef<((ok: boolean) => void) | null>(null);
+  const [confirmModal, setConfirmModal] = useState<{
+    title: string;
+    message: string;
+    variant?: "danger" | "default";
+    confirmLabel?: string;
+  } | null>(null);
+
+  function confirmAsync(opts: {
+    title: string;
+    message: string;
+    variant?: "danger" | "default";
+    confirmLabel?: string;
+  }): Promise<boolean> {
+    return new Promise((resolve) => {
+      confirmPromiseRef.current = resolve;
+      setConfirmModal(opts);
+    });
+  }
+
+  function resolveConfirmModal(ok: boolean) {
+    const resolve = confirmPromiseRef.current;
+    confirmPromiseRef.current = null;
+    setConfirmModal(null);
+    resolve?.(ok);
+  }
+
   const [manual, setManual] = useState<Record<string, string>>({
     property: "",
     year: String(new Date().getUTCFullYear()),
@@ -302,11 +330,13 @@ export default function SettingsImportPage() {
       setMsg("Select organization and keep the same .xlsx file loaded for import.");
       return;
     }
-    if (
-      !window.confirm(
-        `Import Varjo budget to database?\nOrganization: ${tid}\nYear: ${varjoYear}\nType: ${varjoBudgetType}\nMode: ${varjoMode}\nOverwrite: ${varjoOverwrite ? "yes" : "skip existing"}`,
-      )
-    ) {
+    const varjoOk = await confirmAsync({
+      title: "Import Varjo budget",
+      message: `Import Varjo budget to database?\n\nOrganization: ${tid}\nYear: ${varjoYear}\nType: ${varjoBudgetType}\nMode: ${varjoMode}\nOverwrite: ${varjoOverwrite ? "yes" : "skip existing"}`,
+      confirmLabel: "Import",
+      variant: "default",
+    });
+    if (!varjoOk) {
       return;
     }
     setVarjoBusy(true);
@@ -625,11 +655,13 @@ export default function SettingsImportPage() {
         .filter((r) => Number(r.amount_ex_vat ?? 0) > 0)
         .map((r) => ({ ...r, property_id: pid, property: propertyName }));
 
-      if (
-        !window.confirm(
-          `Import Procountor Tuloslaskelma?\nRevenue rows: ${revenueRows.length}\nCost rows: ${costRows.length}\nProperty: ${propertyName || pid}`,
-        )
-      ) {
+      const tulosOk = await confirmAsync({
+        title: "Import Procountor Tuloslaskelma",
+        message: `Import Procountor Tuloslaskelma?\n\nRevenue rows: ${revenueRows.length}\nCost rows: ${costRows.length}\nProperty: ${propertyName || pid}`,
+        confirmLabel: "Import",
+        variant: "default",
+      });
+      if (!tulosOk) {
         setLoading(false);
         return;
       }
@@ -855,13 +887,17 @@ export default function SettingsImportPage() {
       mappedRows = resolved;
     }
 
-    if (
-      software === "procountor" &&
-      isIncomeStatementType &&
-      !window.confirm("Confirm Procountor Tuloslaskelma import with detected metadata and totals?")
-    ) {
-      setLoading(false);
-      return;
+    if (software === "procountor" && isIncomeStatementType) {
+      const metaOk = await confirmAsync({
+        title: "Confirm import",
+        message: "Confirm Procountor Tuloslaskelma import with detected metadata and totals?",
+        confirmLabel: "Confirm",
+        variant: "default",
+      });
+      if (!metaOk) {
+        setLoading(false);
+        return;
+      }
     }
     const r = await fetch("/api/settings/import/commit", {
       method: "POST",
@@ -959,7 +995,13 @@ export default function SettingsImportPage() {
   }
 
   async function rollback(batchId: string) {
-    if (!window.confirm("Rollback this import batch?")) return;
+    const rollbackOk = await confirmAsync({
+      title: "Rollback import batch",
+      message: "Rollback this import batch?",
+      confirmLabel: "Rollback",
+      variant: "danger",
+    });
+    if (!rollbackOk) return;
     const r = await fetch("/api/settings/import/rollback", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1619,6 +1661,16 @@ export default function SettingsImportPage() {
           </div>
         ) : null}
       </section>
+
+      <ConfirmModal
+        isOpen={confirmModal !== null}
+        title={confirmModal?.title ?? ""}
+        message={confirmModal?.message ?? ""}
+        variant={confirmModal?.variant ?? "default"}
+        confirmLabel={confirmModal?.confirmLabel}
+        onConfirm={() => resolveConfirmModal(true)}
+        onCancel={() => resolveConfirmModal(false)}
+      />
     </main>
   );
 }

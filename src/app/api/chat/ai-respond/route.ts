@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
 
     const { data: channel } = await supabaseAdmin
       .from("chat_channels")
-      .select("name, description, property_id")
+      .select("name, description, property_id, scope")
       .eq("id", channel_id)
       .single();
 
@@ -47,7 +47,13 @@ export async function POST(request: NextRequest) {
         content: msg.content,
       }));
 
-    const systemPrompt = `You are the VillageWorks AI Assistant embedded in a community chat channel.
+    const isDm = channel?.scope === "direct";
+    const systemPrompt = isDm
+      ? `You are the VillageWorks AI Assistant in a private direct message.
+The user may ask about workspace, buildings, bookings, or general help.
+Keep responses concise and friendly.
+Never share sensitive financial or personal data about other people.`
+      : `You are the VillageWorks AI Assistant embedded in a community chat channel.
 Channel: "${channel?.name || "General"}"
 Property: "${propertyName || "Cross-property"}"
 Description: "${channel?.description || ""}"

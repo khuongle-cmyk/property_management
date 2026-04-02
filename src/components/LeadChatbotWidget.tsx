@@ -112,6 +112,16 @@ export default function LeadChatbotWidget({
     el.scrollTop = el.scrollHeight;
   }, [messages, open]);
 
+  useEffect(() => {
+    if (!open) return;
+    setMessages((prev) => {
+      if (prev.length === 1 && prev[0]?.text === INTRO_TEXT) {
+        return [...prev, { role: "bot", text: STEPS[0].question }];
+      }
+      return prev;
+    });
+  }, [open]);
+
   function closePanel() {
     setOpen(false);
     if (completed) {

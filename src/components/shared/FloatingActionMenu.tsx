@@ -38,18 +38,18 @@ export default function FloatingActionMenu({ open, onOpenChange, actions }: Floa
   return (
     <div
       ref={rootRef}
-      className="pointer-events-none fixed z-50 flex flex-col items-end"
+      className="pointer-events-none fixed z-50 flex flex-col items-end gap-4"
       style={{
-        bottom: "max(24px, calc(env(safe-area-inset-bottom) + 16px))",
-        right: "max(24px, calc(env(safe-area-inset-right) + 16px))",
+        bottom: "max(24px, env(safe-area-inset-bottom, 0px))",
+        right: "max(24px, env(safe-area-inset-right, 0px))",
       }}
     >
       <div
-        className={`mb-4 flex flex-col-reverse items-end gap-16 ${open ? "pointer-events-auto" : "pointer-events-none"}`}
+        className={`mb-0 flex flex-col-reverse items-end gap-16 ${open ? "pointer-events-auto" : "pointer-events-none"}`}
       >
         {actions.map((action, i) => {
           const Icon = action.icon;
-          const delay = STAGGER_MS[i] ?? 150;
+          const delay = STAGGER_MS[i] ?? 100;
           return (
             <div
               key={action.id}
@@ -74,7 +74,7 @@ export default function FloatingActionMenu({ open, onOpenChange, actions }: Floa
               >
                 <Icon size={22} strokeWidth={2} aria-hidden />
               </button>
-              <span className="pointer-events-none rounded border border-gray-100 bg-white px-2 py-0.5 text-xs font-medium text-gray-800 shadow-sm">
+              <span className="pointer-events-none whitespace-nowrap rounded-md border border-[#e5e5e0] bg-white px-2.5 py-1 text-xs font-medium text-gray-800 shadow-md">
                 {action.label}
               </span>
             </div>
@@ -87,10 +87,11 @@ export default function FloatingActionMenu({ open, onOpenChange, actions }: Floa
         aria-label={open ? "Close actions" : "Open actions"}
         aria-expanded={open}
         onClick={() => onOpenChange(!open)}
-        className="pointer-events-auto flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-white shadow-lg transition-all duration-200 ease-out hover:opacity-95"
+        className={`pointer-events-auto flex shrink-0 items-center justify-center rounded-full text-white shadow-lg transition-all duration-200 ease-out hover:opacity-95 ${open ? "rotate-45" : "rotate-0"}`}
         style={{
           backgroundColor: PETROL,
-          transform: open ? "rotate(45deg)" : "rotate(0deg)",
+          width: 56,
+          height: 56,
         }}
       >
         <Plus size={28} strokeWidth={2} aria-hidden className="text-white" />
