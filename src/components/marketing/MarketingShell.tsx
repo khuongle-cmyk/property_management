@@ -23,7 +23,8 @@ function Inner({ children }: { children: ReactNode }) {
     );
   }
 
-  const orgSelectValue = isSuperAdmin ? (tenantId === "" ? "all" : tenantId) : tenantId;
+  const orgSelectValue =
+    (isSuperAdmin || tenants.length > 1) && tenantId === "" ? "all" : tenantId;
 
   return (
     <div className="mx-auto max-w-[1400px] p-6">
@@ -48,7 +49,7 @@ function Inner({ children }: { children: ReactNode }) {
                 fontSize: "14px",
               }}
             >
-              {isSuperAdmin ? <option value="all">All organizations</option> : null}
+              {isSuperAdmin || tenants.length > 1 ? <option value="all">All organizations</option> : null}
               {tenants.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name}

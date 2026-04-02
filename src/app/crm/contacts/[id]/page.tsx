@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { LEAD_STAGE_LABEL, type LeadStage } from "@/lib/crm";
 import { formatDate, formatDateTime } from "@/lib/date/format";
+import EmailComposer from "@/components/shared/EmailComposer";
 
 type TabKey = "overview" | "timeline" | "proposals" | "contracts" | "invoices" | "bookings" | "notes";
 type LeadRow = Record<string, unknown> & {
@@ -43,6 +44,26 @@ type InvoiceRow = { id: string; billing_month: string; due_date: string; total_a
 type BookingRow = { id: string; start_at: string; end_at: string; status: string | null; visitor_name: string | null; visitor_email: string | null };
 type PropertyRow = { id: string; name: string | null; city: string | null };
 
+type EmailHistoryItem = {
+  recipientId: string;
+  emailAddress: string;
+  recipientStatus: string | null;
+  recipientSentAt: string | null;
+  email: {
+    id: string;
+    subject: string | null;
+    source: string | null;
+    related_type: string | null;
+    related_id: string | null;
+    tenant_id: string | null;
+    created_at: string | null;
+    sent_at: string | null;
+    status: string | null;
+    from_name: string | null;
+    from_email: string | null;
+  } | null;
+};
+
 const tabs: Array<{ key: TabKey; label: string }> = [
   { key: "overview", label: "Overview" },
   { key: "timeline", label: "Activity timeline" },
@@ -72,10 +93,30 @@ export default function ContactDetailPage() {
   const [bookings, setBookings] = useState<BookingRow[]>([]);
   const [propertiesMap, setPropertiesMap] = useState<Map<string, string>>(new Map());
   const [noteText, setNoteText] = useState("");
+  const [emailHistory, setEmailHistory] = useState<EmailHistoryItem[]>([]);
+  const [emailHistoryLoading, setEmailHistoryLoading] = useState(false);
+  const [showEmailComposer, setShowEmailComposer] = useState(false);
 
   const isLeadContact = contactId.startsWith("lead_");
   const leadId = isLeadContact ? contactId.slice("lead_".length) : null;
   const tenantToken = !isLeadContact && contactId.startsWith("tenant_") ? contactId.split("_")[1] : null;
+
+  async function loadEmailHistoryForEmail(email: string | null) {
+    if (!email?.trim()) {
+      setEmailHistory([]);
+      return;
+    }
+    setEmailHistoryLoading(true);
+    try {
+      const res = await fetch(`/api/crm/emails/history?email=${encodeURIComponent(email.trim().toLowerCase())}`, {
+        credentials: "include",
+      });
+      const j = (await res.json()) as { items?: EmailHistoryItem[] };
+      setEmailHistory(res.ok && j.items ? j.items : []);
+    } finally {
+      setEmailHistoryLoading(false);
+    }
+  }
 
   async function loadAll() {
     setLoading(true);
@@ -93,6 +134,8 @@ export default function ContactDetailPage() {
       }
       const leadRow = l as LeadRow;
       setLead(leadRow);
+
+      await loadEmailHistoryForEmail(leadRow.email ?? null);
 
       const [propQ, ctrQ, actQ] = await Promise.all([
         supabase.from("room_proposals").select("id,property_id,tenant_company_name,contact_person,status,created_at,lead_id").eq("lead_id", leadRow.id).order("created_at", { ascending: false }),
@@ -256,8 +299,45 @@ export default function ContactDetailPage() {
             <div><strong>E-invoice address:</strong> {String(lead.e_invoice_address ?? "—")}</div>
             <div><strong>E-invoice operator:</strong> {String(lead.e_invoice_operator_code ?? "—")}</div>
           </div>
+          {leadId && lead.email && lead.tenant_id ? (
+            <section style={{ marginTop: 18 }}>
+              <h3 style={{ marginTop: 0, fontSize: 16 }}>Email history</h3>
+              {emailHistoryLoading ? (
+                <p style={{ color: "#64748b", fontSize: 14 }}>Loading…</p>
+              ) : emailHistory.length === 0 ? (
+                <p style={{ color: "#64748b", fontSize: 14 }}>No logged emails to this address yet.</p>
+              ) : (
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 14 }}>
+                  {emailHistory.map((h) => (
+                    <li key={h.recipientId} style={{ marginBottom: 8 }}>
+                      <strong>{h.email?.subject ?? "(no subject)"}</strong>
+                      <span style={{ color: "#64748b" }}>
+                        {" "}
+                        · {h.email?.source ?? "—"}
+                        {h.email?.related_type ? ` · ${h.email.related_type}` : ""}
+                        {" · "}
+                        {(() => {
+                          const ts = h.email?.sent_at ?? h.recipientSentAt ?? h.email?.created_at;
+                          return ts ? formatDateTime(ts) : "—";
+                        })()}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          ) : null}
+
           <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button type="button">Send email</button>
+            {leadId && lead.email && lead.tenant_id ? (
+              <button type="button" onClick={() => setShowEmailComposer(true)}>
+                Send email
+              </button>
+            ) : (
+              <button type="button" disabled title="Pipeline lead with email required">
+                Send email
+              </button>
+            )}
             <button type="button">Log a call</button>
             <button type="button">Schedule viewing</button>
             <button type="button">Create proposal</button>
@@ -360,6 +440,53 @@ export default function ContactDetailPage() {
             <p style={{ color: "#64748b" }}>Notes are available for pipeline leads.</p>
           )}
         </section>
+      ) : null}
+
+      {showEmailComposer && leadId && lead.tenant_id && lead.email ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(15,23,42,0.45)",
+            display: "grid",
+            placeItems: "center",
+            zIndex: 60,
+            padding: 16,
+          }}
+          onClick={() => setShowEmailComposer(false)}
+        >
+          <div
+            style={{
+              background: "#fff",
+              borderRadius: 12,
+              padding: 20,
+              maxWidth: 560,
+              width: "100%",
+              maxHeight: "90vh",
+              overflow: "auto",
+              boxShadow: "0 20px 40px rgba(0,0,0,0.12)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 style={{ marginTop: 0, fontSize: 18 }}>Send email</h2>
+            <p style={{ marginTop: 0, fontSize: 13, color: "#64748b" }}>{lead.company_name}</p>
+            <EmailComposer
+              source="crm"
+              mode="single"
+              tenantId={String(lead.tenant_id)}
+              leadId={leadId}
+              relatedType="lead"
+              defaultTo={lead.email}
+              onCancel={() => setShowEmailComposer(false)}
+              onSent={() => {
+                setShowEmailComposer(false);
+                void loadEmailHistoryForEmail(lead.email ?? null);
+              }}
+            />
+          </div>
+        </div>
       ) : null}
     </main>
   );

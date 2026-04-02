@@ -8,6 +8,8 @@ import {
   offerAcceptedInternalEmail,
   offerSentEmail,
 } from "@/lib/email/offerTemplates";
+import { logMarketingEmailSent } from "@/lib/email/log-marketing-email";
+import { leadIdForOfferCompany, resolveTenantIdForOfferCompany } from "@/lib/email/resolve-offer-tenant";
 
 const EMAIL_TYPES = ["offer_sent", "offer_accepted_customer", "offer_accepted_internal"] as const;
 type EmailType = (typeof EMAIL_TYPES)[number];
@@ -260,6 +262,23 @@ export async function POST(req: Request) {
       });
       console.log("Resend result (offer_accepted_customer):", sErr ?? "ok");
       if (sErr) throw new Error(sErr.message);
+
+      const tenantIdLog = await resolveTenantIdForOfferCompany(admin, row.company_id as string | null);
+      const leadContactId = await leadIdForOfferCompany(admin, row.company_id as string | null);
+      void logMarketingEmailSent(admin, {
+        tenant_id: tenantIdLog,
+        subject: tpl.subject,
+        body_html: tpl.html,
+        from_name: `${sales.name} at VillageWorks`,
+        from_email: "noreply@villageworks.com",
+        reply_to: sales.email,
+        source: "contracts",
+        related_id: offerId,
+        related_type: "offer",
+        recipient_email: to,
+        contact_id: leadContactId,
+      });
+
       return NextResponse.json({ ok: true });
     }
 
@@ -292,6 +311,22 @@ export async function POST(req: Request) {
     });
     console.log("Resend result (offer_accepted_internal):", sErr ?? "ok");
     if (sErr) throw new Error(sErr.message);
+
+    const tenantIdLog = await resolveTenantIdForOfferCompany(admin, row.company_id as string | null);
+    void logMarketingEmailSent(admin, {
+      tenant_id: tenantIdLog,
+      subject: tpl.subject,
+      body_html: tpl.html,
+      from_name: `${sales.name} at VillageWorks`,
+      from_email: "noreply@villageworks.com",
+      reply_to: sales.email,
+      source: "contracts",
+      related_id: offerId,
+      related_type: "offer",
+      recipient_email: internalTo,
+      contact_id: null,
+    });
+
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("=== SEND EMAIL CRASH ===", error);

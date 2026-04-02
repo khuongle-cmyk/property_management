@@ -2,9 +2,9 @@ import { randomBytes } from "crypto";
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
-  applyMarketingTenantIdsFilter,
+  applyMarketingRowScopeFilter,
   getMarketingAccess,
-  marketingScopeTenantIds,
+  resolveMarketingInsertTenantId,
   resolveMarketingTenantScope,
 } from "@/lib/marketing/access";
 
@@ -22,12 +22,10 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const resolved = await resolveMarketingTenantScope(supabase, url, { tenantIds, isSuperAdmin });
   if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: resolved.status });
-  const scopeIds = marketingScopeTenantIds(resolved.scope);
-  const filtered = applyMarketingTenantIdsFilter(
+  const filtered = applyMarketingRowScopeFilter(
     supabase.from("marketing_offers").select("*").order("created_at", { ascending: false }).limit(200),
-    scopeIds,
+    resolved.scope,
   );
-  if (!filtered) return NextResponse.json({ offers: [] });
 
   const { data, error } = await filtered;
   if (error) {
@@ -55,23 +53,38 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const tenantId = String(body.tenant_id ?? body.tenantId ?? "").trim();
-  if (!tenantId || (!isSuperAdmin && !tenantIds.includes(tenantId))) {
-    return NextResponse.json({ error: "Invalid tenant" }, { status: 400 });
+  const resolvedT = resolveMarketingInsertTenantId(body, { tenantIds, isSuperAdmin });
+  if (!resolvedT.ok) {
+    return NextResponse.json({ error: resolvedT.error }, { status: resolvedT.status });
   }
 
   const name = String(body.name ?? "").trim();
   if (!name) return NextResponse.json({ error: "name required" }, { status: 400 });
 
+  const OFFER_TYPES = new Set([
+    "discount_pct",
+    "discount_fixed",
+    "free_period",
+    "bundle",
+    "referral_bonus",
+  ]);
+  const rawType = String(body.offer_type ?? "discount_pct").trim();
+  const offer_type = OFFER_TYPES.has(rawType) ? rawType : "discount_pct";
+
+  /** DB check: offices | meeting_rooms | hot_desks | venues | all — not tenant_id (org is tenant_id). */
+  const APPLICABLE = new Set(["offices", "meeting_rooms", "hot_desks", "venues", "all"]);
+  const rawApp = String(body.applicable_to ?? "all").trim();
+  const applicable_to = APPLICABLE.has(rawApp) ? rawApp : "all";
+
   let promo = String(body.promo_code ?? "").trim().toUpperCase();
   if (!promo) promo = `PROMO-${randomBytes(4).toString("hex").toUpperCase()}`;
 
   const insert = {
-    tenant_id: tenantId,
+    tenant_id: resolvedT.tenant_id,
     property_id: body.property_id ?? null,
     name,
     description: body.description != null ? String(body.description) : null,
-    offer_type: String(body.offer_type ?? "discount_pct"),
+    offer_type,
     discount_percentage: body.discount_percentage != null ? Number(body.discount_percentage) : null,
     discount_fixed_amount: body.discount_fixed_amount != null ? Number(body.discount_fixed_amount) : null,
     free_months: body.free_months != null ? Number(body.free_months) : null,
@@ -80,12 +93,15 @@ export async function POST(req: Request) {
     max_uses: body.max_uses != null ? Number(body.max_uses) : null,
     current_uses: 0,
     promo_code: promo,
-    applicable_to: String(body.applicable_to ?? "all"),
+    applicable_to,
     status: String(body.status ?? "draft"),
     terms: body.terms != null ? String(body.terms) : null,
   };
 
   const { data, error } = await supabase.from("marketing_offers").insert(insert).select("*").single();
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error("marketing_offers insert error:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
   return NextResponse.json({ offer: data });
 }

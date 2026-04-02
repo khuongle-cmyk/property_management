@@ -32,9 +32,24 @@ declare global {
   }
 }
 
-export default function VoiceAssistantWidget() {
+type VoiceAssistantWidgetProps = {
+  panelOpen?: boolean;
+  onPanelOpenChange?: (open: boolean) => void;
+  hideLauncher?: boolean;
+};
+
+export default function VoiceAssistantWidget({
+  panelOpen: controlledOpen,
+  onPanelOpenChange,
+  hideLauncher = false,
+}: VoiceAssistantWidgetProps = {}) {
   const pathname = usePathname();
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen !== undefined ? controlledOpen : internalOpen;
+  const setOpen = (next: boolean) => {
+    onPanelOpenChange?.(next);
+    if (controlledOpen === undefined) setInternalOpen(next);
+  };
   const [uiState, setUiState] = useState<UiState>("idle");
   const [language, setLanguage] = useState<SupportedAssistantLanguage>("en");
   const [inputText, setInputText] = useState("");
@@ -254,13 +269,15 @@ export default function VoiceAssistantWidget() {
     void sendToAssistant({ text });
   }
 
+  if (hideLauncher && !open) return null;
+
   return (
     <div
       style={{
         position: "fixed",
         right: "max(24px, calc(env(safe-area-inset-right) + 16px))",
         bottom: "max(24px, calc(env(safe-area-inset-bottom) + 16px))",
-        zIndex: 1000,
+        zIndex: 100,
       }}
     >
       <style>{`
@@ -369,7 +386,7 @@ export default function VoiceAssistantWidget() {
             ))}
           </div>
         </div>
-      ) : (
+      ) : !hideLauncher ? (
         <button
           type="button"
           aria-label="Open voice assistant"
@@ -388,7 +405,7 @@ export default function VoiceAssistantWidget() {
         >
           🎤
         </button>
-      )}
+      ) : null}
     </div>
   );
 }

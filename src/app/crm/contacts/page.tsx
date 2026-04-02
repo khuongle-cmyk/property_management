@@ -7,6 +7,7 @@ import { getSupabaseClient } from "@/lib/supabase/browser";
 import { LEAD_STAGE_LABEL, LEAD_STAGES, type LeadStage } from "@/lib/crm";
 import { normalizeSpaceType } from "@/lib/crm/lead-import-parse";
 import CreateContactModal from "@/components/shared/CreateContactModal";
+import EmailComposer from "@/components/shared/EmailComposer";
 import { formatPropertyLabel } from "@/lib/properties/label";
 import { formatDate } from "@/lib/date/format";
 
@@ -170,6 +171,7 @@ export default function CrmContactsPage() {
   const [assignableUsers, setAssignableUsers] = useState<UserRow[]>([]);
   const [defaultTenantId, setDefaultTenantId] = useState("");
 
+  const [emailTarget, setEmailTarget] = useState<ContactRecord | null>(null);
   const [showConvertModal, setShowConvertModal] = useState(false);
   const [convertSubmitting, setConvertSubmitting] = useState(false);
   const [convertError, setConvertError] = useState<string | null>(null);
@@ -847,6 +849,18 @@ export default function CrmContactsPage() {
                       <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{r.assignedAgentName ?? "—"}</td>
                       <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9", whiteSpace: "nowrap" }}>
                         <Link href={`/crm/contacts/${encodeURIComponent(r.id)}`}>View</Link>
+                        {r.leadId && r.email && canEdit && !r.readonly ? (
+                          <>
+                            {" · "}
+                            <button
+                              type="button"
+                              onClick={() => setEmailTarget(r)}
+                              style={{ fontSize: 12, color: PETROL, fontWeight: 600, background: "none", border: "none", padding: 0, cursor: "pointer" }}
+                            >
+                              Send email
+                            </button>
+                          </>
+                        ) : null}
                         {r.leadId && canEdit && !r.readonly ? (
                           <>
                             {" · "}
@@ -898,8 +912,17 @@ export default function CrmContactsPage() {
                     <br />
                     {r.stage ? `Stage: ${LEAD_STAGE_LABEL[r.stage]}` : "Stage: —"}
                   </div>
-                  <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+                  <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                     <Link href={`/crm/contacts/${encodeURIComponent(r.id)}`}>View</Link>
+                    {r.leadId && r.email && canEdit && !r.readonly ? (
+                      <button
+                        type="button"
+                        onClick={() => setEmailTarget(r)}
+                        style={{ fontSize: 12, color: PETROL, fontWeight: 600, background: "none", border: "none", padding: 0, cursor: "pointer" }}
+                      >
+                        Send email
+                      </button>
+                    ) : null}
                     {r.leadId && canEdit && !r.readonly ? <Link href={`/crm/leads/${r.leadId}`}>Edit</Link> : null}
                   </div>
                 </article>
@@ -908,6 +931,53 @@ export default function CrmContactsPage() {
           )}
         </section>
       </div>
+
+      {emailTarget && emailTarget.leadId && emailTarget.tenantId ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(15,23,42,0.45)",
+            display: "grid",
+            placeItems: "center",
+            zIndex: 60,
+            padding: 16,
+          }}
+          onClick={() => setEmailTarget(null)}
+        >
+          <div
+            style={{
+              background: "#fff",
+              borderRadius: 12,
+              padding: 20,
+              maxWidth: 560,
+              width: "100%",
+              maxHeight: "90vh",
+              overflow: "auto",
+              boxShadow: "0 20px 40px rgba(0,0,0,0.12)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 style={{ marginTop: 0, fontSize: 18 }}>Send email</h2>
+            <p style={{ marginTop: 0, fontSize: 13, color: "#64748b" }}>{emailTarget.companyName}</p>
+            <EmailComposer
+              source="crm"
+              mode="single"
+              tenantId={emailTarget.tenantId}
+              leadId={emailTarget.leadId}
+              relatedType="lead"
+              defaultTo={emailTarget.email ?? ""}
+              onCancel={() => setEmailTarget(null)}
+              onSent={() => {
+                setEmailTarget(null);
+                setToast("Email sent.");
+              }}
+            />
+          </div>
+        </div>
+      ) : null}
 
       <CreateContactModal
         isOpen={showCreateModal}

@@ -237,17 +237,7 @@ export default function PublicOfferAcceptPage() {
               type="button"
               onClick={handleAccept}
               disabled={accepting}
-              style={{
-                padding: "18px 40px",
-                fontSize: 18,
-                fontWeight: 700,
-                color: white,
-                background: "#16a34a",
-                border: "none",
-                borderRadius: 12,
-                cursor: accepting ? "wait" : "pointer",
-                boxShadow: "0 4px 18px rgba(22, 163, 74, 0.35)",
-              }}
+              className="rounded-lg border-0 bg-[#1a5c50] px-8 py-3 text-base font-medium text-white shadow-sm transition-colors duration-200 hover:bg-[#164e44] disabled:cursor-wait disabled:opacity-70 disabled:hover:bg-[#1a5c50]"
             >
               {accepting ? "Processing…" : "Accept this offer"}
             </button>

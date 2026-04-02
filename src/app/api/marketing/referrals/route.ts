@@ -2,9 +2,9 @@ import { randomBytes } from "crypto";
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
-  applyMarketingTenantIdsFilter,
+  applyMarketingRowScopeFilter,
   getMarketingAccess,
-  marketingScopeTenantIds,
+  resolveMarketingInsertTenantId,
   resolveMarketingTenantScope,
 } from "@/lib/marketing/access";
 
@@ -22,12 +22,10 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const resolved = await resolveMarketingTenantScope(supabase, url, { tenantIds, isSuperAdmin });
   if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: resolved.status });
-  const scopeIds = marketingScopeTenantIds(resolved.scope);
-  const filtered = applyMarketingTenantIdsFilter(
+  const filtered = applyMarketingRowScopeFilter(
     supabase.from("marketing_referrals").select("*").order("created_at", { ascending: false }).limit(200),
-    scopeIds,
+    resolved.scope,
   );
-  if (!filtered) return NextResponse.json({ referrals: [] });
 
   const { data, error } = await filtered;
   if (error) {
@@ -55,16 +53,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const tenantId = String(body.tenant_id ?? body.tenantId ?? "").trim();
-  if (!tenantId || (!isSuperAdmin && !tenantIds.includes(tenantId))) {
-    return NextResponse.json({ error: "Invalid tenant" }, { status: 400 });
+  const resolvedT = resolveMarketingInsertTenantId(body, { tenantIds, isSuperAdmin });
+  if (!resolvedT.ok) {
+    return NextResponse.json({ error: resolvedT.error }, { status: resolvedT.status });
   }
 
   let code = String(body.referral_code ?? "").trim().toUpperCase();
   if (!code) code = `REF-${randomBytes(4).toString("hex").toUpperCase()}`;
 
   const insert = {
-    tenant_id: tenantId,
+    tenant_id: resolvedT.tenant_id,
     referrer_contact_id: body.referrer_contact_id ?? null,
     referred_contact_id: body.referred_contact_id ?? null,
     referral_code: code,

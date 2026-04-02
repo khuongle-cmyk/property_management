@@ -128,7 +128,7 @@ export function MarketingTenantProvider({ children }: { children: ReactNode }) {
       let initial = "";
       try {
         const saved = typeof window !== "undefined" ? window.localStorage.getItem(STORAGE_KEY) : null;
-        if (superA && saved === STORAGE_ALL) {
+        if (saved === STORAGE_ALL && (superA || list.length > 1)) {
           initial = "";
         } else if (saved && list.some((t) => t.id === saved)) {
           initial = saved;
@@ -154,7 +154,8 @@ export function MarketingTenantProvider({ children }: { children: ReactNode }) {
     };
   }, [router]);
 
-  const allOrganizations = isSuperAdmin && tenantId === "";
+  const canPickAllOrganizations = isSuperAdmin || tenants.length > 1;
+  const allOrganizations = tenantId === "" && canPickAllOrganizations;
 
   const querySuffix = useMemo(() => {
     if (allOrganizations) return "?allOrganizations=1";

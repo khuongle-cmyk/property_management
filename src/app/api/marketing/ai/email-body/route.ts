@@ -23,13 +23,26 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const tenantId = String(body.tenantId ?? "").trim();
-  if (!tenantId || (!isSuperAdmin && !tenantIds.includes(tenantId))) {
+  let tenantId = String(body.tenantId ?? "").trim();
+  if (!tenantId) {
+    if (isSuperAdmin) {
+      tenantId = "";
+    } else if (tenantIds[0]) {
+      tenantId = tenantIds[0];
+    } else {
+      return NextResponse.json({ error: "Invalid tenant" }, { status: 400 });
+    }
+  } else if (!isSuperAdmin && !tenantIds.includes(tenantId)) {
     return NextResponse.json({ error: "Invalid tenant" }, { status: 400 });
   }
 
-  const { data: t } = await supabase.from("tenants").select("name").eq("id", tenantId).maybeSingle();
-  const tenantName = (t as { name: string } | null)?.name ?? "our workspace";
+  let tenantName = "our workspace";
+  if (tenantId) {
+    const { data: t } = await supabase.from("tenants").select("name").eq("id", tenantId).maybeSingle();
+    tenantName = (t as { name: string } | null)?.name ?? "our workspace";
+  } else {
+    tenantName = "all organizations";
+  }
 
   const prompt = `Write a concise marketing email body in HTML (use <p>, <strong>, <ul> only). 
 Organization: ${tenantName}.

@@ -19,7 +19,7 @@ function NewEmailCampaignPage() {
   const router = useRouter();
   const search = useSearchParams();
   const editId = search.get("id");
-  const { tenantId, querySuffix, loading: ctxLoading, dataReady, allOrganizations } = useMarketingTenant();
+  const { tenantId, tenants, querySuffix, loading: ctxLoading, dataReady, allOrganizations } = useMarketingTenant();
 
   const [step, setStep] = useState(1);
   const [emailId, setEmailId] = useState<string | null>(editId);
@@ -28,6 +28,7 @@ function NewEmailCampaignPage() {
   const [fromName, setFromName] = useState("");
   const [fromEmail, setFromEmail] = useState("");
   const [replyTo, setReplyTo] = useState("");
+  const [campaignType, setCampaignType] = useState<"newsletter" | "promotional" | "transactional">("newsletter");
   const [templateId, setTemplateId] = useState("newsletter");
   const [bodyHtml, setBodyHtml] = useState(TEMPLATES.newsletter);
   const [audience, setAudience] = useState("all_leads");
@@ -42,18 +43,18 @@ function NewEmailCampaignPage() {
   const [loaded, setLoaded] = useState(!editId);
 
   useEffect(() => {
-    if (!tenantId) return;
+    if (!dataReady) return;
+    const ids = tenants.map((t) => t.id);
+    if (!ids.length) return;
     const supabase = getSupabaseClient();
-    void supabase
-      .from("properties")
-      .select("id,name")
-      .eq("tenant_id", tenantId)
-      .order("name", { ascending: true })
-      .then(({ data }) => setProperties((data as { id: string; name: string }[]) ?? []));
-  }, [tenantId]);
+    const q = tenantId
+      ? supabase.from("properties").select("id,name").eq("tenant_id", tenantId)
+      : supabase.from("properties").select("id,name").in("tenant_id", ids);
+    void q.order("name", { ascending: true }).then(({ data }) => setProperties((data as { id: string; name: string }[]) ?? []));
+  }, [dataReady, tenantId, tenants]);
 
   useEffect(() => {
-    if (!editId || !tenantId) {
+    if (!editId) {
       setLoaded(true);
       return;
     }
@@ -74,6 +75,10 @@ function NewEmailCampaignPage() {
       setFromName(String(e.from_name ?? ""));
       setFromEmail(String(e.from_email ?? ""));
       setReplyTo(String(e.reply_to ?? ""));
+      const ct = String((e as { campaign_type?: string | null }).campaign_type ?? "").trim();
+      if (ct === "newsletter" || ct === "promotional" || ct === "transactional") {
+        setCampaignType(ct);
+      }
       setTemplateId(String(e.template_id ?? "custom"));
       setBodyHtml(String(e.body_html ?? "<p></p>"));
       setLoaded(true);
@@ -81,25 +86,27 @@ function NewEmailCampaignPage() {
     return () => {
       c = true;
     };
-  }, [editId, tenantId]);
+  }, [editId]);
 
   async function ensureEmail(): Promise<string | null> {
     if (emailId) return emailId;
-    if (!tenantId) return null;
+    if (!allOrganizations && !tenantId) return null;
+    const payload: Record<string, unknown> = {
+      campaign_type: campaignType,
+      subject,
+      preview_text: previewText || null,
+      body_html: bodyHtml,
+      from_name: fromName || null,
+      from_email: fromEmail || null,
+      reply_to: replyTo || null,
+      template_id: templateId,
+    };
+    if (allOrganizations) payload.allOrganizations = true;
+    else payload.tenantId = tenantId;
     const res = await fetch("/api/marketing/emails", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        tenant_id: tenantId,
-        campaign_id: null,
-        subject,
-        preview_text: previewText || null,
-        body_html: bodyHtml,
-        from_name: fromName || null,
-        from_email: fromEmail || null,
-        reply_to: replyTo || null,
-        template_id: templateId,
-      }),
+      body: JSON.stringify(payload),
     });
     const j = (await res.json()) as { email?: { id: string }; error?: string };
     if (!res.ok) {
@@ -133,7 +140,7 @@ function NewEmailCampaignPage() {
     const res = await fetch("/api/marketing/ai/email-subject", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tenantId, context: previewText || templateId || "marketing email" }),
+      body: JSON.stringify({ tenantId: tenantId || undefined, context: previewText || templateId || "marketing email" }),
     });
     const j = (await res.json()) as { subject?: string; error?: string };
     setBusy(false);
@@ -148,7 +155,7 @@ function NewEmailCampaignPage() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        tenantId,
+        tenantId: tenantId || undefined,
         template: templateId,
         audience,
         topic: previewText || subject || "workspace update",
@@ -212,19 +219,6 @@ function NewEmailCampaignPage() {
   }
 
   if (ctxLoading || !dataReady) return null;
-  if (allOrganizations) {
-    return (
-      <div style={{ maxWidth: 560, display: "grid", gap: 16 }}>
-        <p style={{ margin: 0, fontSize: 15, color: "rgba(26,74,74,0.85)" }}>
-          Select a single organization in the header to create or edit email campaigns.
-        </p>
-        <Link href={`/marketing/email${querySuffix}`} style={{ fontSize: 14 }}>
-          ← Back to list
-        </Link>
-      </div>
-    );
-  }
-  if (!tenantId) return null;
   if (!loaded) return <p>Loading draft…</p>;
 
   const stepStyle = (n: number) => ({
@@ -250,6 +244,21 @@ function NewEmailCampaignPage() {
 
       {step === 1 ? (
         <div style={{ display: "grid", gap: 12, background: "#fff", padding: 20, borderRadius: 12, border: "1px solid rgba(26,74,74,0.1)" }}>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span>Email type</span>
+            <select
+              value={campaignType}
+              onChange={(e) => setCampaignType(e.target.value as "newsletter" | "promotional" | "transactional")}
+              style={inp}
+            >
+              <option value="newsletter">Newsletter</option>
+              <option value="promotional">Promotional</option>
+              <option value="transactional">Transactional</option>
+            </select>
+          </label>
+          <p style={{ margin: 0, fontSize: 13, opacity: 0.8 }}>
+            Classifies the send (newsletter, promotional, or transactional). Use a real campaign UUID only when linking to Marketing → Campaigns.
+          </p>
           <label style={{ display: "grid", gap: 6 }}>
             <span>Subject</span>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -277,7 +286,16 @@ function NewEmailCampaignPage() {
           </label>
           <button
             type="button"
-            onClick={() => void savePatch({ subject, preview_text: previewText, from_name: fromName, from_email: fromEmail, reply_to: replyTo }).then((ok) => ok && setStep(2))}
+            onClick={() =>
+              void savePatch({
+                subject,
+                preview_text: previewText,
+                from_name: fromName,
+                from_email: fromEmail,
+                reply_to: replyTo,
+                campaign_type: campaignType,
+              }).then((ok) => ok && setStep(2))
+            }
             disabled={busy}
             style={btnPri}
           >

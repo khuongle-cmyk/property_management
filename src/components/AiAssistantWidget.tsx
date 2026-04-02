@@ -94,10 +94,27 @@ async function consumeAiStream(res: Response, onDelta: (chunk: string) => void):
   }
 }
 
-export default function AiAssistantWidget() {
+type AiAssistantWidgetProps = {
+  /** When set with onPanelOpenChange, panel visibility is controlled by the parent. */
+  panelOpen?: boolean;
+  onPanelOpenChange?: (open: boolean) => void;
+  /** Hide the floating launcher — parent opens the panel (e.g. expandable FAB). */
+  hideLauncher?: boolean;
+};
+
+export default function AiAssistantWidget({
+  panelOpen: controlledOpen,
+  onPanelOpenChange,
+  hideLauncher = false,
+}: AiAssistantWidgetProps = {}) {
   const supabase = getSupabaseClient();
   const pathname = usePathname();
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen !== undefined ? controlledOpen : internalOpen;
+  const setOpen = (next: boolean) => {
+    onPanelOpenChange?.(next);
+    if (controlledOpen === undefined) setInternalOpen(next);
+  };
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
@@ -118,6 +135,12 @@ export default function AiAssistantWidget() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, open]);
+
+  useEffect(() => {
+    if (open) {
+      setMessages((m) => (m.length === 0 ? [{ role: "assistant", content: INTRO }] : m));
+    }
+  }, [open]);
 
   useEffect(() => {
     let cancelled = false;
@@ -189,6 +212,7 @@ export default function AiAssistantWidget() {
   );
 
   if (hiddenOnPublicRoute || !authChecked || !isLoggedIn) return null;
+  if (hideLauncher && !open) return null;
 
   return (
     <div
@@ -196,34 +220,36 @@ export default function AiAssistantWidget() {
         position: "fixed",
         right: "max(24px, calc(env(safe-area-inset-right) + 16px))",
         bottom: "max(88px, calc(env(safe-area-inset-bottom) + 80px))",
-        zIndex: 80,
+        zIndex: 100,
       }}
     >
       {!open ? (
-        <button
-          type="button"
-          title="Open AI assistant"
-          aria-label="Open AI assistant"
-          onClick={() => {
-            setOpen(true);
-            setMessages((m) => (m.length === 0 ? [{ role: "assistant", content: INTRO }] : m));
-          }}
-          style={{
-            borderRadius: 999,
-            padding: "12px 14px",
-            border: "1px solid #6d28d9",
-            background: "#7c3aed",
-            color: "#fff",
-            fontWeight: 600,
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            boxShadow: "0 10px 24px rgba(76, 29, 149, 0.35)",
-          }}
-        >
-          <span aria-hidden>🤖</span>
-          <span>Chat</span>
-        </button>
+        !hideLauncher ? (
+          <button
+            type="button"
+            title="Open AI assistant"
+            aria-label="Open AI assistant"
+            onClick={() => {
+              setOpen(true);
+              setMessages((m) => (m.length === 0 ? [{ role: "assistant", content: INTRO }] : m));
+            }}
+            style={{
+              borderRadius: 999,
+              padding: "12px 14px",
+              border: "1px solid #6d28d9",
+              background: "#7c3aed",
+              color: "#fff",
+              fontWeight: 600,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              boxShadow: "0 10px 24px rgba(76, 29, 149, 0.35)",
+            }}
+          >
+            <span aria-hidden>🤖</span>
+            <span>Chat</span>
+          </button>
+        ) : null
       ) : (
         <div
           style={{

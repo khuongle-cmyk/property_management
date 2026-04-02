@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
-  applyMarketingTenantIdsFilter,
+  applyMarketingRowScopeFilter,
   getMarketingAccess,
-  marketingScopeTenantIds,
+  resolveMarketingInsertTenantId,
   resolveMarketingTenantScope,
 } from "@/lib/marketing/access";
+import { sanitizeMarketingEmailRow } from "@/lib/marketing/sanitize-marketing-email-row";
+import { parseUuidOrNull } from "@/lib/uuid";
 
 export async function GET(req: Request) {
   const supabase = await createSupabaseServerClient();
@@ -21,19 +23,18 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const resolved = await resolveMarketingTenantScope(supabase, url, { tenantIds, isSuperAdmin });
   if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: resolved.status });
-  const scopeIds = marketingScopeTenantIds(resolved.scope);
-  const filtered = applyMarketingTenantIdsFilter(
+  const filtered = applyMarketingRowScopeFilter(
     supabase.from("marketing_emails").select("*").order("created_at", { ascending: false }).limit(100),
-    scopeIds,
+    resolved.scope,
   );
-  if (!filtered) return NextResponse.json({ emails: [] });
 
   const { data, error } = await filtered;
   if (error) {
     if (error.code === "42P01") return NextResponse.json({ emails: [] });
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
-  return NextResponse.json({ emails: data ?? [] });
+  const emails = ((data ?? []) as Record<string, unknown>[]).map((r) => sanitizeMarketingEmailRow(r));
+  return NextResponse.json({ emails });
 }
 
 export async function POST(req: Request) {
@@ -54,14 +55,23 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const tenantId = String(body.tenant_id ?? body.tenantId ?? "").trim();
-  if (!tenantId || (!isSuperAdmin && !tenantIds.includes(tenantId))) {
-    return NextResponse.json({ error: "Invalid tenant" }, { status: 400 });
+  const resolvedT = resolveMarketingInsertTenantId(body, { tenantIds, isSuperAdmin });
+  if (!resolvedT.ok) {
+    return NextResponse.json({ error: resolvedT.error }, { status: resolvedT.status });
   }
 
+  const sourceRaw = body.source != null ? String(body.source).trim() : "";
+  const relatedIdRaw = body.related_id ?? body.relatedId;
+  const relatedTypeRaw = body.related_type ?? body.relatedType;
+
+  const campaignTypeRaw = body.campaign_type ?? body.campaignType;
+  const campaignType =
+    campaignTypeRaw != null && String(campaignTypeRaw).trim() !== "" ? String(campaignTypeRaw).trim() : null;
+
   const insert = {
-    tenant_id: tenantId,
-    campaign_id: body.campaign_id ?? null,
+    tenant_id: resolvedT.tenant_id,
+    campaign_id: parseUuidOrNull(body.campaign_id ?? body.campaignId),
+    ...(campaignType != null ? { campaign_type: campaignType } : {}),
     subject: String(body.subject ?? ""),
     preview_text: body.preview_text != null ? String(body.preview_text) : null,
     body_html: body.body_html != null ? String(body.body_html) : null,
@@ -72,9 +82,12 @@ export async function POST(req: Request) {
     template_id: body.template_id != null ? String(body.template_id) : null,
     status: "draft",
     scheduled_at: body.scheduled_at ?? null,
+    ...(sourceRaw ? { source: sourceRaw } : {}),
+    ...(relatedIdRaw != null && String(relatedIdRaw).trim() !== "" ? { related_id: String(relatedIdRaw).trim() } : {}),
+    ...(relatedTypeRaw != null && String(relatedTypeRaw).trim() !== "" ? { related_type: String(relatedTypeRaw).trim() } : {}),
   };
 
   const { data, error } = await supabase.from("marketing_emails").insert(insert).select("*").single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ email: data });
+  return NextResponse.json({ email: sanitizeMarketingEmailRow((data ?? {}) as Record<string, unknown>) });
 }

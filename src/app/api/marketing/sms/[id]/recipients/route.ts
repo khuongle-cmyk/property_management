@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getMarketingAccess } from "@/lib/marketing/access";
+import {
+  canAccessMarketingRowByTenantId,
+  getMarketingAccess,
+  marketingLeadTenantIdsForEmail,
+} from "@/lib/marketing/access";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -20,8 +24,14 @@ export async function POST(req: Request, ctx: Ctx) {
 
   const { data: smsRow, error: sErr } = await supabase.from("marketing_sms").select("tenant_id, status").eq("id", smsId).maybeSingle();
   if (sErr || !smsRow) return NextResponse.json({ error: "SMS not found" }, { status: 404 });
-  const tenantId = (smsRow as { tenant_id: string }).tenant_id;
-  if (!isSuperAdmin && !tenantIds.includes(tenantId)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const tenantId = (smsRow as { tenant_id: string | null }).tenant_id;
+  if (!canAccessMarketingRowByTenantId(tenantId, { tenantIds, isSuperAdmin })) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const leadTenantIds = await marketingLeadTenantIdsForEmail(supabase, tenantId, { tenantIds, isSuperAdmin });
+  if (leadTenantIds.length === 0) {
+    return NextResponse.json({ error: "No tenant scope for recipients" }, { status: 400 });
+  }
   if ((smsRow as { status: string }).status !== "draft") {
     return NextResponse.json({ error: "Recipients locked after send" }, { status: 400 });
   }
@@ -59,10 +69,10 @@ export async function POST(req: Request, ctx: Ctx) {
     let q = supabase
       .from("leads")
       .select("id, phone")
-      .eq("tenant_id", tenantId)
       .eq("phone_unsubscribed", false)
       .eq("archived", false)
       .not("phone", "is", null);
+    q = leadTenantIds.length === 1 ? q.eq("tenant_id", leadTenantIds[0]) : q.in("tenant_id", leadTenantIds);
 
     if (audience === "all_tenants") q = q.eq("stage", "won");
     else if (audience === "by_space_type") {

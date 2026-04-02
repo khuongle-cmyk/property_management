@@ -4,9 +4,7 @@ import type { ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import AppNav from "@/components/AppNav";
 import type { AppNavInitialState } from "@/lib/nav/nav-flags";
-import AiAssistantWidget from "@/components/AiAssistantWidget";
-import LeadChatbotWidget from "@/components/LeadChatbotWidget";
-import VoiceAssistantWidget from "@/components/VoiceAssistantWidget";
+import { PublicSiteFloatingCluster, WorkspaceFloatingCluster } from "@/components/AppFloatingClusters";
 import { isReservedOrgSlug } from "@/lib/cms2/reserved-slugs";
 
 function isPublicMarketingPath(pathname: string | null): boolean {
@@ -39,8 +37,7 @@ export default function ConditionalWorkspaceChrome({
     return (
       <>
         {children}
-        <LeadChatbotWidget />
-        <VoiceAssistantWidget />
+        <PublicSiteFloatingCluster />
       </>
     );
   }
@@ -149,8 +146,7 @@ export default function ConditionalWorkspaceChrome({
           }
         }
       `}</style>
-      <AiAssistantWidget />
-      <VoiceAssistantWidget />
+      <WorkspaceFloatingCluster />
     </>
   );
 }

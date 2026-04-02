@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
-  applyMarketingTenantIdsFilter,
+  applyMarketingRowScopeFilter,
   getMarketingAccess,
-  marketingScopeTenantIds,
+  resolveMarketingInsertTenantId,
   resolveMarketingTenantScope,
 } from "@/lib/marketing/access";
 
@@ -21,12 +21,10 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const resolved = await resolveMarketingTenantScope(supabase, url, { tenantIds, isSuperAdmin });
   if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: resolved.status });
-  const scopeIds = marketingScopeTenantIds(resolved.scope);
-  const filtered = applyMarketingTenantIdsFilter(
+  const filtered = applyMarketingRowScopeFilter(
     supabase.from("marketing_sms").select("*").order("created_at", { ascending: false }).limit(100),
-    scopeIds,
+    resolved.scope,
   );
-  if (!filtered) return NextResponse.json({ sms: [] });
 
   const { data, error } = await filtered;
   if (error) {
@@ -54,9 +52,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const tenantId = String(body.tenant_id ?? body.tenantId ?? "").trim();
-  if (!tenantId || (!isSuperAdmin && !tenantIds.includes(tenantId))) {
-    return NextResponse.json({ error: "Invalid tenant" }, { status: 400 });
+  const resolvedT = resolveMarketingInsertTenantId(body, { tenantIds, isSuperAdmin });
+  if (!resolvedT.ok) {
+    return NextResponse.json({ error: resolvedT.error }, { status: resolvedT.status });
   }
 
   const message_text = String(body.message_text ?? "").trim();
@@ -64,7 +62,7 @@ export async function POST(req: Request) {
   if (message_text.length > 480) return NextResponse.json({ error: "Message too long (max 480)" }, { status: 400 });
 
   const insert = {
-    tenant_id: tenantId,
+    tenant_id: resolvedT.tenant_id,
     campaign_id: body.campaign_id ?? null,
     message_text,
     from_number: body.from_number != null ? String(body.from_number) : null,

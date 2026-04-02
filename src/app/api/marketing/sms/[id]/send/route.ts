@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getMarketingAccess } from "@/lib/marketing/access";
+import { canAccessMarketingRowByTenantId, getMarketingAccess } from "@/lib/marketing/access";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -30,8 +30,10 @@ export async function POST(_req: Request, ctx: Ctx) {
   const { data: smsRow, error: sErr } = await supabase.from("marketing_sms").select("*").eq("id", smsId).maybeSingle();
   if (sErr || !smsRow) return NextResponse.json({ error: "SMS not found" }, { status: 404 });
   const row = smsRow as Record<string, unknown>;
-  const tenantId = String(row.tenant_id);
-  if (!isSuperAdmin && !tenantIds.includes(tenantId)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const tenantId = row.tenant_id as string | null;
+  if (!canAccessMarketingRowByTenantId(tenantId, { tenantIds, isSuperAdmin })) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
   if (String(row.status) === "sent") return NextResponse.json({ error: "Already sent" }, { status: 400 });
 
   let body = String(row.message_text ?? "");

@@ -79,8 +79,23 @@ function CloseIcon() {
   );
 }
 
-export default function LeadChatbotWidget() {
-  const [open, setOpen] = useState(false);
+type LeadChatbotWidgetProps = {
+  panelOpen?: boolean;
+  onPanelOpenChange?: (open: boolean) => void;
+  hideLauncher?: boolean;
+};
+
+export default function LeadChatbotWidget({
+  panelOpen: controlledOpen,
+  onPanelOpenChange,
+  hideLauncher = false,
+}: LeadChatbotWidgetProps = {}) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen !== undefined ? controlledOpen : internalOpen;
+  const setOpen = (next: boolean) => {
+    onPanelOpenChange?.(next);
+    if (controlledOpen === undefined) setInternalOpen(next);
+  };
   const [step, setStep] = useState(0);
   const [input, setInput] = useState("");
   const [answers, setAnswers] = useState<FieldMap>({ ...EMPTY_ANSWERS });
@@ -168,13 +183,15 @@ export default function LeadChatbotWidget() {
   const fabBottom = "max(96px, calc(env(safe-area-inset-bottom) + 88px))";
   const fabRight = "max(24px, calc(env(safe-area-inset-right) + 16px))";
 
+  if (hideLauncher && !open) return null;
+
   return (
     <div
       style={{
         position: "fixed",
         right: fabRight,
         bottom: fabBottom,
-        zIndex: 1001,
+        zIndex: 100,
         fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
       }}
     >
@@ -192,36 +209,38 @@ export default function LeadChatbotWidget() {
       `}</style>
 
       {!open ? (
-        <button
-          type="button"
-          title="Open chat"
-          aria-label="Open VillageWorks chat"
-          onClick={openPanel}
-          style={{
-            width: 56,
-            height: 56,
-            borderRadius: "50%",
-            border: "none",
-            background: PETROL,
-            color: "#fff",
-            display: "grid",
-            placeItems: "center",
-            cursor: "pointer",
-            boxShadow: "0 8px 30px rgba(0,0,0,0.18)",
-            transition: "transform 0.2s ease, box-shadow 0.2s ease",
-          }}
-          onMouseDown={(e) => {
-            e.currentTarget.style.transform = "scale(0.96)";
-          }}
-          onMouseUp={(e) => {
-            e.currentTarget.style.transform = "scale(1)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.transform = "scale(1)";
-          }}
-        >
-          <ChatBubbleIcon />
-        </button>
+        !hideLauncher ? (
+          <button
+            type="button"
+            title="Open chat"
+            aria-label="Open VillageWorks chat"
+            onClick={openPanel}
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: "50%",
+              border: "none",
+              background: PETROL,
+              color: "#fff",
+              display: "grid",
+              placeItems: "center",
+              cursor: "pointer",
+              boxShadow: "0 8px 30px rgba(0,0,0,0.18)",
+              transition: "transform 0.2s ease, box-shadow 0.2s ease",
+            }}
+            onMouseDown={(e) => {
+              e.currentTarget.style.transform = "scale(0.96)";
+            }}
+            onMouseUp={(e) => {
+              e.currentTarget.style.transform = "scale(1)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = "scale(1)";
+            }}
+          >
+            <ChatBubbleIcon />
+          </button>
+        ) : null
       ) : (
         <div
           className="lc-panel-animate"

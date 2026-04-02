@@ -10,12 +10,20 @@ import {
   LOGGED_OUT_APP_NAV_INITIAL,
   type AppNavInitialState,
 } from "@/lib/nav/nav-flags";
+import { MOCK_EMAIL_UNREAD_COUNT } from "@/lib/email/mock-dashboard-data";
 
 const navFont = "var(--font-dm-sans), sans-serif";
 const SIDEBAR_W = 220;
 const COLLAPSE_STORAGE_KEY = "vw-sidebar-collapsed";
 
-type NavItem = { href: string; label: string; visible: boolean; icon?: "building"; exact?: boolean };
+type NavItem = {
+  href: string;
+  label: string;
+  visible: boolean;
+  icon?: "building";
+  exact?: boolean;
+  badge?: number;
+};
 
 function BuildingIcon({ color = "currentColor" }: { color?: string }) {
   return (
@@ -195,6 +203,9 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
       expand.sales = false;
       expand.crm = false;
     }
+    if (path === "/community" || path.startsWith("/community/")) {
+      expand.community = false;
+    }
     if (showMarketingNav && (path === "/marketing" || path.startsWith("/marketing/"))) {
       expand.marketing = false;
     }
@@ -260,6 +271,7 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
   const overviewItems: NavItem[] = [
     { href: "/dashboard", label: "Dashboard", visible: showOwnerDashboard },
     { href: "/properties", label: "Properties", visible: loggedIn },
+    { href: "/email", label: "Email", visible: loggedIn, badge: MOCK_EMAIL_UNREAD_COUNT },
   ];
 
   const spacesItems: NavItem[] = [
@@ -292,6 +304,10 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
     { href: "/crm/contacts", label: "Contacts", visible: loggedIn && showCrmNav },
   ];
 
+  const communityItems: NavItem[] = [
+    { href: "/community", label: "Chat", visible: loggedIn },
+  ];
+
   const workItems: NavItem[] = [{ href: "/tasks", label: "Tasks", visible: loggedIn }];
 
   /** Reports + budget: any signed-in user (pages enforce role/tenant access). */
@@ -314,6 +330,7 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
   const collapsibleSections: Array<{ id: string; title: string; items: NavItem[] }> = [
     { id: "sales", title: "Sales", items: salesItems },
     { id: "crm", title: "CRM", items: crmItems },
+    { id: "community", title: "Community", items: communityItems },
     { id: "marketing", title: "Marketing", items: marketingItems },
     { id: "spaces", title: "Spaces", items: spacesItems },
     { id: "bookings", title: "Bookings", items: bookingsItems },
@@ -329,14 +346,42 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
       <div style={{ display: "grid", gap: 2 }}>
         {visible.map((i) => {
           const active = navLinkIsActive(pathname ?? "", i.href, i.exact);
+          const showBadge = i.badge != null && i.badge > 0;
           return (
             <Link
               key={i.href + i.label}
               href={i.href}
-              style={{ ...itemStyle(active, b), display: "flex", alignItems: "center", gap: 8 }}
+              style={{
+                ...itemStyle(active, b),
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                justifyContent: "space-between",
+              }}
             >
-              {i.icon === "building" ? <BuildingIcon color={b.white} /> : null}
-              {i.label}
+              <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                {i.icon === "building" ? <BuildingIcon color={b.white} /> : null}
+                {i.label}
+              </span>
+              {showBadge ? (
+                <span
+                  aria-label={`${i.badge} unread`}
+                  style={{
+                    flexShrink: 0,
+                    minWidth: 20,
+                    height: 20,
+                    padding: "0 6px",
+                    borderRadius: 999,
+                    background: "rgba(255,255,255,0.22)",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    lineHeight: "20px",
+                    textAlign: "center",
+                  }}
+                >
+                  {i.badge! > 99 ? "99+" : i.badge}
+                </span>
+              ) : null}
             </Link>
           );
         })}

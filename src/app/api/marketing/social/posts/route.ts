@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
-  applyMarketingTenantIdsFilter,
+  applyMarketingRowScopeFilter,
   getMarketingAccess,
-  marketingScopeTenantIds,
+  resolveMarketingInsertTenantId,
   resolveMarketingTenantScope,
 } from "@/lib/marketing/access";
 
@@ -21,16 +21,14 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const resolved = await resolveMarketingTenantScope(supabase, url, { tenantIds, isSuperAdmin });
   if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: resolved.status });
-  const scopeIds = marketingScopeTenantIds(resolved.scope);
-  const filtered = applyMarketingTenantIdsFilter(
+  const filtered = applyMarketingRowScopeFilter(
     supabase
       .from("marketing_social_posts")
       .select("*")
       .order("scheduled_at", { ascending: false, nullsFirst: false })
       .limit(200),
-    scopeIds,
+    resolved.scope,
   );
-  if (!filtered) return NextResponse.json({ posts: [] });
 
   const { data, error } = await filtered;
   if (error) {
@@ -58,13 +56,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const tenantId = String(body.tenant_id ?? body.tenantId ?? "").trim();
-  if (!tenantId || (!isSuperAdmin && !tenantIds.includes(tenantId))) {
-    return NextResponse.json({ error: "Invalid tenant" }, { status: 400 });
+  const resolvedT = resolveMarketingInsertTenantId(body, { tenantIds, isSuperAdmin });
+  if (!resolvedT.ok) {
+    return NextResponse.json({ error: resolvedT.error }, { status: resolvedT.status });
   }
 
   const insert = {
-    tenant_id: tenantId,
+    tenant_id: resolvedT.tenant_id,
     campaign_id: body.campaign_id ?? null,
     platform: String(body.platform ?? "linkedin"),
     content_text: body.content_text != null ? String(body.content_text) : null,

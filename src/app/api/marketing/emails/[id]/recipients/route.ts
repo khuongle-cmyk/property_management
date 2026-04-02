@@ -1,7 +1,11 @@
 import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getMarketingAccess } from "@/lib/marketing/access";
+import {
+  canAccessMarketingRowByTenantId,
+  getMarketingAccess,
+  marketingLeadTenantIdsForEmail,
+} from "@/lib/marketing/access";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -21,8 +25,14 @@ export async function POST(req: Request, ctx: Ctx) {
 
   const { data: em, error: eErr } = await supabase.from("marketing_emails").select("tenant_id, status").eq("id", emailId).maybeSingle();
   if (eErr || !em) return NextResponse.json({ error: "Email not found" }, { status: 404 });
-  const tenantId = (em as { tenant_id: string }).tenant_id;
-  if (!isSuperAdmin && !tenantIds.includes(tenantId)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const tenantId = (em as { tenant_id: string | null }).tenant_id;
+  if (!canAccessMarketingRowByTenantId(tenantId, { tenantIds, isSuperAdmin })) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const leadTenantIds = await marketingLeadTenantIdsForEmail(supabase, tenantId, { tenantIds, isSuperAdmin });
+  if (leadTenantIds.length === 0) {
+    return NextResponse.json({ error: "No tenant scope for recipients" }, { status: 400 });
+  }
   if ((em as { status: string }).status !== "draft") {
     return NextResponse.json({ error: "Recipients locked after send" }, { status: 400 });
   }
@@ -67,59 +77,64 @@ export async function POST(req: Request, ctx: Ctx) {
       rows.push({ email_id: emailId, contact_id: null, email_address: addr, tracking_token: randomUUID() });
     }
   } else if (audience === "all_leads") {
-    const { data: leads, error: lErr } = await supabase
+    let lq = supabase
       .from("leads")
       .select("id, email")
-      .eq("tenant_id", tenantId)
       .eq("email_unsubscribed", false)
       .eq("archived", false)
       .not("email", "is", null);
+    lq = leadTenantIds.length === 1 ? lq.eq("tenant_id", leadTenantIds[0]) : lq.in("tenant_id", leadTenantIds);
+    const { data: leads, error: lErr } = await lq;
     if (lErr) return NextResponse.json({ error: lErr.message }, { status: 500 });
     pushLeads(leads as { id: string; email: string }[]);
   } else if (audience === "all_tenants") {
-    const { data: leads, error: lErr } = await supabase
+    let lq = supabase
       .from("leads")
       .select("id, email")
-      .eq("tenant_id", tenantId)
       .eq("stage", "won")
       .eq("email_unsubscribed", false)
       .not("email", "is", null);
+    lq = leadTenantIds.length === 1 ? lq.eq("tenant_id", leadTenantIds[0]) : lq.in("tenant_id", leadTenantIds);
+    const { data: leads, error: lErr } = await lq;
     if (lErr) return NextResponse.json({ error: lErr.message }, { status: 500 });
     pushLeads(leads as { id: string; email: string }[]);
   } else if (audience === "all_contacts") {
-    const { data: leads, error: lErr } = await supabase
+    let lq = supabase
       .from("leads")
       .select("id, email")
-      .eq("tenant_id", tenantId)
       .eq("email_unsubscribed", false)
       .eq("archived", false)
       .not("email", "is", null);
+    lq = leadTenantIds.length === 1 ? lq.eq("tenant_id", leadTenantIds[0]) : lq.in("tenant_id", leadTenantIds);
+    const { data: leads, error: lErr } = await lq;
     if (lErr) return NextResponse.json({ error: lErr.message }, { status: 500 });
     pushLeads(leads as { id: string; email: string }[]);
   } else if (audience === "by_space_type") {
     const st = String(body.space_type ?? "").trim();
     if (!st) return NextResponse.json({ error: "space_type required" }, { status: 400 });
-    const { data: leads, error: lErr } = await supabase
+    let lq = supabase
       .from("leads")
       .select("id, email")
-      .eq("tenant_id", tenantId)
       .eq("email_unsubscribed", false)
       .eq("archived", false)
       .ilike("interested_space_type", `%${st}%`)
       .not("email", "is", null);
+    lq = leadTenantIds.length === 1 ? lq.eq("tenant_id", leadTenantIds[0]) : lq.in("tenant_id", leadTenantIds);
+    const { data: leads, error: lErr } = await lq;
     if (lErr) return NextResponse.json({ error: lErr.message }, { status: 500 });
     pushLeads(leads as { id: string; email: string }[]);
   } else if (audience === "by_property") {
     const pid = String(body.property_id ?? "").trim();
     if (!pid) return NextResponse.json({ error: "property_id required" }, { status: 400 });
-    const { data: leads, error: lErr } = await supabase
+    let lq = supabase
       .from("leads")
       .select("id, email")
-      .eq("tenant_id", tenantId)
       .eq("property_id", pid)
       .eq("email_unsubscribed", false)
       .eq("archived", false)
       .not("email", "is", null);
+    lq = leadTenantIds.length === 1 ? lq.eq("tenant_id", leadTenantIds[0]) : lq.in("tenant_id", leadTenantIds);
+    const { data: leads, error: lErr } = await lq;
     if (lErr) return NextResponse.json({ error: lErr.message }, { status: 500 });
     pushLeads(leads as { id: string; email: string }[]);
   } else {

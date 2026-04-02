@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getMarketingAccess } from "@/lib/marketing/access";
+import { canAccessMarketingRowByTenantId, getMarketingAccess } from "@/lib/marketing/access";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -20,8 +20,10 @@ export async function GET(_req: Request, ctx: Ctx) {
 
   const { data: ev, error } = await supabase.from("marketing_events").select("*").eq("id", id).maybeSingle();
   if (error || !ev) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  const tid = (ev as { tenant_id: string }).tenant_id;
-  if (!isSuperAdmin && !tenantIds.includes(tid)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const tid = (ev as { tenant_id: string | null }).tenant_id;
+  if (!canAccessMarketingRowByTenantId(tid, { tenantIds, isSuperAdmin })) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const { data: regs } = await supabase
     .from("marketing_event_registrations")
@@ -48,8 +50,10 @@ export async function PATCH(req: Request, ctx: Ctx) {
 
   const { data: row, error: fErr } = await supabase.from("marketing_events").select("tenant_id").eq("id", id).maybeSingle();
   if (fErr || !row) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  const tid = (row as { tenant_id: string }).tenant_id;
-  if (!isSuperAdmin && !tenantIds.includes(tid)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const tid = (row as { tenant_id: string | null }).tenant_id;
+  if (!canAccessMarketingRowByTenantId(tid, { tenantIds, isSuperAdmin })) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   let body: Record<string, unknown>;
   try {

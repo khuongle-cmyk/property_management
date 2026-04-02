@@ -6,6 +6,7 @@ import { useMarketingTenant } from "@/contexts/MarketingTenantContext";
 
 type Campaign = {
   id: string;
+  tenant_id: string | null;
   name: string;
   status: string;
   campaign_type: string;
@@ -16,8 +17,13 @@ type Campaign = {
   actual_spend: number;
 };
 
+function orgColumnLabel(tenantId: string | null | undefined, tenants: { id: string; name: string }[]): string {
+  if (tenantId == null || tenantId === "") return "All";
+  return tenants.find((t) => t.id === tenantId)?.name ?? tenantId;
+}
+
 export default function MarketingCampaignsPage() {
-  const { tenantId, querySuffix, loading: ctxLoading, dataReady, allOrganizations } = useMarketingTenant();
+  const { tenantId, tenants, querySuffix, loading: ctxLoading, dataReady, allOrganizations } = useMarketingTenant();
   const [rows, setRows] = useState<Campaign[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -44,12 +50,16 @@ export default function MarketingCampaignsPage() {
 
   async function createCampaign(e: React.FormEvent) {
     e.preventDefault();
-    if (allOrganizations || !tenantId || !name.trim()) return;
+    if (!name.trim()) return;
+    if (!allOrganizations && !tenantId) return;
     setCreating(true);
+    const payload: Record<string, unknown> = { name: name.trim(), campaign_type: "email", status: "draft" };
+    if (allOrganizations) payload.allOrganizations = true;
+    else payload.tenantId = tenantId;
     const res = await fetch("/api/marketing/campaigns", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tenantId, name: name.trim(), campaign_type: "email", status: "draft" }),
+      body: JSON.stringify(payload),
     });
     const j = (await res.json()) as { campaign?: Campaign; error?: string };
     setCreating(false);
@@ -74,12 +84,6 @@ export default function MarketingCampaignsPage() {
       </div>
       {err ? <p style={{ color: "#b42318" }}>{err}</p> : null}
 
-      {allOrganizations ? (
-        <p style={{ margin: 0, fontSize: 14, color: "rgba(26,74,74,0.8)" }}>
-          Select a single organization above to create a campaign.
-        </p>
-      ) : null}
-
       <form onSubmit={(e) => void createCampaign(e)} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
         <input
           placeholder="New campaign name"
@@ -89,7 +93,7 @@ export default function MarketingCampaignsPage() {
         />
         <button
           type="submit"
-          disabled={creating || allOrganizations}
+          disabled={creating}
           style={{
             padding: "10px 16px",
             borderRadius: 8,
@@ -108,6 +112,7 @@ export default function MarketingCampaignsPage() {
           <thead>
             <tr style={{ textAlign: "left", borderBottom: "1px solid rgba(26,74,74,0.12)" }}>
               <th style={{ padding: 12 }}>Name</th>
+              <th style={{ padding: 12 }}>Organization</th>
               <th style={{ padding: 12 }}>Type</th>
               <th style={{ padding: 12 }}>Status</th>
               <th style={{ padding: 12 }}>Audience</th>
@@ -118,6 +123,7 @@ export default function MarketingCampaignsPage() {
             {rows.map((r) => (
               <tr key={r.id} style={{ borderBottom: "1px solid rgba(26,74,74,0.06)" }}>
                 <td style={{ padding: 12 }}>{r.name}</td>
+                <td style={{ padding: 12 }}>{orgColumnLabel(r.tenant_id, tenants)}</td>
                 <td style={{ padding: 12 }}>{r.campaign_type}</td>
                 <td style={{ padding: 12 }}>{r.status}</td>
                 <td style={{ padding: 12 }}>{r.target_audience}</td>

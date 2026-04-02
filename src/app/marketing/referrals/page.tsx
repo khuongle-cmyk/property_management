@@ -5,6 +5,7 @@ import { useMarketingTenant } from "@/contexts/MarketingTenantContext";
 
 type Ref = {
   id: string;
+  tenant_id: string | null;
   referral_code: string;
   status: string;
   reward_type: string | null;
@@ -12,8 +13,13 @@ type Ref = {
   created_at: string;
 };
 
+function orgColumnLabel(tenantId: string | null | undefined, tenants: { id: string; name: string }[]): string {
+  if (tenantId == null || tenantId === "") return "All";
+  return tenants.find((t) => t.id === tenantId)?.name ?? tenantId;
+}
+
 export default function MarketingReferralsPage() {
-  const { tenantId, querySuffix, dataReady, allOrganizations } = useMarketingTenant();
+  const { tenantId, tenants, querySuffix, dataReady, allOrganizations } = useMarketingTenant();
   const [rows, setRows] = useState<Ref[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [code, setCode] = useState("");
@@ -36,18 +42,21 @@ export default function MarketingReferralsPage() {
   }, [dataReady, querySuffix]);
 
   async function addRow() {
-    if (!dataReady || allOrganizations || !tenantId) return;
+    if (!dataReady) return;
+    if (!allOrganizations && !tenantId) return;
     setBusy(true);
+    const payload: Record<string, unknown> = {
+      referral_code: code.trim() || undefined,
+      status: "pending",
+      reward_type: "discount",
+      reward_amount: 100,
+    };
+    if (allOrganizations) payload.allOrganizations = true;
+    else payload.tenantId = tenantId;
     const res = await fetch("/api/marketing/referrals", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        tenantId,
-        referral_code: code.trim() || undefined,
-        status: "pending",
-        reward_type: "discount",
-        reward_amount: 100,
-      }),
+      body: JSON.stringify(payload),
     });
     const j = (await res.json()) as { referral?: Ref; error?: string };
     setBusy(false);
@@ -67,11 +76,6 @@ export default function MarketingReferralsPage() {
         Track referral codes; unique links per tenant in the portal and automatic rewards on contract signed can be layered on this table.
       </p>
       {err ? <p style={{ color: "#b42318" }}>{err}</p> : null}
-      {allOrganizations ? (
-        <p style={{ margin: 0, fontSize: 14, color: "rgba(26,74,74,0.8)" }}>
-          Select a single organization above to add referral rows.
-        </p>
-      ) : null}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <input placeholder="Custom code (optional)" value={code} onChange={(e) => setCode(e.target.value)} style={inp} />
         <button
@@ -87,6 +91,7 @@ export default function MarketingReferralsPage() {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
           <thead>
             <tr style={{ textAlign: "left", borderBottom: "1px solid rgba(26,74,74,0.12)" }}>
+              <th style={{ padding: 12 }}>Organization</th>
               <th style={{ padding: 12 }}>Code</th>
               <th style={{ padding: 12 }}>Status</th>
               <th style={{ padding: 12 }}>Reward</th>
@@ -96,6 +101,7 @@ export default function MarketingReferralsPage() {
           <tbody>
             {rows.map((r) => (
               <tr key={r.id} style={{ borderBottom: "1px solid rgba(26,74,74,0.06)" }}>
+                <td style={{ padding: 12 }}>{orgColumnLabel(r.tenant_id, tenants)}</td>
                 <td style={{ padding: 12 }}>{r.referral_code}</td>
                 <td style={{ padding: 12 }}>{r.status}</td>
                 <td style={{ padding: 12 }}>

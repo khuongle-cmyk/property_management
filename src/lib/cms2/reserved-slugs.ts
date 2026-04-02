@@ -35,6 +35,8 @@ export const CMS2_RESERVED_SLUGS = new Set([
   "billing",
   "budget",
   "marketing",
+  "email",
+  "community",
   "floor-plans",
   "tools",
 ]);

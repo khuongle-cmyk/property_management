@@ -7,6 +7,7 @@ import { pathWithMarketingScope } from "@/lib/marketing/access";
 
 type SmsRow = {
   id: string;
+  tenant_id: string | null;
   message_text: string;
   status: string;
   recipient_count: number;
@@ -15,8 +16,13 @@ type SmsRow = {
   sent_at: string | null;
 };
 
+function orgColumnLabel(tenantId: string | null | undefined, tenants: { id: string; name: string }[]): string {
+  if (tenantId == null || tenantId === "") return "All";
+  return tenants.find((t) => t.id === tenantId)?.name ?? tenantId;
+}
+
 export default function MarketingSmsPage() {
-  const { querySuffix, dataReady } = useMarketingTenant();
+  const { tenants, querySuffix, dataReady } = useMarketingTenant();
   const [rows, setRows] = useState<SmsRow[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
@@ -57,6 +63,7 @@ export default function MarketingSmsPage() {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
           <thead>
             <tr style={{ textAlign: "left", borderBottom: "1px solid rgba(26,74,74,0.12)" }}>
+              <th style={{ padding: 12 }}>Organization</th>
               <th style={{ padding: 12 }}>Message</th>
               <th style={{ padding: 12 }}>Status</th>
               <th style={{ padding: 12 }}>Recipients</th>
@@ -66,6 +73,7 @@ export default function MarketingSmsPage() {
           <tbody>
             {rows.map((r) => (
               <tr key={r.id} style={{ borderBottom: "1px solid rgba(26,74,74,0.06)" }}>
+                <td style={{ padding: 12 }}>{orgColumnLabel(r.tenant_id, tenants)}</td>
                 <td style={{ padding: 12, maxWidth: 320 }}>{r.message_text.slice(0, 120)}{r.message_text.length > 120 ? "…" : ""}</td>
                 <td style={{ padding: 12 }}>{r.status}</td>
                 <td style={{ padding: 12 }}>{r.recipient_count}</td>

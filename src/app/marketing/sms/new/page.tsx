@@ -9,7 +9,7 @@ import { pathWithMarketingScope } from "@/lib/marketing/access";
 
 export default function NewSmsPage() {
   const router = useRouter();
-  const { tenantId, querySuffix, loading: ctxLoading, dataReady, allOrganizations } = useMarketingTenant();
+  const { tenantId, tenants, querySuffix, loading: ctxLoading, dataReady, allOrganizations } = useMarketingTenant();
   const [text, setText] = useState("");
   const [audience, setAudience] = useState("all_leads");
   const [customPhones, setCustomPhones] = useState("");
@@ -20,23 +20,22 @@ export default function NewSmsPage() {
   const [msg, setMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!tenantId) return;
-    void getSupabaseClient()
-      .from("properties")
-      .select("id,name")
-      .eq("tenant_id", tenantId)
-      .order("name", { ascending: true })
-      .then(({ data }) => setProperties((data as { id: string; name: string }[]) ?? []));
-  }, [tenantId]);
+    if (!dataReady) return;
+    const ids = tenants.map((t) => t.id);
+    if (!ids.length) return;
+    const q = tenantId
+      ? getSupabaseClient().from("properties").select("id,name").eq("tenant_id", tenantId)
+      : getSupabaseClient().from("properties").select("id,name").in("tenant_id", ids);
+    void q.order("name", { ascending: true }).then(({ data }) => setProperties((data as { id: string; name: string }[]) ?? []));
+  }, [dataReady, tenantId, tenants]);
 
   async function aiSms() {
-    if (allOrganizations || !tenantId) return;
     setBusy(true);
     setMsg(null);
     const res = await fetch("/api/marketing/ai/sms-body", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tenantId, topic: text || "promotion", audience }),
+      body: JSON.stringify({ tenantId: tenantId || undefined, topic: text || "promotion", audience }),
     });
     const j = (await res.json()) as { text?: string; error?: string };
     setBusy(false);
@@ -45,13 +44,17 @@ export default function NewSmsPage() {
   }
 
   async function submit() {
-    if (!tenantId || !text.trim()) return;
+    if (!text.trim()) return;
+    if (!allOrganizations && !tenantId) return;
     setBusy(true);
     setMsg(null);
+    const payload: Record<string, unknown> = { message_text: text.trim() };
+    if (allOrganizations) payload.allOrganizations = true;
+    else payload.tenantId = tenantId;
     const res = await fetch("/api/marketing/sms", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tenantId, message_text: text.trim() }),
+      body: JSON.stringify(payload),
     });
     const j = (await res.json()) as { sms?: { id: string }; error?: string };
     if (!res.ok) {
@@ -60,15 +63,16 @@ export default function NewSmsPage() {
       return;
     }
     const id = j.sms!.id;
-    const payload: Record<string, unknown> = { audience };
-    if (audience === "custom_list") payload.phones = customPhones.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean);
-    if (audience === "by_space_type") payload.space_type = spaceType;
-    if (audience === "by_property") payload.property_id = propertyId;
+    const recipientPayload: Record<string, unknown> = { audience };
+    if (audience === "custom_list")
+      recipientPayload.phones = customPhones.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean);
+    if (audience === "by_space_type") recipientPayload.space_type = spaceType;
+    if (audience === "by_property") recipientPayload.property_id = propertyId;
 
     const r2 = await fetch(`/api/marketing/sms/${id}/recipients`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(recipientPayload),
     });
     const j2 = (await r2.json()) as { count?: number; error?: string };
     if (!r2.ok) {
@@ -92,17 +96,6 @@ export default function NewSmsPage() {
   }
 
   if (ctxLoading || !dataReady) return null;
-  if (allOrganizations) {
-    return (
-      <div style={{ maxWidth: 560, display: "grid", gap: 16 }}>
-        <p style={{ margin: 0, fontSize: 15, color: "rgba(26,74,74,0.85)" }}>
-          Select a single organization in the header to send SMS.
-        </p>
-        <Link href={pathWithMarketingScope("/marketing/sms", querySuffix)}>← Back</Link>
-      </div>
-    );
-  }
-  if (!tenantId) return null;
 
   const len = text.length;
   const warn = len > 160;

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getMarketingAccess } from "@/lib/marketing/access";
+import { canAccessMarketingRowByTenantId, getMarketingAccess } from "@/lib/marketing/access";
 
 type Ctx = { params: Promise<{ regId: string }> };
 
@@ -26,8 +26,10 @@ export async function PATCH(req: Request, ctx: Ctx) {
   if (rErr || !reg) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const { data: ev } = await supabase.from("marketing_events").select("tenant_id").eq("id", (reg as { event_id: string }).event_id).maybeSingle();
-  const tid = (ev as { tenant_id: string } | null)?.tenant_id;
-  if (!tid || (!isSuperAdmin && !tenantIds.includes(tid))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const tid = (ev as { tenant_id: string | null } | null)?.tenant_id ?? null;
+  if (!canAccessMarketingRowByTenantId(tid, { tenantIds, isSuperAdmin })) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   let body: { status?: string; notes?: string; checked_in?: boolean };
   try {

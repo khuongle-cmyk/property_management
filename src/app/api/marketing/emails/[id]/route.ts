@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getMarketingAccess } from "@/lib/marketing/access";
+import { canAccessMarketingRowByTenantId, getMarketingAccess } from "@/lib/marketing/access";
+import { sanitizeMarketingEmailRow } from "@/lib/marketing/sanitize-marketing-email-row";
+import { parseUuidOrNull } from "@/lib/uuid";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -20,9 +22,11 @@ export async function GET(_req: Request, ctx: Ctx) {
 
   const { data: row, error } = await supabase.from("marketing_emails").select("*").eq("id", id).maybeSingle();
   if (error || !row) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  const tid = (row as { tenant_id: string }).tenant_id;
-  if (!isSuperAdmin && !tenantIds.includes(tid)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  return NextResponse.json({ email: row });
+  const tid = (row as { tenant_id: string | null }).tenant_id;
+  if (!canAccessMarketingRowByTenantId(tid, { tenantIds, isSuperAdmin })) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  return NextResponse.json({ email: sanitizeMarketingEmailRow(row as Record<string, unknown>) });
 }
 
 export async function PATCH(req: Request, ctx: Ctx) {
@@ -41,8 +45,10 @@ export async function PATCH(req: Request, ctx: Ctx) {
 
   const { data: row, error: fErr } = await supabase.from("marketing_emails").select("tenant_id, status").eq("id", id).maybeSingle();
   if (fErr || !row) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  const tid = (row as { tenant_id: string }).tenant_id;
-  if (!isSuperAdmin && !tenantIds.includes(tid)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const tid = (row as { tenant_id: string | null }).tenant_id;
+  if (!canAccessMarketingRowByTenantId(tid, { tenantIds, isSuperAdmin })) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
   if ((row as { status: string }).status === "sent") {
     return NextResponse.json({ error: "Cannot edit a sent email" }, { status: 400 });
   }
@@ -66,12 +72,15 @@ export async function PATCH(req: Request, ctx: Ctx) {
     "template_id",
     "scheduled_at",
     "status",
-    "campaign_id",
+    "campaign_type",
   ] as const) {
     if (k in body) patch[k] = body[k];
+  }
+  if ("campaign_id" in body) {
+    patch.campaign_id = parseUuidOrNull(body.campaign_id);
   }
 
   const { data, error } = await supabase.from("marketing_emails").update(patch).eq("id", id).select("*").single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ email: data });
+  return NextResponse.json({ email: sanitizeMarketingEmailRow((data ?? {}) as Record<string, unknown>) });
 }

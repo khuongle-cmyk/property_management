@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { Resend } from "resend";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { brandEmailFrom, resolveBrandByTenantId } from "@/lib/brand/server";
-import { getMarketingAccess } from "@/lib/marketing/access";
+import { canAccessMarketingRowByTenantId, getMarketingAccess } from "@/lib/marketing/access";
 import { wrapEmailLinksForTracking } from "@/lib/marketing/wrap-links";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -34,8 +34,10 @@ export async function POST(_req: Request, ctx: Ctx) {
   const { data: em, error: eErr } = await supabase.from("marketing_emails").select("*").eq("id", emailId).maybeSingle();
   if (eErr || !em) return NextResponse.json({ error: "Email not found" }, { status: 404 });
   const row = em as Record<string, unknown>;
-  const tenantId = String(row.tenant_id);
-  if (!isSuperAdmin && !tenantIds.includes(tenantId)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const rowTenantId = row.tenant_id == null || row.tenant_id === "" ? null : String(row.tenant_id);
+  if (!canAccessMarketingRowByTenantId(rowTenantId, { tenantIds, isSuperAdmin })) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
   if (String(row.status) === "sent") return NextResponse.json({ error: "Already sent" }, { status: 400 });
 
   const { data: recs, error: rErr } = await supabase
@@ -52,7 +54,7 @@ export async function POST(_req: Request, ctx: Ctx) {
   }[];
   if (!recipients.length) return NextResponse.json({ error: "No pending recipients — build list first" }, { status: 400 });
 
-  const brand = await resolveBrandByTenantId(tenantId);
+  const brand = await resolveBrandByTenantId(rowTenantId ?? undefined);
   const defaultFrom = brandEmailFrom(brand, process.env.RESEND_FROM_EMAIL?.trim() || "Marketing <onboarding@resend.dev>");
   const fromName = String(row.from_name ?? "").trim();
   const fromEmail = String(row.from_email ?? "").trim();

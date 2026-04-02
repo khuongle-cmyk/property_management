@@ -9,7 +9,7 @@ import { pathWithMarketingScope } from "@/lib/marketing/access";
 
 export default function NewEventPage() {
   const router = useRouter();
-  const { tenantId, querySuffix, loading: ctxLoading, dataReady, allOrganizations } = useMarketingTenant();
+  const { tenantId, tenants, querySuffix, loading: ctxLoading, dataReady, allOrganizations } = useMarketingTenant();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [eventType, setEventType] = useState("networking");
@@ -26,36 +26,39 @@ export default function NewEventPage() {
   const [msg, setMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!tenantId) return;
-    void getSupabaseClient()
-      .from("properties")
-      .select("id,name")
-      .eq("tenant_id", tenantId)
-      .order("name", { ascending: true })
-      .then(({ data }) => setProperties((data as { id: string; name: string }[]) ?? []));
-  }, [tenantId]);
+    if (!dataReady) return;
+    const ids = tenants.map((t) => t.id);
+    if (!ids.length) return;
+    const q = tenantId
+      ? getSupabaseClient().from("properties").select("id,name").eq("tenant_id", tenantId)
+      : getSupabaseClient().from("properties").select("id,name").in("tenant_id", ids);
+    void q.order("name", { ascending: true }).then(({ data }) => setProperties((data as { id: string; name: string }[]) ?? []));
+  }, [dataReady, tenantId, tenants]);
 
   async function submit() {
-    if (allOrganizations || !tenantId || !name.trim() || !start || !end) return;
+    if (!name.trim() || !start || !end) return;
+    if (!allOrganizations && !tenantId) return;
     setBusy(true);
     setMsg(null);
+    const payload: Record<string, unknown> = {
+      name: name.trim(),
+      description: description || null,
+      event_type: eventType,
+      start_datetime: new Date(start).toISOString(),
+      end_datetime: new Date(end).toISOString(),
+      location: location || null,
+      max_attendees: maxAtt ? Number(maxAtt) : null,
+      price: Number(price) || 0,
+      status,
+      is_public: isPublic,
+      property_id: propertyId || null,
+    };
+    if (allOrganizations) payload.allOrganizations = true;
+    else payload.tenantId = tenantId;
     const res = await fetch("/api/marketing/events", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        tenantId,
-        name: name.trim(),
-        description: description || null,
-        event_type: eventType,
-        start_datetime: new Date(start).toISOString(),
-        end_datetime: new Date(end).toISOString(),
-        location: location || null,
-        max_attendees: maxAtt ? Number(maxAtt) : null,
-        price: Number(price) || 0,
-        status,
-        is_public: isPublic,
-        property_id: propertyId || null,
-      }),
+      body: JSON.stringify(payload),
     });
     const j = (await res.json()) as { event?: { id: string }; error?: string };
     setBusy(false);
@@ -64,17 +67,6 @@ export default function NewEventPage() {
   }
 
   if (ctxLoading || !dataReady) return null;
-  if (allOrganizations) {
-    return (
-      <div style={{ maxWidth: 560, display: "grid", gap: 14 }}>
-        <p style={{ margin: 0, fontSize: 15, color: "rgba(26,74,74,0.85)" }}>
-          Select a single organization in the header to create an event.
-        </p>
-        <Link href={pathWithMarketingScope("/marketing/events", querySuffix)}>← Back</Link>
-      </div>
-    );
-  }
-  if (!tenantId) return null;
 
   return (
     <div style={{ maxWidth: 560, display: "grid", gap: 14 }}>

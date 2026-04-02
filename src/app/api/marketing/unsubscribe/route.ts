@@ -52,6 +52,11 @@ export async function GET(req: Request) {
       .update({ email_unsubscribed: true })
       .eq("tenant_id", tenantId)
       .ilike("email", r.email_address);
+  } else {
+    await supabase
+      .from("leads")
+      .update({ email_unsubscribed: true })
+      .ilike("email", r.email_address);
   }
 
   const emailId = r.email_id;

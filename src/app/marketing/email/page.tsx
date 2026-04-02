@@ -4,9 +4,15 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useMarketingTenant } from "@/contexts/MarketingTenantContext";
 import { pathWithMarketingScope } from "@/lib/marketing/access";
+import { sanitizeMarketingEmailRow } from "@/lib/marketing/sanitize-marketing-email-row";
 
 type EmailRow = {
   id: string;
+  tenant_id: string | null;
+  /** Real `marketing_campaigns.id` UUID only — never newsletter/promotional strings. */
+  campaign_id: string | null;
+  /** newsletter | promotional | transactional | … */
+  campaign_type: string | null;
   subject: string;
   status: string;
   recipient_count: number;
@@ -16,8 +22,18 @@ type EmailRow = {
   created_at: string;
 };
 
+function orgColumnLabel(tenantId: string | null | undefined, tenants: { id: string; name: string }[]): string {
+  if (tenantId == null || tenantId === "") return "All";
+  return tenants.find((t) => t.id === tenantId)?.name ?? tenantId;
+}
+
+function typeLabel(campaignType: string | null | undefined): string {
+  if (campaignType?.trim()) return campaignType;
+  return "—";
+}
+
 export default function MarketingEmailListPage() {
-  const { querySuffix, dataReady } = useMarketingTenant();
+  const { tenants, querySuffix, dataReady } = useMarketingTenant();
   const [rows, setRows] = useState<EmailRow[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -30,7 +46,8 @@ export default function MarketingEmailListPage() {
     if (!res.ok) setErr(j.error ?? "Failed");
     else {
       setErr(null);
-      setRows(j.emails ?? []);
+      const raw = (j.emails ?? []) as Record<string, unknown>[];
+      setRows(raw.map((r) => sanitizeMarketingEmailRow(r) as EmailRow));
     }
     setLoading(false);
   }
@@ -77,6 +94,8 @@ export default function MarketingEmailListPage() {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
           <thead>
             <tr style={{ textAlign: "left", borderBottom: "1px solid rgba(26,74,74,0.12)" }}>
+              <th style={{ padding: 12 }}>Organization</th>
+              <th style={{ padding: 12 }}>Type</th>
               <th style={{ padding: 12 }}>Subject</th>
               <th style={{ padding: 12 }}>Status</th>
               <th style={{ padding: 12 }}>Sent</th>
@@ -94,6 +113,8 @@ export default function MarketingEmailListPage() {
               const clickRate = rc > 0 ? Math.round((cc / rc) * 1000) / 10 : null;
               return (
                 <tr key={r.id} style={{ borderBottom: "1px solid rgba(26,74,74,0.06)" }}>
+                  <td style={{ padding: 12 }}>{orgColumnLabel(r.tenant_id, tenants)}</td>
+                  <td style={{ padding: 12 }}>{typeLabel(r.campaign_type)}</td>
                   <td style={{ padding: 12 }}>{r.subject || "(no subject)"}</td>
                   <td style={{ padding: 12 }}>{r.status}</td>
                   <td style={{ padding: 12 }}>{r.sent_at ? new Date(r.sent_at).toLocaleString() : "—"}</td>
