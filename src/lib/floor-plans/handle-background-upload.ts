@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { FLOOR_PLANS_STORAGE_BUCKET } from "@/lib/floor-plans/storage-bucket";
+import { FLOOR_PLAN_BACKGROUND_SIGNED_URL_EXPIRY } from "@/lib/floor-plans/background-storage-path";
 
 const MAX_BYTES = 40 * 1024 * 1024;
 
@@ -35,7 +36,7 @@ async function detectScaleFromPdfBuffer(buf: Buffer): Promise<number | undefined
 /**
  * POST multipart: field "file" — PDF, PNG, JPEG, WebP, or SVG.
  * PDFs are stored as application/pdf; the editor renders the first page in the browser (PDF.js).
- * Other types upload to Supabase Storage and set floor_plans.background_image_url.
+ * Other types upload to Supabase Storage and set floor_plans.background_image_url to the object path (signed URLs are issued on read).
  */
 export async function handleFloorPlanBackgroundUpload(req: Request, floorPlanId: string) {
   if (!floorPlanId?.trim()) {
@@ -122,26 +123,35 @@ export async function handleFloorPlanBackgroundUpload(req: Request, floorPlanId:
     return NextResponse.json(
       {
         error: upErr.message,
-        hint: "Ensure the Storage bucket exists and is public. Run sql/storage_floor_plans_bucket.sql in Supabase SQL Editor.",
+        hint: "Ensure the Storage bucket exists and policies allow service uploads. Run sql/storage_floor_plans_bucket.sql in Supabase SQL Editor.",
       },
       { status: 500 },
     );
   }
 
-  const { data: pub } = admin.storage.from(FLOOR_PLANS_STORAGE_BUCKET).getPublicUrl(path);
-  const publicUrl = pub.publicUrl;
+  const { data: signed, error: signErr } = await admin.storage
+    .from(FLOOR_PLANS_STORAGE_BUCKET)
+    .createSignedUrl(path, FLOOR_PLAN_BACKGROUND_SIGNED_URL_EXPIRY);
+  if (signErr || !signed?.signedUrl) {
+    console.error("[floor-plans/background] createSignedUrl", signErr);
+    return NextResponse.json(
+      { error: signErr?.message ?? "Could not create signed URL for background" },
+      { status: 500 },
+    );
+  }
+  const displayUrl = signed.signedUrl;
 
   const { error: uErr } = await supabase
     .from("floor_plans")
     .update({
-      background_image_url: publicUrl,
+      background_image_url: path,
       show_background: true,
       updated_at: new Date().toISOString(),
     })
     .eq("id", floorPlanId);
   if (uErr) return NextResponse.json({ error: uErr.message }, { status: 500 });
 
-  const base = { publicUrl, url: publicUrl, path };
+  const base = { publicUrl: displayUrl, url: displayUrl, path };
   if (lower.endsWith(".pdf")) {
     const detectedScale = await detectScaleFromPdfBuffer(uploadBuffer);
     return NextResponse.json({

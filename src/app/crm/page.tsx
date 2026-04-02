@@ -232,7 +232,7 @@ export default function CRMPage() {
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <section style={{ ...cardStyle, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <h1 style={{ margin: 0, fontSize: 22 }}>Sales Pipeline</h1>
+        <h1 className="vw-admin-page-title" style={{ margin: 0 }}>Sales Pipeline</h1>
         <span style={{ flex: 1 }} />
         <Link href="/crm" style={{ fontWeight: 700 }}>
           CRM Pipeline

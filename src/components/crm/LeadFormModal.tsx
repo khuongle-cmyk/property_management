@@ -80,6 +80,8 @@ export type LeadFormModalProps = {
   };
   onClose: () => void;
   onSaved: () => void;
+  /** After successful create; receive new lead id (fetch row in parent if needed). */
+  onCreatedLeadId?: (id: string) => void | Promise<void>;
 };
 
 const overlay: React.CSSProperties = {
@@ -105,7 +107,17 @@ const box: React.CSSProperties = {
 
 const sectionTitle: React.CSSProperties = { margin: "16px 0 8px", fontSize: 15, fontWeight: 700, color: "#0f172a" };
 
-export function LeadFormModal({ open, mode, leadId, tenantId, properties, initial, onClose, onSaved }: LeadFormModalProps) {
+export function LeadFormModal({
+  open,
+  mode,
+  leadId,
+  tenantId,
+  properties,
+  initial,
+  onClose,
+  onSaved,
+  onCreatedLeadId,
+}: LeadFormModalProps) {
   const [companyName, setCompanyName] = useState("");
   const [businessId, setBusinessId] = useState("");
   const [vatNumber, setVatNumber] = useState("");
@@ -240,11 +252,15 @@ export function LeadFormModal({ open, mode, leadId, tenantId, properties, initia
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tenantId, ...payload }),
       });
-      const j = (await res.json()) as { error?: string };
+      const j = (await res.json()) as { error?: string; id?: string | null };
       setSaving(false);
       if (!res.ok) {
         setError(j.error ?? "Save failed");
         return;
+      }
+      const rawId = j.id != null ? String(j.id).trim() : "";
+      if (rawId) {
+        await Promise.resolve(onCreatedLeadId?.(rawId));
       }
       onSaved();
       onClose();

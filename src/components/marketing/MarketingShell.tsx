@@ -2,50 +2,53 @@
 
 import type { ReactNode } from "react";
 import { MarketingTenantProvider, useMarketingTenant } from "@/contexts/MarketingTenantContext";
-import MarketingSubNav from "@/components/marketing/MarketingSubNav";
+import MarketingNav from "@/components/marketing/MarketingNav";
 
 function Inner({ children }: { children: ReactNode }) {
   const { loading, error, tenantId, tenants, isSuperAdmin, dataReady, setTenantId } = useMarketingTenant();
 
   if (loading) {
-    return <p style={{ color: "var(--petrol, #1a4a4a)", opacity: 0.8 }}>Loading marketing…</p>;
+    return (
+      <div className="mx-auto max-w-[1400px] p-6">
+        <p className="text-sm text-gray-500">Loading marketing…</p>
+      </div>
+    );
   }
 
   if (error) {
-    return <p style={{ color: "#b42318" }}>{error}</p>;
+    return (
+      <div className="mx-auto max-w-[1400px] p-6">
+        <p className="text-sm text-red-700">{error}</p>
+      </div>
+    );
   }
 
+  const orgSelectValue = isSuperAdmin ? (tenantId === "" ? "all" : tenantId) : tenantId;
+
   return (
-    <>
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          alignItems: "center",
-          gap: 12,
-          marginBottom: 16,
-        }}
-      >
-        <h1 style={{ margin: 0, flex: "1 1 auto", fontFamily: "var(--font-instrument-serif), serif", fontWeight: 400 }}>
-          Marketing
-        </h1>
+    <div className="mx-auto max-w-[1400px] p-6">
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <h1 className="vw-admin-page-title">Marketing</h1>
         {isSuperAdmin || tenants.length > 1 ? (
-          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
-            <span style={{ color: "rgba(26,74,74,0.75)" }}>Organization</span>
+          <label className="flex flex-wrap items-center gap-2 text-sm text-gray-500">
+            <span>Organization</span>
             <select
-              value={tenantId}
-              onChange={(e) => setTenantId(e.target.value)}
+              value={orgSelectValue}
+              onChange={(e) => {
+                const v = e.target.value;
+                setTenantId(v === "all" ? "" : v);
+              }}
               style={{
+                border: "1px solid #d1d5db",
+                borderRadius: "8px",
                 padding: "8px 12px",
-                borderRadius: 8,
-                border: "1px solid rgba(26,74,74,0.25)",
-                background: "#fff",
-                minWidth: 200,
+                backgroundColor: "#fff",
+                color: "#111827",
+                minWidth: "200px",
+                fontSize: "14px",
               }}
             >
-              {isSuperAdmin ? (
-                <option value="">All organizations</option>
-              ) : null}
+              {isSuperAdmin ? <option value="all">All organizations</option> : null}
               {tenants.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name}
@@ -55,9 +58,15 @@ function Inner({ children }: { children: ReactNode }) {
           </label>
         ) : null}
       </div>
-      <MarketingSubNav />
-      {!dataReady ? <p style={{ color: "#b42318" }}>Select an organization to continue.</p> : children}
-    </>
+
+      <MarketingNav />
+
+      {!dataReady ? (
+        <p className="text-sm text-gray-500">Select an organization to continue.</p>
+      ) : (
+        children
+      )}
+    </div>
   );
 }
 

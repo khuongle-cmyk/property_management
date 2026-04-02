@@ -37,11 +37,16 @@ export async function GET(req: Request) {
   const scopeIds = marketingScopeTenantIds(resolved.scope);
   const tenantKey = marketingResponseTenantKey(resolved.scope);
 
-  const start = monthStartUtc();
-  const end = monthEndUtc();
-  const now = new Date();
-  const y = now.getUTCFullYear();
-  const m = now.getUTCMonth() + 1;
+  const monthParam = url.searchParams.get("month")?.trim();
+  let refDate = new Date();
+  if (monthParam && /^\d{4}-\d{2}$/.test(monthParam)) {
+    const [yy, mm] = monthParam.split("-").map(Number);
+    refDate = new Date(Date.UTC(yy, (mm ?? 1) - 1, 1));
+  }
+  const start = monthStartUtc(refDate);
+  const end = monthEndUtc(refDate);
+  const y = refDate.getUTCFullYear();
+  const m = refDate.getUTCMonth() + 1;
   const monthPrefix = `${y}-${String(m).padStart(2, "0")}`;
 
   if (scopeIds.length === 0) {

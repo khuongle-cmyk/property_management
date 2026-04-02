@@ -5,7 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { LEAD_STAGE_LABEL, LEAD_STAGES, type LeadStage } from "@/lib/crm";
-import { normalizeLeadSource, normalizeSpaceType } from "@/lib/crm/lead-import-parse";
+import { normalizeSpaceType } from "@/lib/crm/lead-import-parse";
+import CreateContactModal from "@/components/shared/CreateContactModal";
 import { formatPropertyLabel } from "@/lib/properties/label";
 import { formatDate } from "@/lib/date/format";
 
@@ -93,51 +94,8 @@ type StatusFilter = "all" | ContactStatus;
 const PETROL = "#0D4F4F";
 const PETROL_HOVER = "#0a3f3f";
 
-const CONTACT_CREATE_STATUSES = ["Lead", "Pipeline lead", "Active", "Inactive", "Lost"] as const;
-const CONTACT_CREATE_STAGE_LABELS = ["New", "Viewing", "Proposal", "Negotiation", "Contacted", "Won", "Lost"] as const;
 const SPACE_TYPE_OPTIONS = ["Office", "Meeting room", "Venue", "Coworking", "Virtual Office"] as const;
-const SOURCE_OPTIONS = ["Website", "Chatbot", "Referral", "Cold call", "Email campaign", "Walk-in", "Other"] as const;
 const COMPANY_SIZE_OPTIONS = ["1-5", "6-10", "11-25", "26-50", "51-100", "100+"] as const;
-
-function mapUiStageToLeadStage(label: string): LeadStage {
-  const m: Record<string, LeadStage> = {
-    New: "new",
-    Viewing: "viewing",
-    Proposal: "offer_sent",
-    Negotiation: "negotiation",
-    Contacted: "contacted",
-    Won: "won",
-    Lost: "lost",
-  };
-  return m[label] ?? "new";
-}
-
-function mapUiSourceToDbSource(ui: string): string {
-  const raw: Record<string, string> = {
-    Website: "website",
-    Chatbot: "chatbot",
-    Referral: "referral",
-    "Cold call": "phone",
-    "Email campaign": "email",
-    "Walk-in": "other",
-    Other: "other",
-  };
-  return normalizeLeadSource(raw[ui] ?? "other");
-}
-
-function mapUiSpaceTypeToDb(ui: string): string | null {
-  if (ui === "Virtual Office") return null;
-  const raw: Record<string, string> = {
-    Office: "office",
-    "Meeting room": "meeting_room",
-    Venue: "venue",
-    Coworking: "coworking",
-  };
-  const key = raw[ui];
-  if (!key) return null;
-  const n = normalizeSpaceType(key === "coworking" ? "hot_desk" : key);
-  return n;
-}
 
 function spaceTypeDbToUi(raw: string | null | undefined): (typeof SPACE_TYPE_OPTIONS)[number] | "" {
   const n = normalizeSpaceType(raw ?? undefined);
@@ -147,23 +105,6 @@ function spaceTypeDbToUi(raw: string | null | undefined): (typeof SPACE_TYPE_OPT
   if (n === "hot_desk") return "Coworking";
   return "";
 }
-
-const defaultCreateForm = () => ({
-  companyName: "",
-  businessId: "",
-  contactPerson: "",
-  email: "",
-  phone: "",
-  contactStatus: "Lead" as (typeof CONTACT_CREATE_STATUSES)[number],
-  stageUi: "New" as (typeof CONTACT_CREATE_STAGE_LABELS)[number],
-  propertyId: "",
-  spaceType: "Office" as (typeof SPACE_TYPE_OPTIONS)[number],
-  source: "Website" as (typeof SOURCE_OPTIONS)[number],
-  companySize: "1-5" as (typeof COMPANY_SIZE_OPTIONS)[number],
-  industry: "",
-  notes: "",
-  assignedAgentUserId: "",
-});
 
 const cardStyle: React.CSSProperties = {
   background: "#fff",
@@ -225,12 +166,9 @@ export default function CrmContactsPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("table");
 
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [createSubmitting, setCreateSubmitting] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [assignableUsers, setAssignableUsers] = useState<UserRow[]>([]);
   const [defaultTenantId, setDefaultTenantId] = useState("");
-  const [createForm, setCreateForm] = useState(defaultCreateForm);
 
   const [showConvertModal, setShowConvertModal] = useState(false);
   const [convertSubmitting, setConvertSubmitting] = useState(false);
@@ -577,77 +515,6 @@ export default function CrmContactsPage() {
     await loadAll();
   }
 
-  async function submitCreateContact(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    if (!canEdit) return;
-    const company = createForm.companyName.trim();
-    const contact = createForm.contactPerson.trim();
-    const email = createForm.email.trim().toLowerCase();
-    if (!company || !contact || !email) {
-      setCreateError("Company name, contact person, and email are required.");
-      return;
-    }
-
-    setCreateSubmitting(true);
-    setCreateError(null);
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
-      setCreateError("You must be signed in.");
-      setCreateSubmitting(false);
-      return;
-    }
-
-    const prop = createForm.propertyId ? properties.find((p) => p.id === createForm.propertyId) : undefined;
-    const tenant_id = prop?.tenant_id ?? defaultTenantId;
-    if (!tenant_id) {
-      setCreateError("Select a property, or ensure your account is linked to an organization.");
-      setCreateSubmitting(false);
-      return;
-    }
-
-    let stage: LeadStage = mapUiStageToLeadStage(createForm.stageUi);
-    const archived = createForm.contactStatus === "Inactive";
-    if (createForm.contactStatus === "Lost") {
-      stage = "lost";
-    }
-
-    const payload = {
-      tenant_id,
-      pipeline_owner: tenant_id,
-      company_name: company,
-      business_id: createForm.businessId.trim() || null,
-      contact_person_name: contact,
-      email,
-      phone: createForm.phone.trim() || null,
-      stage,
-      archived,
-      property_id: createForm.propertyId || null,
-      interested_space_type: mapUiSpaceTypeToDb(createForm.spaceType),
-      source: mapUiSourceToDbSource(createForm.source),
-      company_size: createForm.companySize || null,
-      industry_sector: createForm.industry.trim() || null,
-      notes: createForm.notes.trim() || null,
-      assigned_agent_user_id: createForm.assignedAgentUserId || null,
-      created_by_user_id: user.id,
-    };
-
-    const { error: insErr } = await supabase.from("leads").insert(payload);
-    if (insErr) {
-      setCreateError(insErr.message);
-      setCreateSubmitting(false);
-      return;
-    }
-
-    setShowCreateModal(false);
-    setCreateForm(defaultCreateForm());
-    setToast("Contact created successfully.");
-    await loadAll();
-    setCreateSubmitting(false);
-  }
-
   function openConvertToCustomer(r: ContactRecord) {
     if (!r.leadId || !r.tenantId) return;
     setConvertForm({
@@ -757,36 +624,19 @@ export default function CrmContactsPage() {
       ) : null}
 
       <section style={{ ...cardStyle, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", maxWidth: "100%", minWidth: 0 }}>
-        <h1 style={{ margin: 0, fontSize: 22 }}>Contacts / Client database</h1>
+        <h1 className="vw-admin-page-title" style={{ margin: 0 }}>Contacts / Client database</h1>
         <span style={{ flex: 1, minWidth: 8 }} />
-        <Link href="/crm" style={{ color: "#2563eb" }}>CRM Pipeline</Link>
-        <Link href="/crm/contacts" style={{ color: "#0f172a", fontWeight: 700 }}>Contacts</Link>
-        <Link href="/crm/import" style={{ color: "#2563eb" }}>Import contacts</Link>
+        <Link href="/crm" className="vw-btn-secondary" style={{ textDecoration: "none" }}>
+          CRM Pipeline
+        </Link>
+        <Link href="/crm/contacts" className="vw-tab-active" style={{ textDecoration: "none" }}>
+          Contacts
+        </Link>
+        <Link href="/crm/import" className="vw-btn-secondary" style={{ textDecoration: "none" }}>
+          Import contacts
+        </Link>
         {canEdit ? (
-          <button
-            type="button"
-            onClick={() => {
-              setCreateForm(defaultCreateForm());
-              setCreateError(null);
-              setShowCreateModal(true);
-            }}
-            style={{
-              background: PETROL,
-              color: "#fff",
-              padding: "8px 16px",
-              borderRadius: 8,
-              border: "none",
-              fontWeight: 600,
-              cursor: "pointer",
-              fontSize: 14,
-            }}
-            onMouseEnter={(ev) => {
-              ev.currentTarget.style.background = PETROL_HOVER;
-            }}
-            onMouseLeave={(ev) => {
-              ev.currentTarget.style.background = PETROL;
-            }}
-          >
+          <button type="button" className="vw-btn-primary" onClick={() => setShowCreateModal(true)}>
             + Create Contact
           </button>
         ) : null}
@@ -810,20 +660,28 @@ export default function CrmContactsPage() {
           placeholder="Search company, contact, email, phone, Y-tunnus..."
           style={{ padding: 10, minWidth: 0, flex: "1 1 200px", maxWidth: "100%" }}
         />
-        <button type="button" onClick={() => setShowFilters((v) => !v)} style={{ padding: "10px 12px" }}>
+        <button type="button" className="vw-btn-secondary" onClick={() => setShowFilters((v) => !v)}>
           {showFilters ? "Hide filters" : "Show filters"}
         </button>
-        <select value={sortBy} onChange={(e) => setSortBy(e.target.value as SortBy)} style={{ padding: 10 }}>
+        <select className="vw-select" value={sortBy} onChange={(e) => setSortBy(e.target.value as SortBy)}>
           <option value="company_az">Company name A-Z</option>
           <option value="recent_added">Recently added</option>
           <option value="recent_updated">Recently updated</option>
           <option value="budget_desc">Budget high to low</option>
           <option value="move_in_soon">Move-in date soonest</option>
         </select>
-        <button type="button" onClick={() => setViewMode("table")} style={{ padding: "10px 12px" }}>Table</button>
-        <button type="button" onClick={() => setViewMode("card")} style={{ padding: "10px 12px" }}>Cards</button>
-        <button type="button" onClick={exportExcel} style={{ padding: "10px 12px" }}>Export Excel</button>
-        <button type="button" onClick={exportCsv} style={{ padding: "10px 12px" }}>Export CSV</button>
+        <button type="button" className={viewMode === "table" ? "vw-tab-active" : "vw-tab-inactive"} onClick={() => setViewMode("table")}>
+          Table
+        </button>
+        <button type="button" className={viewMode === "card" ? "vw-tab-active" : "vw-tab-inactive"} onClick={() => setViewMode("card")}>
+          Cards
+        </button>
+        <button type="button" className="vw-btn-secondary" onClick={exportExcel}>
+          Export Excel
+        </button>
+        <button type="button" className="vw-btn-secondary" onClick={exportCsv}>
+          Export CSV
+        </button>
       </section>
 
       <div
@@ -842,7 +700,12 @@ export default function CrmContactsPage() {
             <h3 style={{ margin: 0, fontSize: 16 }}>Filters</h3>
             <label style={{ display: "grid", gap: 4 }}>
               Status
-              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)} style={{ padding: 8 }}>
+              <select
+                className="vw-select"
+                style={{ width: "100%" }}
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+              >
                 <option value="all">All</option>
                 <option value="pipeline_lead">Pipeline lead</option>
                 <option value="active_tenant">Active tenant</option>
@@ -851,7 +714,12 @@ export default function CrmContactsPage() {
             </label>
             <label style={{ display: "grid", gap: 4 }}>
               Property
-              <select value={propertyFilter} onChange={(e) => setPropertyFilter(e.target.value)} style={{ padding: 8 }}>
+              <select
+                className="vw-select"
+                style={{ width: "100%" }}
+                value={propertyFilter}
+                onChange={(e) => setPropertyFilter(e.target.value)}
+              >
                 <option value="all">All</option>
                 {properties.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -862,7 +730,12 @@ export default function CrmContactsPage() {
             </label>
             <label style={{ display: "grid", gap: 4 }}>
               Space type
-              <select value={spaceTypeFilter} onChange={(e) => setSpaceTypeFilter(e.target.value)} style={{ padding: 8 }}>
+              <select
+                className="vw-select"
+                style={{ width: "100%" }}
+                value={spaceTypeFilter}
+                onChange={(e) => setSpaceTypeFilter(e.target.value)}
+              >
                 <option value="all">All</option>
                 {spaceTypeOptions.map((s) => (
                   <option key={s} value={s}>{s}</option>
@@ -880,7 +753,12 @@ export default function CrmContactsPage() {
             </label>
             <label style={{ display: "grid", gap: 4 }}>
               Source
-              <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} style={{ padding: 8 }}>
+              <select
+                className="vw-select"
+                style={{ width: "100%" }}
+                value={sourceFilter}
+                onChange={(e) => setSourceFilter(e.target.value)}
+              >
                 <option value="all">All</option>
                 {sourceOptions.map((s) => (
                   <option key={s} value={s}>{s}</option>
@@ -889,7 +767,12 @@ export default function CrmContactsPage() {
             </label>
             <label style={{ display: "grid", gap: 4 }}>
               Company size
-              <select value={companySizeFilter} onChange={(e) => setCompanySizeFilter(e.target.value)} style={{ padding: 8 }}>
+              <select
+                className="vw-select"
+                style={{ width: "100%" }}
+                value={companySizeFilter}
+                onChange={(e) => setCompanySizeFilter(e.target.value)}
+              >
                 <option value="all">All</option>
                 {sizeOptions.map((s) => (
                   <option key={s} value={s}>{s}</option>
@@ -898,7 +781,12 @@ export default function CrmContactsPage() {
             </label>
             <label style={{ display: "grid", gap: 4 }}>
               Industry
-              <select value={industryFilter} onChange={(e) => setIndustryFilter(e.target.value)} style={{ padding: 8 }}>
+              <select
+                className="vw-select"
+                style={{ width: "100%" }}
+                value={industryFilter}
+                onChange={(e) => setIndustryFilter(e.target.value)}
+              >
                 <option value="all">All</option>
                 {industryOptions.map((s) => (
                   <option key={s} value={s}>{s}</option>
@@ -911,7 +799,13 @@ export default function CrmContactsPage() {
             </label>
             <label style={{ display: "grid", gap: 4 }}>
               Added to
-              <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={{ padding: 8 }} />
+              <input
+                type="date"
+                className="vw-select"
+                style={{ width: "100%" }}
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+              />
             </label>
           </aside>
         ) : null}
@@ -1015,261 +909,18 @@ export default function CrmContactsPage() {
         </section>
       </div>
 
-      {showCreateModal ? (
-        <div
-          role="presentation"
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 10000,
-            background: "rgba(0,0,0,0.45)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16,
-            overflowY: "auto",
-          }}
-          onClick={() => {
-            if (!createSubmitting) setShowCreateModal(false);
-          }}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="create-contact-title"
-            onClick={(ev) => ev.stopPropagation()}
-            style={{
-              background: "#fff",
-              borderRadius: 16,
-              padding: 24,
-              maxWidth: 520,
-              width: "100%",
-              maxHeight: "min(90vh, 900px)",
-              overflowY: "auto",
-              boxSizing: "border-box",
-            }}
-          >
-            <h2 id="create-contact-title" style={{ margin: "0 0 16px", fontSize: 20, fontWeight: 700, color: "#0f172a" }}>
-              Create Contact
-            </h2>
-            <p style={{ margin: "0 0 16px", fontSize: 13, color: "#64748b", lineHeight: 1.45 }}>
-              New records are saved to the CRM pipeline (<code style={{ fontSize: 12 }}>leads</code>).
-            </p>
-            <form onSubmit={(e) => void submitCreateContact(e)} style={{ display: "grid", gap: 14 }}>
-              <label style={modalLabel}>
-                Company name *
-                <input
-                  required
-                  value={createForm.companyName}
-                  onChange={(e) => setCreateForm((f) => ({ ...f, companyName: e.target.value }))}
-                  style={modalInput}
-                />
-              </label>
-              <label style={modalLabel}>
-                Y-tunnus
-                <input
-                  type="text"
-                  value={createForm.businessId}
-                  onChange={(e) => setCreateForm((f) => ({ ...f, businessId: e.target.value }))}
-                  placeholder="e.g. 1234567-8"
-                  style={modalInput}
-                />
-              </label>
-              <label style={modalLabel}>
-                Contact person *
-                <input
-                  required
-                  value={createForm.contactPerson}
-                  onChange={(e) => setCreateForm((f) => ({ ...f, contactPerson: e.target.value }))}
-                  style={modalInput}
-                />
-              </label>
-              <label style={modalLabel}>
-                Email *
-                <input
-                  required
-                  type="email"
-                  value={createForm.email}
-                  onChange={(e) => setCreateForm((f) => ({ ...f, email: e.target.value }))}
-                  style={modalInput}
-                />
-              </label>
-              <label style={modalLabel}>
-                Phone
-                <input
-                  value={createForm.phone}
-                  onChange={(e) => setCreateForm((f) => ({ ...f, phone: e.target.value }))}
-                  style={modalInput}
-                />
-              </label>
-              <label style={modalLabel}>
-                Status
-                <select
-                  value={createForm.contactStatus}
-                  onChange={(e) =>
-                    setCreateForm((f) => ({ ...f, contactStatus: e.target.value as (typeof CONTACT_CREATE_STATUSES)[number] }))
-                  }
-                  style={modalInput}
-                >
-                  {CONTACT_CREATE_STATUSES.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label style={modalLabel}>
-                Stage
-                <select
-                  value={createForm.stageUi}
-                  onChange={(e) =>
-                    setCreateForm((f) => ({ ...f, stageUi: e.target.value as (typeof CONTACT_CREATE_STAGE_LABELS)[number] }))
-                  }
-                  style={modalInput}
-                >
-                  {CONTACT_CREATE_STAGE_LABELS.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label style={modalLabel}>
-                Property
-                <select
-                  value={createForm.propertyId}
-                  onChange={(e) => setCreateForm((f) => ({ ...f, propertyId: e.target.value }))}
-                  style={modalInput}
-                >
-                  <option value="">— None —</option>
-                  {properties.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {formatPropertyLabel(p, { includeCity: true })}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label style={modalLabel}>
-                Space type
-                <select
-                  value={createForm.spaceType}
-                  onChange={(e) =>
-                    setCreateForm((f) => ({ ...f, spaceType: e.target.value as (typeof SPACE_TYPE_OPTIONS)[number] }))
-                  }
-                  style={modalInput}
-                >
-                  {SPACE_TYPE_OPTIONS.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label style={modalLabel}>
-                Source
-                <select
-                  value={createForm.source}
-                  onChange={(e) => setCreateForm((f) => ({ ...f, source: e.target.value as (typeof SOURCE_OPTIONS)[number] }))}
-                  style={modalInput}
-                >
-                  {SOURCE_OPTIONS.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label style={modalLabel}>
-                Company size
-                <select
-                  value={createForm.companySize}
-                  onChange={(e) =>
-                    setCreateForm((f) => ({ ...f, companySize: e.target.value as (typeof COMPANY_SIZE_OPTIONS)[number] }))
-                  }
-                  style={modalInput}
-                >
-                  {COMPANY_SIZE_OPTIONS.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label style={modalLabel}>
-                Industry
-                <input
-                  value={createForm.industry}
-                  onChange={(e) => setCreateForm((f) => ({ ...f, industry: e.target.value }))}
-                  style={modalInput}
-                />
-              </label>
-              <label style={modalLabel}>
-                Notes
-                <textarea
-                  value={createForm.notes}
-                  onChange={(e) => setCreateForm((f) => ({ ...f, notes: e.target.value }))}
-                  rows={4}
-                  style={{ ...modalInput, resize: "vertical", fontFamily: "inherit" }}
-                />
-              </label>
-              <label style={modalLabel}>
-                Assigned agent
-                <select
-                  value={createForm.assignedAgentUserId}
-                  onChange={(e) => setCreateForm((f) => ({ ...f, assignedAgentUserId: e.target.value }))}
-                  style={modalInput}
-                >
-                  <option value="">— None —</option>
-                  {assignableUsers.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.display_name ?? u.email ?? u.id.slice(0, 8)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              {createError ? (
-                <p style={{ margin: 0, fontSize: 13, color: "#b91c1c" }}>{createError}</p>
-              ) : null}
-
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
-                <button
-                  type="button"
-                  disabled={createSubmitting}
-                  onClick={() => setShowCreateModal(false)}
-                  style={{
-                    padding: "10px 18px",
-                    borderRadius: 8,
-                    border: "1px solid #e5e7eb",
-                    background: "#fff",
-                    color: "#334155",
-                    fontWeight: 600,
-                    cursor: createSubmitting ? "not-allowed" : "pointer",
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={createSubmitting}
-                  style={{
-                    padding: "10px 18px",
-                    borderRadius: 8,
-                    border: "none",
-                    background: PETROL,
-                    color: "#fff",
-                    fontWeight: 600,
-                    cursor: createSubmitting ? "not-allowed" : "pointer",
-                    opacity: createSubmitting ? 0.7 : 1,
-                  }}
-                >
-                  {createSubmitting ? "Saving…" : "Create contact"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      ) : null}
+      <CreateContactModal
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        initialCompanyName=""
+        properties={properties}
+        defaultTenantId={defaultTenantId}
+        assignableUsers={assignableUsers}
+        onCreated={() => {
+          setToast("Contact created successfully.");
+          void loadAll();
+        }}
+      />
 
       {showConvertModal ? (
         <div
@@ -1381,9 +1032,10 @@ export default function CrmContactsPage() {
               <label style={modalLabel}>
                 Company size
                 <select
+                  className="vw-select"
+                  style={{ width: "100%", boxSizing: "border-box" }}
                   value={convertForm.companySize}
                   onChange={(e) => setConvertForm((f) => ({ ...f, companySize: e.target.value }))}
-                  style={modalInput}
                 >
                   <option value="">—</option>
                   {COMPANY_SIZE_OPTIONS.map((s) => (
@@ -1396,9 +1048,10 @@ export default function CrmContactsPage() {
               <label style={modalLabel}>
                 Property
                 <select
+                  className="vw-select"
+                  style={{ width: "100%", boxSizing: "border-box" }}
                   value={convertForm.propertyId}
                   onChange={(e) => setConvertForm((f) => ({ ...f, propertyId: e.target.value }))}
-                  style={modalInput}
                 >
                   <option value="">— None —</option>
                   {properties.map((p) => (
@@ -1411,11 +1064,12 @@ export default function CrmContactsPage() {
               <label style={modalLabel}>
                 Space type
                 <select
+                  className="vw-select"
+                  style={{ width: "100%", boxSizing: "border-box" }}
                   value={convertForm.spaceType}
                   onChange={(e) =>
                     setConvertForm((f) => ({ ...f, spaceType: e.target.value as (typeof SPACE_TYPE_OPTIONS)[number] }))
                   }
-                  style={modalInput}
                 >
                   {SPACE_TYPE_OPTIONS.map((s) => (
                     <option key={s} value={s}>

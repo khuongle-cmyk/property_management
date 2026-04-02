@@ -13,6 +13,7 @@ import {
   type FormEvent,
 } from "react";
 import { getSupabaseClient } from "@/lib/supabase/browser";
+import { createRoomPhotoSignedUrlMap } from "@/lib/storage/room-photo-signed-url";
 import * as XLSX from "xlsx";
 import {
   AMENITY_KEYS,
@@ -68,12 +69,6 @@ type RoomRow = {
 
 type PropertyRow = { id: string; name: string; city: string | null; tenant_id: string };
 type MembershipRow = { tenant_id: string | null; role: string | null };
-
-function photoPublicUrl(storagePath: string): string {
-  const base = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-  const encoded = storagePath.split("/").map(encodeURIComponent).join("/");
-  return `${base}/storage/v1/object/public/room-photos/${encoded}`;
-}
 
 function priceForFilter(r: RoomRow): number {
   if (r.space_type === "office") return Number(r.monthly_rent_eur) || 0;
@@ -382,6 +377,7 @@ export default function RoomsDashboardPage() {
   const [editing, setEditing] = useState<RoomRow | null>(null);
   const [editBusy, setEditBusy] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
+  const [signedRoomPhotoUrls, setSignedRoomPhotoUrls] = useState<Map<string, string>>(new Map());
 
   // Excel import/export
   const importFileRef = useRef<HTMLInputElement | null>(null);
@@ -708,6 +704,25 @@ export default function RoomsDashboardPage() {
     if (properties.some((p) => p.id === q)) setSelectedPropertyId(q);
   }, [searchParams, properties]);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const paths: string[] = [];
+      for (const r of rooms) {
+        for (const ph of r.room_photos ?? []) paths.push(ph.storage_path);
+      }
+      if (editing) {
+        for (const ph of editing.room_photos ?? []) paths.push(ph.storage_path);
+      }
+      const supabase = getSupabaseClient();
+      const map = await createRoomPhotoSignedUrlMap(supabase, paths);
+      if (!cancelled) setSignedRoomPhotoUrls(map);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [rooms, editing]);
+
   const propertyQuickStats = useMemo(() => {
     const m: Record<string, { totalRooms: number; occPct: number }> = {};
     for (const p of properties) {
@@ -951,7 +966,7 @@ export default function RoomsDashboardPage() {
   if (properties.length === 0) {
     return (
       <div style={{ paddingBottom: 48 }}>
-        <h1 style={{ margin: "0 0 8px" }}>Rooms management</h1>
+        <h1 className="vw-admin-page-title" style={{ margin: "0 0 8px" }}>Rooms management</h1>
         <p style={{ color: "#666" }}>
           You do not have access to any properties yet, or your account is not linked to a tenant with buildings.
         </p>
@@ -975,7 +990,7 @@ export default function RoomsDashboardPage() {
 
   return (
     <div style={{ paddingBottom: 48 }}>
-      <h1 style={{ margin: "0 0 8px" }}>Rooms management</h1>
+      <h1 className="vw-admin-page-title" style={{ margin: "0 0 8px" }}>Rooms management</h1>
       <p style={{ marginTop: 0, color: "#555", maxWidth: 720 }}>
         Choose a property to view rooms, stats, and reporting. Everything below is for the selected building only.
       </p>
@@ -1326,6 +1341,7 @@ export default function RoomsDashboardPage() {
               properties={properties}
               memberships={memberships}
               isSuperAdmin={isSuperAdmin}
+              signedPhotoUrls={signedRoomPhotoUrls}
               selected={selectedIds.has(r.id)}
               onToggleSelect={() => toggleSelect(r.id)}
               onEdit={() => openEdit(r)}
@@ -1486,6 +1502,7 @@ export default function RoomsDashboardPage() {
           properties={properties}
           memberships={memberships}
           isSuperAdmin={isSuperAdmin}
+          signedPhotoUrls={signedRoomPhotoUrls}
           editBusy={editBusy}
           photoBusy={photoBusy}
           onClose={() => setEditing(null)}
@@ -1504,6 +1521,7 @@ function RoomCard({
   properties,
   memberships,
   isSuperAdmin,
+  signedPhotoUrls,
   selected,
   onToggleSelect,
   onEdit,
@@ -1514,6 +1532,7 @@ function RoomCard({
   properties: PropertyRow[];
   memberships: MembershipRow[];
   isSuperAdmin: boolean;
+  signedPhotoUrls: Map<string, string>;
   selected: boolean;
   onToggleSelect: () => void;
   onEdit: () => void;
@@ -1525,6 +1544,7 @@ function RoomCard({
   const canWrite = canManageRoom(r, properties, memberships, isSuperAdmin);
   const showTenant = canSeeTenantDetails(r, properties, memberships, isSuperAdmin);
   const thumb = r.room_photos?.[0]?.storage_path;
+  const thumbUrl = thumb ? signedPhotoUrls.get(thumb) : undefined;
   return (
     <article
       style={{
@@ -1537,9 +1557,9 @@ function RoomCard({
         boxShadow: selected ? "0 0 0 2px #111" : "none",
       }}
     >
-      {thumb ? (
+      {thumbUrl ? (
         <img
-          src={photoPublicUrl(thumb)}
+          src={thumbUrl}
           alt=""
           style={{ width: "100%", height: 120, objectFit: "cover", borderRadius: 8 }}
         />
@@ -1760,6 +1780,7 @@ function EditModal({
   properties,
   memberships,
   isSuperAdmin,
+  signedPhotoUrls,
   editBusy,
   photoBusy,
   onClose,
@@ -1772,6 +1793,7 @@ function EditModal({
   properties: PropertyRow[];
   memberships: MembershipRow[];
   isSuperAdmin: boolean;
+  signedPhotoUrls: Map<string, string>;
   editBusy: boolean;
   photoBusy: boolean;
   onClose: () => void;
@@ -2155,11 +2177,15 @@ function EditModal({
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {(room.room_photos ?? []).map((ph) => (
               <div key={ph.id} style={{ position: "relative" }}>
-                <img
-                  src={photoPublicUrl(ph.storage_path)}
-                  alt=""
-                  style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 8 }}
-                />
+                {signedPhotoUrls.get(ph.storage_path) ? (
+                  <img
+                    src={signedPhotoUrls.get(ph.storage_path)}
+                    alt=""
+                    style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 8 }}
+                  />
+                ) : (
+                  <div style={{ width: 80, height: 80, background: "#eee", borderRadius: 8 }} />
+                )}
                 <button
                   type="button"
                   onClick={() => onDeletePhoto(ph)}

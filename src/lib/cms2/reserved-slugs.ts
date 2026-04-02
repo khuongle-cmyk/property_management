@@ -24,6 +24,7 @@ export const CMS2_RESERVED_SLUGS = new Set([
   "tasks",
   "profile",
   "super-admin",
+  "admin",
   "properties",
   "meeting-rooms",
   "coworking",

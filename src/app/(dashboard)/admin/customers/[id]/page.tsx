@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import DashboardLayout from "@/components/DashboardLayout";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { formatDate } from "@/lib/date/format";
+import { tenantIdFromCompanyPropertyJoin } from "@/lib/customer-companies/tenant-from-property";
 
 const PETROL = "#0D4F4F";
 
@@ -14,7 +15,6 @@ const SPACE_TYPES = ["Office", "Meeting room", "Venue", "Coworking", "Virtual Of
 
 type CompanyRow = {
   id: string;
-  tenant_id: string;
   property_id: string | null;
   name: string;
   business_id: string | null;
@@ -29,7 +29,7 @@ type CompanyRow = {
   contract_start: string | null;
   contract_end: string | null;
   notes: string | null;
-  properties: { name: string } | { name: string }[] | null;
+  properties: { name: string; tenant_id?: string | null } | { name: string; tenant_id?: string | null }[] | null;
 };
 
 function propertyName(p: CompanyRow["properties"]): string {
@@ -126,7 +126,7 @@ export default function AdminCustomerDetailPage() {
     const { data: crow, error: cErr } = await supabase
       .from("customer_companies")
       .select(
-        "id, tenant_id, property_id, name, business_id, email, phone, address_line, city, postal_code, industry, company_size, space_type, contract_start, contract_end, notes, properties(name)",
+        "id, property_id, name, business_id, email, phone, address_line, city, postal_code, industry, company_size, space_type, contract_start, contract_end, notes, properties(name, tenant_id)",
       )
       .eq("id", id)
       .maybeSingle();
@@ -139,7 +139,7 @@ export default function AdminCustomerDetailPage() {
     const c = crow as unknown as CompanyRow;
     setCompany(c);
     setEditForm({
-      tenantId: c.tenant_id,
+      tenantId: tenantIdFromCompanyPropertyJoin(c.properties),
       name: c.name,
       businessId: c.business_id ?? "",
       email: c.email ?? "",
@@ -181,7 +181,6 @@ export default function AdminCustomerDetailPage() {
     const { error: uErr } = await supabase
       .from("customer_companies")
       .update({
-        tenant_id: isSuperAdmin ? editForm.tenantId : company.tenant_id,
         property_id: editForm.propertyId || null,
         name: editForm.name.trim(),
         business_id: editForm.businessId || null,
@@ -261,7 +260,8 @@ export default function AdminCustomerDetailPage() {
 
   const propsForTenant = useMemo(() => {
     if (!company) return properties;
-    return properties.filter((p) => p.tenant_id === (editForm.tenantId || company.tenant_id));
+    const tid = editForm.tenantId || tenantIdFromCompanyPropertyJoin(company.properties);
+    return properties.filter((p) => p.tenant_id === tid);
   }, [properties, company, editForm.tenantId]);
 
   const th: React.CSSProperties = {
@@ -300,7 +300,7 @@ export default function AdminCustomerDetailPage() {
           <Link href="/admin/customers" style={{ fontSize: 13, color: PETROL, fontWeight: 500 }}>
             ← Customer Companies
           </Link>
-          <h1 style={{ margin: "8px 0 0", fontSize: 26, fontWeight: 700, color: "#0f172a" }}>{company.name}</h1>
+          <h1 className="vw-admin-page-title" style={{ margin: "8px 0 0" }}>{company.name}</h1>
         </div>
         {!editing ? (
           <button
@@ -384,6 +384,7 @@ export default function AdminCustomerDetailPage() {
                   onChange={(e) => setEditForm((f) => ({ ...f, tenantId: e.target.value, propertyId: "" }))}
                   style={{ padding: 10, borderRadius: 8, border: "1px solid #e2e8f0" }}
                 >
+                  <option value="">Select organization…</option>
                   {tenants.map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.name}

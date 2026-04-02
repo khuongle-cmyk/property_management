@@ -119,7 +119,7 @@ function NewFloorPlanForm() {
       <Link href="/floor-plans" style={{ fontSize: 14 }}>
         ← Floor planner
       </Link>
-      <h1 style={{ marginTop: 16 }}>New floor plan</h1>
+      <h1 className="vw-admin-page-title" style={{ marginTop: 16 }}>New floor plan</h1>
       <p style={{ color: "#555" }}>Choose property and dimensions. You can add a background before opening the editor.</p>
 
       {loadErr ? <p style={{ color: "#b00020" }}>{loadErr}</p> : null}

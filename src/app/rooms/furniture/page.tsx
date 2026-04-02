@@ -186,7 +186,7 @@ export default function FurniturePage() {
 
   return (
     <main style={{ display: "grid", gap: 12 }}>
-      <h1 style={{ margin: 0 }}>Furniture</h1>
+      <h1 className="vw-admin-page-title" style={{ margin: 0 }}>Furniture</h1>
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, background: "#fff", padding: 12, display: "grid", gap: 8 }}>
         <h2 style={{ marginTop: 0, fontSize: 18 }}>Inventory</h2>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

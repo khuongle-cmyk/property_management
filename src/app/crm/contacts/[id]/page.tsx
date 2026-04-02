@@ -218,7 +218,7 @@ export default function ContactDetailPage() {
     <main style={{ display: "grid", gap: 12 }}>
       <section style={{ ...cardStyle, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <Link href="/crm/contacts" style={{ color: "#2563eb" }}>← Contacts</Link>
-        <h1 style={{ margin: 0 }}>{lead.company_name}</h1>
+        <h1 className="vw-admin-page-title" style={{ margin: 0 }}>{lead.company_name}</h1>
         {lead.stage ? <span style={{ fontSize: 12, padding: "2px 8px", borderRadius: 999, background: "#e2e8f0" }}>{LEAD_STAGE_LABEL[lead.stage]}</span> : null}
       </section>
 

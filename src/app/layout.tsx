@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import "./globals.css";
 import { DM_Sans, Instrument_Serif } from "next/font/google";
 import BrandProvider from "@/components/BrandProvider";
 import ConditionalWorkspaceChrome from "@/components/ConditionalWorkspaceChrome";

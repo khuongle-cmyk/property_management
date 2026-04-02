@@ -470,7 +470,7 @@ function LeadDetailPageInner() {
     <div style={{ display: "grid", gap: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <Link href="/crm" style={{ color: "#2563eb" }}>← Pipeline</Link>
-        <h1 style={{ margin: 0 }}>{lead.company_name}</h1>
+        <h1 className="vw-admin-page-title" style={{ margin: 0 }}>{lead.company_name}</h1>
         <span style={stageBadge(lead.stage)}>{LEAD_STAGE_LABEL[lead.stage]}</span>
         {lead.archived ? <span style={{ fontSize: 13, color: "#64748b" }}>Archived</span> : null}
         {canEditCustomer ? (

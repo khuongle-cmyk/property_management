@@ -67,7 +67,6 @@ export async function POST(req: Request) {
   }
 
   const insert = {
-    tenant_id: tenantId,
     property_id: propertyId,
     name,
     business_id: body.businessId?.trim() || null,

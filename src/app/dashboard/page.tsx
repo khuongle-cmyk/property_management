@@ -518,16 +518,16 @@ export default function DashboardPage() {
     <DashboardLayout>
       <section style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
         <div>
-          <h1 style={{ margin: 0, fontWeight: 600, letterSpacing: "-0.02em" }}>Dashboard</h1>
+          <h1 className="vw-admin-page-title" style={{ margin: 0 }}>Dashboard</h1>
           <p style={{ margin: "6px 0 0", color: "#4b6b6a", lineHeight: 1.45 }}>
             Overview of occupancy, revenue and property operations.
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Link href="/bookings" style={{ textDecoration: "none", color: c.white, background: c.primary, borderRadius: 8, padding: "9px 12px", fontWeight: 600 }}>
+          <Link href="/bookings" className="vw-btn-primary" style={{ textDecoration: "none" }}>
             Calendar
           </Link>
-          <Link href="/reports" style={{ textDecoration: "none", color: c.primary, background: c.white, border: `1px solid ${c.primary}`, borderRadius: 8, padding: "9px 12px", fontWeight: 600 }}>
+          <Link href="/reports" className="vw-btn-secondary" style={{ textDecoration: "none" }}>
             Reports
           </Link>
         </div>
@@ -541,10 +541,11 @@ export default function DashboardPage() {
         <label style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", fontSize: 14, color: c.text }}>
           <span style={{ fontWeight: 600 }}>Charts &amp; KPIs</span>
           <select
+            className="vw-select"
             value={chartPropertyId}
             onChange={(e) => setChartPropertyId(e.target.value)}
             disabled={loading || rows.length === 0}
-            style={{ padding: "8px 10px", borderRadius: 8, border: `1px solid ${c.border}`, minWidth: 200, background: c.white }}
+            style={{ minWidth: 200 }}
           >
             <option value="">All properties</option>
             {rows.map((p) => (
@@ -798,9 +799,9 @@ export default function DashboardPage() {
               <label style={{ display: "grid", gap: 6 }}>
                 <span>Role</span>
                 <select
+                  className="vw-select"
                   value={inviteRole}
                   onChange={(e) => setInviteRole(e.target.value)}
-                  style={{ padding: 10, borderRadius: 8, border: "1px solid #ddd" }}
                 >
                   <option value="manager">Manager</option>
                   <option value="accounting">Accounting</option>
@@ -811,10 +812,10 @@ export default function DashboardPage() {
               <label style={{ display: "grid", gap: 6 }}>
                 <span>Organization</span>
                 <select
+                  className="vw-select"
                   value={inviteTenantId}
                   onChange={(e) => setInviteTenantId(e.target.value)}
                   required
-                  style={{ padding: 10, borderRadius: 8, border: "1px solid #ddd" }}
                 >
                   <option value="">Select organization…</option>
                   {ownerTenants.map((t) => (
@@ -824,18 +825,7 @@ export default function DashboardPage() {
                   ))}
                 </select>
               </label>
-              <button
-                disabled={inviteLoading}
-                type="submit"
-                style={{
-                  padding: "10px 14px",
-                  borderRadius: 10,
-                  border: "1px solid #ddd",
-                  background: "#111",
-                  color: "#fff",
-                  cursor: inviteLoading ? "not-allowed" : "pointer",
-                }}
-              >
+              <button disabled={inviteLoading} type="submit" className="vw-btn-primary">
                 {inviteLoading ? "Sending..." : "Send invite"}
               </button>
               {inviteMessage ? <p style={{ margin: 0, color: "#1b5e20", fontSize: 13 }}>{inviteMessage}</p> : null}
@@ -850,9 +840,9 @@ export default function DashboardPage() {
               <label style={{ display: "grid", gap: 6 }}>
                 <span>Organization</span>
                 <select
+                  className="vw-select"
                   value={pipelineTenantId}
                   onChange={(e) => setPipelineTenantId(e.target.value)}
-                  style={{ padding: 10, borderRadius: 8, border: "1px solid #ddd" }}
                 >
                   {ownerTenants.map((t) => (
                     <option key={t.id} value={t.id}>
@@ -914,15 +904,8 @@ export default function DashboardPage() {
               <button
                 disabled={pipelineSaving}
                 type="submit"
-                style={{
-                  padding: "10px 14px",
-                  borderRadius: 10,
-                  border: "1px solid #ddd",
-                  background: "#111",
-                  color: "#fff",
-                  cursor: pipelineSaving ? "not-allowed" : "pointer",
-                  width: 180,
-                }}
+                className="vw-btn-primary"
+                style={{ width: 180 }}
               >
                 {pipelineSaving ? "Saving..." : "Save settings"}
               </button>

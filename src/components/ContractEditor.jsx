@@ -409,7 +409,7 @@ export default function ContractEditor({ leadId = null, initialData = {}, contra
       <ConfirmModal />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: c.text }}>{form.title || "Contract editor"}</h1>
+          <h1 className="vw-admin-page-title" style={{ margin: 0 }}>{form.title || "Contract editor"}</h1>
           <span style={{ fontSize: 13, fontWeight: 600, color: c.secondary }}>{verLabel}</span>
           <StatusBadge status={form.status} />
         </div>

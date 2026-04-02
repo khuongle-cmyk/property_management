@@ -86,7 +86,7 @@ export default function PropertiesListPage() {
 
   return (
     <main style={{ padding: "24px 28px", maxWidth: 1200 }}>
-      <h1 style={{ margin: "0 0 8px", fontSize: 26, fontWeight: 600 }}>Properties</h1>
+      <h1 className="vw-admin-page-title" style={{ margin: "0 0 8px" }}>Properties</h1>
       <p style={{ margin: "0 0 24px", color: "#64748b", maxWidth: 640 }}>
         Buildings and sites you can access. Open rooms, operating costs, or financial reports for each property.
       </p>

@@ -76,7 +76,7 @@ export default function SuperAdminBillingPage() {
 
   return (
     <main style={{ display: "grid", gap: 12 }}>
-      <h1 style={{ margin: 0 }}>Super admin billing</h1>
+      <h1 className="vw-admin-page-title" style={{ margin: 0 }}>Super admin billing</h1>
       {msg ? <p style={{ margin: 0, color: "#1e3a8a" }}>{msg}</p> : null}
 
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, background: "#fff", padding: 12 }}>

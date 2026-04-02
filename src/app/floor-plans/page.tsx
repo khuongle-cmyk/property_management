@@ -84,7 +84,7 @@ export default function FloorPlansListPage() {
       </div>
 
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 20 }}>
-        <h1 style={{ margin: 0 }}>Floor planner</h1>
+        <h1 className="vw-admin-page-title" style={{ margin: 0 }}>Floor planner</h1>
         <Link
           href={filterPropertyId ? `/floor-plans/new?propertyId=${encodeURIComponent(filterPropertyId)}` : "/floor-plans/new"}
           style={{

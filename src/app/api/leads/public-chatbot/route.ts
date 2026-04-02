@@ -6,6 +6,8 @@ type Body = {
   name?: string;
   email?: string;
   company?: string;
+  yTunnus?: string;
+  y_tunnus?: string;
   interestedSpaceType?: string;
   approxSizeM2?: number | string;
   approxBudgetEurMonth?: number | string;
@@ -13,6 +15,14 @@ type Body = {
   propertyId?: string;
   pipelineSlug?: string;
 };
+
+function normalizeOptionalYtunnus(raw: string | undefined): string | null {
+  const t = (raw ?? "").trim();
+  if (!t) return null;
+  const lower = t.toLowerCase();
+  if (lower === "skip" || t === "-") return null;
+  return t;
+}
 
 async function resolveTenantId(admin: ReturnType<typeof getSupabaseAdminClient>, propertyId?: string): Promise<string | null> {
   if (propertyId) {
@@ -72,6 +82,7 @@ export async function POST(req: Request) {
   const moveIn = (body.preferredMoveInDate ?? "").trim() || null;
   const company = (body.company ?? "").trim() || "Individual";
   const interestedSpaceType = (body.interestedSpaceType ?? "").trim() || null;
+  const yTunnusVal = normalizeOptionalYtunnus(body.yTunnus ?? body.y_tunnus);
 
   const { data: created, error } = await admin
     .from("leads")
@@ -83,6 +94,8 @@ export async function POST(req: Request) {
       contact_person_name: name,
       email,
       source: "chatbot",
+      y_tunnus: yTunnusVal,
+      business_id: yTunnusVal,
       interested_space_type: interestedSpaceType,
       approx_size_m2: Number.isFinite(approxSize) ? approxSize : null,
       approx_budget_eur_month: Number.isFinite(approxBudget) ? approxBudget : null,
@@ -102,6 +115,7 @@ export async function POST(req: Request) {
     interestedSpaceType,
     approxSizeM2: Number.isFinite(approxSize) ? approxSize : null,
     approxBudgetEurMonth: Number.isFinite(approxBudget) ? approxBudget : null,
+    message: yTunnusVal ? `Y-tunnus: ${yTunnusVal}` : null,
   });
 
   return NextResponse.json({ ok: true, leadId: created?.id ?? null });

@@ -830,11 +830,12 @@ export default function BudgetPage() {
   return (
     <main style={{ padding: "16px 20px 40px", maxWidth: 1400, margin: "0 auto" }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginBottom: 16 }}>
-        <h1 style={{ margin: 0, flex: "1 1 200px" }}>Budget &amp; forecast</h1>
+        <h1 className="vw-admin-page-title" style={{ margin: 0, flex: "1 1 200px" }}>Budget &amp; forecast</h1>
         <select
+          className="vw-select"
           value={selectedId ?? ""}
           onChange={(e) => setSelectedId(e.target.value || null)}
-          style={{ padding: "8px 10px", minWidth: 220 }}
+          style={{ minWidth: 220 }}
         >
           <option value="">Select budget…</option>
           {budgets.map((b) => {
@@ -853,20 +854,17 @@ export default function BudgetPage() {
           })}
         </select>
         {canManage && (
-          <button type="button" onClick={() => openNewBudgetModal()} style={{ padding: "8px 12px" }}>
+          <button type="button" className="vw-btn-primary" onClick={() => openNewBudgetModal()}>
             New budget
           </button>
         )}
         {canManage && (
           <label
+            className="vw-btn-secondary"
             style={{
-              padding: "8px 12px",
-              border: "1px solid #ccc",
-              borderRadius: 6,
-              background: tenantId && !excelImportBusy ? "#fff" : "#f4f4f5",
               cursor: tenantId && !excelImportBusy ? "pointer" : "not-allowed",
-              display: "inline-block",
-              fontSize: 14,
+              display: "inline-flex",
+              opacity: !tenantId || excelImportBusy ? 0.5 : 1,
             }}
             onClick={(ev) => {
               if (!tenantId || excelImportBusy) {
@@ -939,10 +937,14 @@ export default function BudgetPage() {
             />
           </label>
         )}
-        <button type="button" onClick={() => exportXlsx()} disabled={!selectedId} style={{ padding: "8px 12px" }}>
+        <button type="button" className="vw-btn-secondary" onClick={() => exportXlsx()} disabled={!selectedId}>
           Export Excel
         </button>
-        <select value={propertyFilter ?? ""} onChange={(e) => setPropertyFilter(e.target.value || null)} style={{ padding: 8 }}>
+        <select
+          className="vw-select"
+          value={propertyFilter ?? ""}
+          onChange={(e) => setPropertyFilter(e.target.value || null)}
+        >
           <option value="">All properties</option>
           {propertiesForTenant.map((p) => (
             <option key={p.id} value={p.id}>
@@ -950,7 +952,7 @@ export default function BudgetPage() {
             </option>
           ))}
         </select>
-        <select value={view} onChange={(e) => setView(e.target.value as typeof view)} style={{ padding: 8 }}>
+        <select className="vw-select" value={view} onChange={(e) => setView(e.target.value as typeof view)}>
           <option value="monthly">Monthly view</option>
           <option value="quarterly">Quarterly view</option>
           <option value="annual">Annual view</option>
@@ -1050,20 +1052,16 @@ export default function BudgetPage() {
             </label>
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-            <button
-              type="button"
-              onClick={() => void updatePortfolioView()}
-              style={{ padding: "8px 14px", fontWeight: 600, borderRadius: 8 }}
-            >
+            <button type="button" className="vw-btn-primary" onClick={() => void updatePortfolioView()}>
               Update portfolio view
             </button>
             {canManage ? (
-              <button type="button" disabled={comboSaving} onClick={() => void saveCurrentCombination()}>
+              <button type="button" className="vw-btn-secondary" disabled={comboSaving} onClick={() => void saveCurrentCombination()}>
                 Save combination
               </button>
             ) : null}
             {combinations.map((c) => (
-              <button key={c.id} type="button" onClick={() => applyCombination(c)} style={{ fontSize: 13, padding: "6px 10px" }}>
+              <button key={c.id} type="button" className="vw-btn-secondary" onClick={() => applyCombination(c)}>
                 {c.name}
               </button>
             ))}
@@ -1075,6 +1073,7 @@ export default function BudgetPage() {
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
           <button
             type="button"
+            className="vw-btn-secondary"
             onClick={async () => {
               const pct = Number(prompt("Apply % increase to forked amounts?", "0") ?? "0");
               const ty = Number(prompt("Target year?", String(budget.budget_year + 1)));
@@ -1096,6 +1095,7 @@ export default function BudgetPage() {
           </button>
           <button
             type="button"
+            className="vw-btn-secondary"
             onClick={async () => {
               const sy = Number(prompt("Copy actuals from which year?", String(budget.budget_year - 1)));
               if (!Number.isFinite(sy)) return;
@@ -1130,6 +1130,7 @@ export default function BudgetPage() {
             />
           </label>
           <select
+            className="vw-select"
             value={budget.status}
             onChange={async (e) => {
               const st = e.target.value;
@@ -1154,15 +1155,9 @@ export default function BudgetPage() {
           <button
             key={t}
             type="button"
+            className={tab === t ? "vw-tab-active" : "vw-tab-inactive"}
             onClick={() => setTab(t)}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 8,
-              border: tab === t ? "2px solid #2563eb" : "1px solid #d4d4d8",
-              background: tab === t ? "#eff6ff" : "white",
-              fontWeight: tab === t ? 600 : 500,
-              textTransform: "capitalize",
-            }}
+            style={{ textTransform: "capitalize" }}
           >
             {t === "cashflow" ? "Cash flow" : t === "capex" ? "CapEx" : t}
           </button>

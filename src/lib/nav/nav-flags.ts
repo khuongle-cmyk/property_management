@@ -1,5 +1,6 @@
 export type AppNavVisibilityFlags = {
   isSuperAdmin: boolean;
+  showAdminCustomersNav: boolean;
   showManageBookings: boolean;
   showOwnerDashboard: boolean;
   showRoomsNav: boolean;
@@ -19,6 +20,7 @@ export const LOGGED_OUT_APP_NAV_INITIAL: AppNavInitialState = {
   displayName: "User",
   email: "",
   isSuperAdmin: false,
+  showAdminCustomersNav: false,
   showManageBookings: false,
   showOwnerDashboard: false,
   showRoomsNav: false,
@@ -34,6 +36,7 @@ function canSeeManageBookingsNav(role: string): boolean {
 export function computeAppNavFlagsFromRoles(roles: string[]): AppNavVisibilityFlags {
   return {
     isSuperAdmin: roles.includes("super_admin"),
+    showAdminCustomersNav: roles.some((r) => ["super_admin", "owner", "manager"].includes(r)),
     showReportsNav: roles.some((r) =>
       ["super_admin", "owner", "manager", "accounting", "viewer"].includes(r),
     ),

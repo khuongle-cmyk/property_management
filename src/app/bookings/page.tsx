@@ -37,7 +37,7 @@ export default function BookingsHomePage() {
 
   return (
     <div>
-      <h1 style={{ margin: "0 0 8px" }}>Bookings</h1>
+      <h1 className="vw-admin-page-title" style={{ margin: "0 0 8px" }}>Bookings</h1>
       <p style={{ marginTop: 0, color: "#555" }}>
         Reserve meeting rooms, offices, and desks{email ? ` · ${email}` : ""}.
       </p>

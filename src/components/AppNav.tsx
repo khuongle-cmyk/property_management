@@ -15,7 +15,7 @@ const navFont = "var(--font-dm-sans), sans-serif";
 const SIDEBAR_W = 220;
 const COLLAPSE_STORAGE_KEY = "vw-sidebar-collapsed";
 
-type NavItem = { href: string; label: string; visible: boolean; icon?: "building" };
+type NavItem = { href: string; label: string; visible: boolean; icon?: "building"; exact?: boolean };
 
 function BuildingIcon({ color = "currentColor" }: { color?: string }) {
   return (
@@ -56,7 +56,14 @@ const sectionLabelStyle: CSSProperties = {
   padding: "4px 12px",
 };
 
-function navLinkIsActive(pathname: string, href: string): boolean {
+function stripTrailingSlash(s: string): string {
+  return s.length > 1 && s.endsWith("/") ? s.slice(0, -1) : s;
+}
+
+function navLinkIsActive(pathname: string, href: string, exact?: boolean): boolean {
+  if (exact) {
+    return stripTrailingSlash(pathname) === stripTrailingSlash(href);
+  }
   if (href === "/super-admin") {
     return pathname === "/super-admin" || pathname.startsWith("/super-admin/");
   }
@@ -98,6 +105,7 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
   const [displayName, setDisplayName] = useState(appNavInitial.displayName);
   const [, setEmail] = useState(appNavInitial.email);
   const [isSuperAdmin, setIsSuperAdmin] = useState(appNavInitial.isSuperAdmin);
+  const [showAdminCustomersNav, setShowAdminCustomersNav] = useState(appNavInitial.showAdminCustomersNav);
   const [showOwnerDashboard, setShowOwnerDashboard] = useState(appNavInitial.showOwnerDashboard);
   const [showRoomsNav, setShowRoomsNav] = useState(appNavInitial.showRoomsNav);
   const [showCrmNav, setShowCrmNav] = useState(appNavInitial.showCrmNav);
@@ -123,6 +131,7 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
         setDisplayName(LOGGED_OUT_APP_NAV_INITIAL.displayName);
         setEmail(LOGGED_OUT_APP_NAV_INITIAL.email);
         setIsSuperAdmin(false);
+        setShowAdminCustomersNav(false);
         setShowOwnerDashboard(false);
         setShowRoomsNav(false);
         setShowCrmNav(false);
@@ -146,6 +155,7 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
       if (cancelled) return;
       const flags = computeAppNavFlagsFromRoles(roles);
       setIsSuperAdmin(flags.isSuperAdmin);
+      setShowAdminCustomersNav(flags.showAdminCustomersNav);
       setShowReportsNav(flags.showReportsNav);
       setShowOwnerDashboard(flags.showOwnerDashboard);
       setShowRoomsNav(flags.showRoomsNav);
@@ -174,6 +184,58 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
       window.removeEventListener("keydown", onKey);
     };
   }, [mobileOpen]);
+
+  /** Expand sections that contain the current route so sub-links stay visible (persisted collapse no longer hides active area). */
+  useEffect(() => {
+    const path = pathname ?? "";
+    if (!path || !loggedIn) return;
+    const expand: Record<string, boolean> = {};
+
+    if (showCrmNav && (path === "/crm" || path.startsWith("/crm/"))) {
+      expand.sales = false;
+      expand.crm = false;
+    }
+    if (showMarketingNav && (path === "/marketing" || path.startsWith("/marketing/"))) {
+      expand.marketing = false;
+    }
+    if (
+      showRoomsNav &&
+      /^\/(offices|meeting-rooms|venues|coworking|virtual-office|rooms)(\/|$)/.test(path)
+    ) {
+      expand.spaces = false;
+    }
+    if (path === "/bookings" || path.startsWith("/bookings/")) {
+      expand.bookings = false;
+    }
+    if (path === "/tasks" || path.startsWith("/tasks/")) {
+      expand.work = false;
+    }
+    if (path === "/reports" || path.startsWith("/reports/") || path === "/budget" || path.startsWith("/budget/")) {
+      expand.finance = false;
+    }
+    if (path === "/floor-plans" || path.startsWith("/floor-plans/") || path.startsWith("/tools/contract-tool")) {
+      expand.tools = false;
+    }
+
+    if (Object.keys(expand).length === 0) return;
+    setCollapsed((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const [id, v] of Object.entries(expand)) {
+        if (prev[id] !== v) {
+          next[id] = v;
+          changed = true;
+        }
+      }
+      if (!changed) return prev;
+      try {
+        localStorage.setItem(COLLAPSE_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, [pathname, loggedIn, showCrmNav, showMarketingNav, showRoomsNav]);
 
   async function onLogout() {
     const { clearAuthCookies } = await import("@/lib/auth/user-type-cookie");
@@ -210,9 +272,10 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
     { href: "/rooms/furniture", label: "Furniture", visible: loggedIn && showRoomsNav },
   ];
 
+  /** Floor planner + contract tool: any signed-in workspace user (route guards still apply). */
   const toolsItems: NavItem[] = [
-    { href: "/floor-plans", label: "Floor planner", visible: loggedIn && showRoomsNav },
-    { href: "/tools/contract-tool", label: "Contract tool", visible: loggedIn && showRoomsNav },
+    { href: "/floor-plans", label: "Floor planner", visible: loggedIn },
+    { href: "/tools/contract-tool", label: "Contract tool", visible: loggedIn },
   ];
 
   const bookingsItems: NavItem[] = [
@@ -231,18 +294,19 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
 
   const workItems: NavItem[] = [{ href: "/tasks", label: "Tasks", visible: loggedIn }];
 
+  /** Reports + budget: any signed-in user (pages enforce role/tenant access). */
   const financeItems: NavItem[] = [
-    { href: "/reports", label: "Reports", visible: loggedIn && showReportsNav },
-    { href: "/budget", label: "Budget & Forecast", visible: loggedIn && showReportsNav },
+    { href: "/reports", label: "Reports", visible: loggedIn },
+    { href: "/budget", label: "Budget & Forecast", visible: loggedIn },
   ];
 
   const marketingItems: NavItem[] = [
-    { href: "/marketing", label: "Marketing dashboard", visible: loggedIn && showMarketingNav },
+    { href: "/marketing", label: "Marketing dashboard", visible: loggedIn && showMarketingNav, exact: true },
   ];
 
   const adminItems: NavItem[] = [
+    { href: "/admin/customers", label: "Customers", visible: loggedIn && showAdminCustomersNav, icon: "building" },
     { href: "/settings", label: "Settings", visible: loggedIn },
-    { href: "/admin/customers", label: "Customers", visible: loggedIn && isSuperAdmin, icon: "building" },
     { href: "/super-admin", label: "Super Admin", visible: loggedIn && isSuperAdmin },
   ];
 
@@ -264,7 +328,7 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
     return (
       <div style={{ display: "grid", gap: 2 }}>
         {visible.map((i) => {
-          const active = navLinkIsActive(pathname ?? "", i.href);
+          const active = navLinkIsActive(pathname ?? "", i.href, i.exact);
           return (
             <Link
               key={i.href + i.label}

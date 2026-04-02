@@ -72,7 +72,7 @@ export default function WebsiteCmsSettingsPage() {
   return (
     <main style={{ display: "grid", gap: 16, maxWidth: 720 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <h1 style={{ margin: 0 }}>Public website (CMS 2)</h1>
+        <h1 className="vw-admin-page-title" style={{ margin: 0 }}>Public website (CMS 2)</h1>
         <Link href="/settings" style={{ fontSize: 14 }}>
           ← Settings
         </Link>

@@ -21,8 +21,15 @@ async function assertCanManageCompany(
   const roles = rows.map((m) => (m.role ?? "").toLowerCase());
   if (roles.includes("super_admin")) return true;
 
-  const { data: cc } = await supabase.from("customer_companies").select("tenant_id").eq("id", companyId).maybeSingle();
-  const tenantId = (cc as { tenant_id: string } | null)?.tenant_id;
+  const { data: cc } = await supabase
+    .from("customer_companies")
+    .select("property_id, properties(tenant_id)")
+    .eq("id", companyId)
+    .maybeSingle();
+  const cr = cc as { property_id?: string | null; properties?: { tenant_id?: string } | { tenant_id?: string }[] | null } | null;
+  const prop = cr?.properties;
+  const propRow = Array.isArray(prop) ? prop[0] : prop;
+  const tenantId = propRow?.tenant_id ?? null;
   if (!tenantId) return false;
 
   const staffOk = rows.some(

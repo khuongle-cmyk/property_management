@@ -48,7 +48,7 @@ export default function BrandSettingsPage() {
   if (plan === "starter") {
     return (
       <main style={{ display: "grid", gap: 12 }}>
-        <h1 style={{ margin: 0 }}>Brand settings</h1>
+        <h1 className="vw-admin-page-title" style={{ margin: 0 }}>Brand settings</h1>
         <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, background: "#fff" }}>
           <h2 style={{ marginTop: 0, fontSize: 18 }}>Upgrade required</h2>
           <p style={{ color: "#64748b" }}>
@@ -65,7 +65,7 @@ export default function BrandSettingsPage() {
 
   return (
     <main style={{ display: "grid", gap: 12 }}>
-      <h1 style={{ margin: 0 }}>Brand settings</h1>
+      <h1 className="vw-admin-page-title" style={{ margin: 0 }}>Brand settings</h1>
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, background: "#fff", display: "grid", gap: 8 }}>
         <p style={{ margin: 0, color: "#64748b", fontSize: 13 }}>
           Plan: <strong>{plan}</strong>

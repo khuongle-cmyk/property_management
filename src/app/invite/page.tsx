@@ -72,7 +72,7 @@ export default function InviteAcceptPage() {
 
   return (
     <main style={{ maxWidth: 460, margin: "30px auto" }}>
-      <h1 style={{ margin: "0 0 8px" }}>Set your password</h1>
+      <h1 className="vw-admin-page-title" style={{ margin: "0 0 8px" }}>Set your password</h1>
       <p style={{ marginTop: 0, color: "#555" }}>
         {email ? `Invited as ${email}.` : "Use your invite link to activate your account."}
       </p>

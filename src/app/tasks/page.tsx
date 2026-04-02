@@ -119,7 +119,7 @@ export default function TasksPage() {
 
   return (
     <main style={{ display: "grid", gap: 12 }}>
-      <h1 style={{ margin: 0 }}>Tasks</h1>
+      <h1 className="vw-admin-page-title" style={{ margin: 0 }}>Tasks</h1>
       <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 8 }}>
         <Stat label="My tasks today" value={stats.myTasksToday} />
         <Stat label="Overdue" value={stats.overdue} danger />

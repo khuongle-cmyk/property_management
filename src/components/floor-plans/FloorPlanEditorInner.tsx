@@ -1788,7 +1788,7 @@ export default function FloorPlanEditorInner({
     >
       <div style={{ marginBottom: 12, display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
         <Link href="/floor-plans">← Floor planner</Link>
-        <h1 style={{ margin: 0, flex: "1 1 auto", fontSize: 20 }}>{plan.name}</h1>
+        <h1 className="vw-admin-page-title" style={{ margin: 0, flex: "1 1 auto" }}>{plan.name}</h1>
         <button
           type="button"
           onClick={() => void save(true)}

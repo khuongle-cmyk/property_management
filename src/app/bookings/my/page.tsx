@@ -97,7 +97,7 @@ export default function MyBookingsPage() {
 
   return (
     <div>
-      <h1 style={{ margin: "0 0 8px" }}>My bookings</h1>
+      <h1 className="vw-admin-page-title" style={{ margin: "0 0 8px" }}>My bookings</h1>
       <p style={{ marginTop: 0, color: "#555" }}>Reservations where you are the booker.</p>
 
       {error ? <p style={{ color: "#b00020" }}>{error}</p> : null}

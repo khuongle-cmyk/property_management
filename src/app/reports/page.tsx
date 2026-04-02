@@ -47,7 +47,7 @@ export default function ReportsHubPage() {
 
   return (
     <main>
-      <h1 style={{ margin: "0 0 12px" }}>Financial reports</h1>
+      <h1 className="vw-admin-page-title" style={{ margin: "0 0 12px" }}>Financial reports</h1>
       <p style={{ margin: "0 0 20px", color: "#555", maxWidth: 560 }}>
         Choose a report type. Revenue uses the same sources as the rent roll (leases, bookings, and add-on services). Net
         income subtracts operating costs you record per property.

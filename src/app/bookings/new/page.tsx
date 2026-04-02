@@ -305,7 +305,7 @@ export default function NewBookingPage() {
 
   return (
     <div>
-      <h1 style={{ margin: "0 0 8px" }}>Make a booking</h1>
+      <h1 className="vw-admin-page-title" style={{ margin: "0 0 8px" }}>Make a booking</h1>
       <p style={{ marginTop: 0, color: "#555" }}>
         Pick an available space. Instant confirmation applies when the space does not require approval.
       </p>

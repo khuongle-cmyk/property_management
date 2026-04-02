@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { DEFAULT_BRAND } from "@/lib/brand/default";
 import { resolveBrandByTenantId } from "@/lib/brand/server";
+import { createRoomPhotoSignedUrl } from "@/lib/storage/room-photo-signed-url";
 
 export type ExportPropertyRow = {
   id: string;
@@ -23,12 +24,6 @@ export type ReportExportContext = {
   supportPhone: string | null;
   supportUrl: string | null;
 };
-
-function publicRoomPhotoUrl(storagePath: string): string {
-  const base = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-  const encoded = storagePath.split("/").map(encodeURIComponent).join("/");
-  return `${base}/storage/v1/object/public/room-photos/${encoded}`;
-}
 
 export async function loadReportExportContext(
   supabase: SupabaseClient,
@@ -77,7 +72,7 @@ export async function loadReportExportContext(
         .limit(1)
         .maybeSingle();
       const path = (ph as { storage_path?: string } | null)?.storage_path;
-      if (path) coverImageUrl = publicRoomPhotoUrl(path);
+      if (path) coverImageUrl = await createRoomPhotoSignedUrl(supabase, path);
     }
   }
 

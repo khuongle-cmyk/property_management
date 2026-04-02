@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useCustomerPortal } from "@/context/CustomerPortalContext";
 import { getSupabaseClient } from "@/lib/supabase/browser";
+import { createRoomPhotoSignedUrlMap } from "@/lib/storage/room-photo-signed-url";
 import { spaceTypeLabel } from "@/lib/bookings/status-style";
 import { normalizeSpaceTypeKey } from "@/lib/bookings/space-availability";
 
@@ -52,6 +53,7 @@ export default function CustomerPortalMakeBookingPage() {
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [spaces, setSpaces] = useState<SpaceRow[]>([]);
+  const [signedPhotoUrls, setSignedPhotoUrls] = useState<Map<string, string>>(new Map());
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [selected, setSelected] = useState<SpaceRow | null>(null);
 
@@ -81,6 +83,7 @@ export default function CustomerPortalMakeBookingPage() {
   const loadSpaces = useCallback(async () => {
     if (!propertyId) {
       setSpaces([]);
+      setSignedPhotoUrls(new Map());
       return;
     }
     setLoadErr(null);
@@ -196,12 +199,6 @@ export default function CustomerPortalMakeBookingPage() {
     setDoneBooking(data as { id: string; status: string; total_price: number });
   }
 
-  function photoUrl(path: string | undefined): string | null {
-    if (!path) return null;
-    const { data } = supabase.storage.from("room-photos").getPublicUrl(path);
-    return data.publicUrl ?? null;
-  }
-
   if (ctxLoading) {
     return <p style={{ color: "#64748b" }}>Loading…</p>;
   }
@@ -286,7 +283,7 @@ export default function CustomerPortalMakeBookingPage() {
                 ? [...s.room_photos].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
                 : [];
               const firstPath = photos[0]?.storage_path;
-              const img = photoUrl(firstPath);
+              const img = firstPath ? signedPhotoUrls.get(firstPath) ?? null : null;
               const picked = selected?.id === s.id;
               return (
                 <button
@@ -305,7 +302,7 @@ export default function CustomerPortalMakeBookingPage() {
                 >
                   <div style={{ position: "relative", height: 120, background: "#f1f5f9" }}>
                     {img ? (
-                      // eslint-disable-next-line @next/next/no-img-element -- public storage URL
+                      // eslint-disable-next-line @next/next/no-img-element -- signed storage URL
                       <img src={img} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     ) : (
                       <div style={{ padding: 16, color: "#94a3b8", fontSize: 13 }}>No photo</div>

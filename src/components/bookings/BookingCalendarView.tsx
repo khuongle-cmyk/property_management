@@ -587,7 +587,7 @@ export default function BookingCalendarView() {
 
   return (
     <div className="vw-booking-cal">
-      <h1 style={{ margin: "0 0 8px", fontFamily: "var(--font-instrument-serif), serif", fontWeight: 400 }}>
+      <h1 className="vw-admin-page-title" style={{ margin: "0 0 8px" }}>
         Booking calendar
       </h1>
       <p style={{ marginTop: 0, color: "#555", fontSize: 14 }}>

@@ -241,7 +241,7 @@ function ReportBuilderInner() {
 
       <div className="no-print" style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div>
-          <h1 style={{ margin: "0 0 8px" }}>Rent roll &amp; revenue forecast</h1>
+          <h1 className="vw-admin-page-title" style={{ margin: "0 0 8px" }}>Rent roll &amp; revenue forecast</h1>
           <p style={{ margin: 0, color: "#555", maxWidth: 640 }}>
             Build a portfolio report from active leases, lease invoices, booking revenue, and add-on services. Owners see
             their tenants&apos; properties; super admins can run across the full portfolio.

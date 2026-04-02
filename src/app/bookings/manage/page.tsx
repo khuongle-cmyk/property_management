@@ -241,7 +241,7 @@ export default function ManageBookingsPage() {
   if (!canViewManagePage) {
     return (
       <div>
-        <h1 style={{ margin: "0 0 8px" }}>Manage bookings</h1>
+        <h1 className="vw-admin-page-title" style={{ margin: "0 0 8px" }}>Manage bookings</h1>
         <p style={{ color: "#b00020" }}>
           You do not have access to this page. Owners, managers, customer service, and super admins can open it.
         </p>
@@ -254,7 +254,7 @@ export default function ManageBookingsPage() {
 
   return (
     <div>
-      <h1 style={{ margin: "0 0 8px" }}>Manage bookings</h1>
+      <h1 className="vw-admin-page-title" style={{ margin: "0 0 8px" }}>Manage bookings</h1>
       <p style={{ marginTop: 0, color: "#555" }}>
         {canApproveOrCancel
           ? "Approve or reject pending requests."

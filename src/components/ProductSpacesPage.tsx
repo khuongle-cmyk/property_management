@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { getSupabaseClient } from "@/lib/supabase/browser";
+import { createRoomPhotoSignedUrlMap } from "@/lib/storage/room-photo-signed-url";
 import { spaceTypeLabel } from "@/lib/rooms/labels";
 
 type ProductType = "office" | "conference_room" | "venue" | "hot_desk" | "meeting_room";
@@ -47,12 +48,6 @@ function monthBounds() {
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0));
   const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0));
   return { start: start.toISOString(), end: end.toISOString() };
-}
-
-function photoUrl(path: string): string {
-  const base = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-  const encoded = path.split("/").map(encodeURIComponent).join("/");
-  return `${base}/storage/v1/object/public/room-photos/${encoded}`;
 }
 
 function overlapHours(startA: Date, endA: Date, startB: Date, endB: Date): number {
@@ -141,10 +136,17 @@ export default function ProductSpacesPage({
       for (const p of ((pData ?? []) as PropertyRow[])) pMap.set(p.id, p);
       setProperties(pMap);
 
+      const photoRows = (phData ?? []) as PhotoRow[];
+      const signedByPath = await createRoomPhotoSignedUrlMap(
+        supabase,
+        photoRows.map((r) => r.storage_path),
+      );
       const phMap = new Map<string, string[]>();
-      for (const ph of ((phData ?? []) as PhotoRow[])) {
+      for (const ph of photoRows) {
+        const url = signedByPath.get(ph.storage_path);
+        if (!url) continue;
         const curr = phMap.get(ph.space_id) ?? [];
-        curr.push(ph.storage_path);
+        curr.push(url);
         phMap.set(ph.space_id, curr);
       }
       setPhotos(phMap);
@@ -155,7 +157,7 @@ export default function ProductSpacesPage({
     return () => {
       cancelled = true;
     };
-  }, [productType]);
+  }, [productType, spaceTypes]);
 
   const metrics = useMemo(() => {
     const { start, end } = monthBounds();
@@ -187,7 +189,7 @@ export default function ProductSpacesPage({
   return (
     <main style={{ display: "grid", gap: 14 }}>
       <div>
-        <h1 style={{ margin: 0 }}>{title}</h1>
+        <h1 className="vw-admin-page-title" style={{ margin: 0 }}>{title}</h1>
         <p style={{ marginTop: 6, color: "#556" }}>
           Dedicated {title.toLowerCase()} section with pricing, availability, monthly revenue, utilization, and quick actions.
         </p>
@@ -241,8 +243,8 @@ export default function ProductSpacesPage({
               ) : null}
               <div style={{ fontSize: 13 }}>Amenities: {amenityList.length ? amenityList.join(", ") : "Not specified"}</div>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {pics.slice(0, 3).map((path) => (
-                  <img key={path} src={photoUrl(path)} alt="" style={{ width: 74, height: 52, borderRadius: 6, objectFit: "cover", border: "1px solid #e8f0f0" }} />
+                {pics.slice(0, 3).map((url, i) => (
+                  <img key={`${s.id}-${i}`} src={url} alt="" style={{ width: 74, height: 52, borderRadius: 6, objectFit: "cover", border: "1px solid #e8f0f0" }} />
                 ))}
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

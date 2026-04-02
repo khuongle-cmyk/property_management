@@ -435,7 +435,7 @@ function NetIncomeInner() {
 
       <div className="no-print" style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div>
-          <h1 style={{ margin: "0 0 8px" }}>Net income report</h1>
+          <h1 className="vw-admin-page-title" style={{ margin: "0 0 8px" }}>Net income report</h1>
           <p style={{ margin: 0, color: "#555", maxWidth: 640 }}>
             Revenue (offices, bookings, services) minus operating costs per property. Scheduled recurring costs count in
             forecasts until you confirm or delete them.

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * OfferEditor — Contract tool offers (CRM company = public.leads)
+ * OfferEditor — Contract tool offers (CRM contact = public.leads; same as CRM module)
  *
  *   <OfferEditor />
  *   <OfferEditor leadId="uuid" initialData={{ ... }} onOfferAccepted={() => {}} />
@@ -11,6 +11,8 @@ import { useState, useEffect, useCallback, useMemo, Fragment } from "react";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { VILLAGEWORKS_BRAND } from "@/lib/brand/villageworks";
 import { useConfirm } from "@/hooks/useConfirm";
+import ContactSearchWithCreate from "@/components/shared/ContactSearchWithCreate";
+import CreateContactModal from "@/components/shared/CreateContactModal";
 
 const c = VILLAGEWORKS_BRAND.colors;
 
@@ -54,8 +56,17 @@ function Field({ label, children, hint }) {
   );
 }
 
-function Input({ value, onChange, placeholder, type = "text", ...rest }) {
-  return <input type={type} value={value ?? ""} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} style={inputStyleBase} {...rest} />;
+function Input({ value, onChange, placeholder, type = "text", style, ...rest }) {
+  return (
+    <input
+      type={type}
+      value={value ?? ""}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      style={{ ...inputStyleBase, ...style }}
+      {...rest}
+    />
+  );
 }
 
 function Textarea({ value, onChange, placeholder, rows = 4 }) {
@@ -128,10 +139,10 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
   const [activeTab, setActiveTab] = useState("details");
   const [loadedRow, setLoadedRow] = useState(null);
   const [versionHistory, setVersionHistory] = useState([]);
-  const [companyQuery, setCompanyQuery] = useState("");
-  const [companyOptions, setCompanyOptions] = useState([]);
-  const [companyOpen, setCompanyOpen] = useState(false);
   const [crmCompanyEmail, setCrmCompanyEmail] = useState("");
+  const [primaryTenantId, setPrimaryTenantId] = useState(null);
+  const [createContactOpen, setCreateContactOpen] = useState(false);
+  const [createContactQuery, setCreateContactQuery] = useState("");
   const [savedOfferId, setSavedOfferId] = useState(offerId);
   const [sendEmailLoading, setSendEmailLoading] = useState(false);
   const [sendEmailMsg, setSendEmailMsg] = useState(null);
@@ -170,8 +181,6 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
       customerPhone: row.phone ?? row.contact_direct_phone ?? "",
       customerName: row.contact_person_name ?? [row.contact_first_name, row.contact_last_name].filter(Boolean).join(" ") ?? "",
     }));
-    setCompanyQuery(row.company_name ?? "");
-    setCompanyOpen(false);
   }, []);
 
   useEffect(() => {
@@ -200,7 +209,6 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
       .maybeSingle()
       .then(({ data }) => {
         if (cancelled) return;
-        console.log("OfferEditor fetched company/lead row:", data);
         setCrmCompanyEmail((data?.email ?? "").trim());
       });
     return () => {
@@ -223,7 +231,7 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
         title: data.title ?? "Offer",
         status: data.status ?? "draft",
         version: data.version ?? 1,
-        companyId: data.company_id ?? "",
+        companyId: data.pipeline_lead_id ?? data.company_id ?? "",
         customerName: data.customer_name ?? "",
         customerEmail: data.customer_email ?? "",
         customerPhone: data.customer_phone ?? "",
@@ -240,7 +248,6 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
         isTemplate: data.is_template ?? false,
         publicToken: data.public_token ?? "",
       });
-      setCompanyQuery(data.customer_company ?? "");
     });
     buildOfferVersionChain(supabase, offerId).then((ch) => {
       if (!cancelled) setVersionHistory(ch);
@@ -251,7 +258,7 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
   }, [offerId, supabase]);
 
   useEffect(() => {
-    supabase.from("properties").select("id,name,address,city").order("name").then(({ data }) => setProperties(data ?? []));
+    supabase.from("properties").select("id,name,address,city,tenant_id").order("name").then(({ data }) => setProperties(data ?? []));
     supabase
       .from("offers")
       .select("id,template_name,intro_text,terms_text,space_details,monthly_price,contract_length_months")
@@ -261,21 +268,47 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
   }, [supabase]);
 
   useEffect(() => {
-    const q = companyQuery.trim();
-    if (q.length < 2) {
-      setCompanyOptions([]);
-      return;
-    }
-    const t = setTimeout(() => {
-      supabase
-        .from("leads")
-        .select("id,company_name,email,phone,contact_person_name,contact_first_name,contact_last_name,contact_direct_phone")
-        .or(`company_name.ilike.%${q}%,contact_person_name.ilike.%${q}%,email.ilike.%${q}%`)
-        .limit(25)
-        .then(({ data }) => setCompanyOptions(data ?? []));
-    }, 280);
-    return () => clearTimeout(t);
-  }, [companyQuery, supabase]);
+    let cancelled = false;
+    (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user || cancelled) return;
+      const { data: mem } = await supabase.from("memberships").select("tenant_id, role").eq("user_id", user.id);
+      const rows = mem ?? [];
+      const prefer = rows.filter(
+        (m) => m.tenant_id && ["super_admin", "owner", "manager"].includes((m.role ?? "").toLowerCase()),
+      );
+      const tid = prefer[0]?.tenant_id ?? rows.find((m) => m.tenant_id)?.tenant_id ?? null;
+      if (!cancelled) setPrimaryTenantId(tid);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase]);
+
+  const selectedLeadForSearch = useMemo(() => {
+    if (!form.companyId) return null;
+    return {
+      id: form.companyId,
+      company_name: form.customerCompany || null,
+      contact_person_name: form.customerName || null,
+      email: form.customerEmail || null,
+      phone: form.customerPhone || null,
+    };
+  }, [form.companyId, form.customerCompany, form.customerName, form.customerEmail, form.customerPhone]);
+
+  const clearCrmSelection = useCallback(() => {
+    setForm((f) => ({
+      ...f,
+      companyId: "",
+      customerName: "",
+      customerEmail: "",
+      customerPhone: "",
+      customerCompany: "",
+    }));
+    setCrmCompanyEmail("");
+  }, []);
 
   function set(field) {
     return (val) => setForm((f) => ({ ...f, [field]: val }));
@@ -303,7 +336,7 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
 
     const { error } = await supabase.from("contracts").insert({
       company_id: form.companyId || null,
-      lead_id: leadId,
+      lead_id: form.companyId || leadId || null,
       source_offer_id: sourceOfferId,
       title: `Contract — ${form.title}`,
       status: "draft",
@@ -345,8 +378,9 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
     const payload = {
       title: form.title,
       status: effectiveStatus,
-      lead_id: leadId,
+      lead_id: form.companyId || leadId || null,
       company_id: form.companyId || null,
+      pipeline_lead_id: form.companyId || null,
       customer_name: form.customerName || null,
       customer_email: form.customerEmail || null,
       customer_phone: form.customerPhone || null,
@@ -493,7 +527,6 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
 
   async function sendOfferEmail() {
     const idToUse = savedOfferId ?? offerId ?? loadedRow?.id;
-    console.log("sendOfferEmail - idToUse:", idToUse, "offerId prop:", offerId, "savedOfferId state:", savedOfferId, "loadedRow:", loadedRow?.id);
     if (!idToUse || !crmCompanyEmail) {
       setSendEmailMsg({ type: "error", text: !idToUse ? "Please save the offer first." : "No email on file." });
       return;
@@ -570,9 +603,21 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
 
   return (
     <div style={{ display: "grid", gap: 16, maxWidth: 860, margin: "0 auto" }}>
+      <CreateContactModal
+        isOpen={createContactOpen}
+        onClose={() => setCreateContactOpen(false)}
+        initialCompanyName={createContactQuery}
+        defaultTenantId={primaryTenantId ?? ""}
+        properties={properties}
+        onCreated={(row) => {
+          applyLeadProfile(row);
+          setCreateContactOpen(false);
+          window.setTimeout(() => void save(), 0);
+        }}
+      />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: c.text }}>{form.title || "Offer editor"}</h1>
+          <h1 className="vw-admin-page-title" style={{ margin: 0 }}>{form.title || "Offer editor"}</h1>
           <span style={{ fontSize: 13, fontWeight: 600, color: c.secondary }}>{verLabel}</span>
           <StatusBadge status={form.status} />
         </div>
@@ -748,64 +793,55 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
       {activeTab === "details" && (
         <>
           <Section title="Company (CRM)">
-            <Field label="Search company" hint="Searches pipeline leads / CRM by company name, contact, or email">
-              <div style={{ position: "relative" }}>
-                <Input value={companyQuery} onChange={setCompanyQuery} placeholder="Type to search…" onFocus={() => setCompanyOpen(true)} onBlur={() => setTimeout(() => setCompanyOpen(false), 200)} />
-                {companyOpen && companyOptions.length > 0 && (
-                  <ul
-                    style={{
-                      position: "absolute",
-                      zIndex: 10,
-                      left: 0,
-                      right: 0,
-                      margin: 0,
-                      padding: 0,
-                      listStyle: "none",
-                      background: c.white,
-                      border: `1px solid ${c.border}`,
-                      borderRadius: 8,
-                      marginTop: 4,
-                      maxHeight: 220,
-                      overflow: "auto",
-                      boxShadow: `0 8px 24px ${c.primary}14`,
-                    }}
-                  >
-                    {companyOptions.map((row) => (
-                      <li key={row.id}>
-                        <button
-                          type="button"
-                          onClick={() => applyLeadProfile(row)}
-                          style={{
-                            width: "100%",
-                            textAlign: "left",
-                            padding: "10px 12px",
-                            border: "none",
-                            background: c.white,
-                            cursor: "pointer",
-                            fontSize: 13,
-                            color: c.text,
-                            borderBottom: `1px solid ${c.border}`,
-                          }}
-                        >
-                          <strong>{row.company_name}</strong>
-                          {row.email ? <span style={{ opacity: 0.75 }}> · {row.email}</span> : null}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+            <Field
+              label="CRM contact"
+              hint="Single source: public.leads (same as CRM). Search, pick, or create a new lead — contact fields below fill from the selection."
+            >
+              <ContactSearchWithCreate
+                colors={c}
+                selectedLead={selectedLeadForSearch}
+                onSelect={applyLeadProfile}
+                onClearSelection={clearCrmSelection}
+                onRequestCreate={(q) => {
+                  setCreateContactQuery(q);
+                  setCreateContactOpen(true);
+                }}
+                createDisabled={!primaryTenantId}
+                createDisabledHint={!primaryTenantId ? "Sign in with a workspace membership to create contacts from here." : undefined}
+              />
+              <button
+                type="button"
+                disabled={!primaryTenantId}
+                onClick={() => {
+                  setCreateContactQuery("");
+                  setCreateContactOpen(true);
+                }}
+                style={{
+                  marginTop: 10,
+                  padding: "8px 14px",
+                  borderRadius: 8,
+                  border: `1px solid ${c.primary}`,
+                  background: c.white,
+                  color: c.primary,
+                  fontWeight: 600,
+                  cursor: primaryTenantId ? "pointer" : "not-allowed",
+                  fontSize: 13,
+                  width: "fit-content",
+                }}
+              >
+                + Create new contact
+              </button>
             </Field>
             {form.companyId ? (
               crmCompanyEmail ? (
                 <p style={{ margin: "6px 0 0", fontSize: 12, color: c.text, opacity: 0.55 }}>
-                  Email: {crmCompanyEmail}
+                  CRM email on file: {crmCompanyEmail}
                 </p>
               ) : (
                 <p style={{ margin: "6px 0 0", fontSize: 12, color: c.danger, lineHeight: 1.45 }}>
                   No email on file — add one in{" "}
                   <a href="/crm/contacts" style={{ color: c.danger, fontWeight: 700, textDecoration: "underline" }}>
-                    Contacts
+                    CRM
                   </a>{" "}
                   before sending
                 </p>
@@ -813,7 +849,9 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
             ) : null}
             {form.companyId ? (
               <p style={{ margin: "8px 0 0", fontSize: 13, color: c.text, opacity: 0.75 }}>
-                Selected lead ID: <code style={{ color: c.primary }}>{form.companyId}</code>
+                <a href={`/crm/leads/${form.companyId}`} style={{ color: c.primary, fontWeight: 600 }}>
+                  Open in CRM →
+                </a>
               </p>
             ) : null}
           </Section>
@@ -850,15 +888,39 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
           </Section>
 
           <Section title="Contact person">
+            {form.companyId ? (
+              <p style={{ margin: 0, fontSize: 12, color: c.text, opacity: 0.65 }}>
+                Filled from CRM. Use <strong>Change</strong> above to pick a different lead, or edit if you need a one-off override.
+              </p>
+            ) : null}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
               <Field label="Full name">
-                <Input value={form.customerName} onChange={set("customerName")} placeholder="Contact name" />
+                <Input
+                  value={form.customerName}
+                  onChange={set("customerName")}
+                  placeholder="Contact name"
+                  readOnly={Boolean(form.companyId)}
+                  style={form.companyId ? { ...inputStyleBase, opacity: 0.92, cursor: "default" } : undefined}
+                />
               </Field>
               <Field label="Email">
-                <Input value={form.customerEmail} onChange={set("customerEmail")} placeholder="email@company.fi" type="email" />
+                <Input
+                  value={form.customerEmail}
+                  onChange={set("customerEmail")}
+                  placeholder="email@company.fi"
+                  type="email"
+                  readOnly={Boolean(form.companyId)}
+                  style={form.companyId ? { ...inputStyleBase, opacity: 0.92, cursor: "default" } : undefined}
+                />
               </Field>
               <Field label="Phone">
-                <Input value={form.customerPhone} onChange={set("customerPhone")} placeholder="+358 …" />
+                <Input
+                  value={form.customerPhone}
+                  onChange={set("customerPhone")}
+                  placeholder="+358 …"
+                  readOnly={Boolean(form.companyId)}
+                  style={form.companyId ? { ...inputStyleBase, opacity: 0.92, cursor: "default" } : undefined}
+                />
               </Field>
             </div>
           </Section>

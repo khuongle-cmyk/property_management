@@ -50,7 +50,7 @@ export default function CrmImportPage() {
   return (
     <main style={{ display: "grid", gap: 12 }}>
       <section style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
-        <h1 style={{ margin: 0, fontSize: 22 }}>Import contacts</h1>
+        <h1 className="vw-admin-page-title" style={{ margin: 0 }}>Import contacts</h1>
         <p style={{ marginBottom: 0, color: "#64748b" }}>
           Use this page to import contacts from CSV/XLSX into the CRM pipeline.
         </p>

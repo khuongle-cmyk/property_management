@@ -66,7 +66,7 @@ export default function SuperAdminBrandsPage() {
 
   return (
     <main style={{ display: "grid", gap: 12 }}>
-      <h1 style={{ margin: 0 }}>White-label brands</h1>
+      <h1 className="vw-admin-page-title" style={{ margin: 0 }}>White-label brands</h1>
       <section style={{ border: "1px solid #dce8e8", borderRadius: 12, background: "#fff", padding: 12 }}>
         <h2 style={{ marginTop: 0, fontSize: 18 }}>Brand list</h2>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>

@@ -1,5 +1,13 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getSupabaseAdminClient } from "@/lib/supabase/admin";
+import { FLOOR_PLANS_STORAGE_BUCKET } from "@/lib/floor-plans/storage-bucket";
+import {
+  floorPlanBackgroundObjectPath,
+  FLOOR_PLAN_BACKGROUND_SIGNED_URL_EXPIRY,
+  normalizeFloorPlanBackgroundForStorage,
+  resolveFloorPlanBackgroundUrlForClient,
+} from "@/lib/floor-plans/background-storage-path";
 
 type RoomPayload = {
   id: string;
@@ -54,6 +62,26 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const loaded = await loadPlan(supabase, id);
   if (loaded.error === "NOT_FOUND") return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (loaded.error) return NextResponse.json({ error: loaded.error }, { status: 500 });
+
+  const planRow = loaded.plan as { background_image_url?: string | null };
+  let background_image_url: string | null = planRow.background_image_url ?? null;
+  const bgPath = floorPlanBackgroundObjectPath(background_image_url);
+  if (bgPath) {
+    let signed: string | null = null;
+    try {
+      const admin = getSupabaseAdminClient();
+      signed = await resolveFloorPlanBackgroundUrlForClient(admin, planRow.background_image_url ?? null);
+    } catch {
+      /* no service role */
+    }
+    if (!signed) {
+      const { data, error } = await supabase.storage
+        .from(FLOOR_PLANS_STORAGE_BUCKET)
+        .createSignedUrl(bgPath, FLOOR_PLAN_BACKGROUND_SIGNED_URL_EXPIRY);
+      signed = error || !data?.signedUrl ? null : data.signedUrl;
+    }
+    background_image_url = signed;
+  }
 
   const [{ data: rooms, error: rErr }, { data: elements, error: eErr }] = await Promise.all([
     supabase.from("floor_plan_rooms").select("*").eq("floor_plan_id", id).order("created_at"),
@@ -181,7 +209,9 @@ async function handleSave(req: Request, id: string) {
   if (body.width_meters !== undefined) patch.width_meters = body.width_meters;
   if (body.height_meters !== undefined) patch.height_meters = body.height_meters;
   if (body.scale !== undefined) patch.scale = body.scale;
-  if (body.background_image_url !== undefined) patch.background_image_url = body.background_image_url;
+  if (body.background_image_url !== undefined) {
+    patch.background_image_url = normalizeFloorPlanBackgroundForStorage(body.background_image_url);
+  }
   if (body.background_opacity !== undefined) patch.background_opacity = body.background_opacity;
   if (body.show_background !== undefined) patch.show_background = body.show_background;
   if (body.canvas_data !== undefined) patch.canvas_data = body.canvas_data;

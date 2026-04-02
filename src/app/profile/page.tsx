@@ -55,7 +55,7 @@ export default function ProfilePage() {
 
   return (
     <main style={{ maxWidth: 680 }}>
-      <h1 style={{ margin: "0 0 8px" }}>Profile settings</h1>
+      <h1 className="vw-admin-page-title" style={{ margin: "0 0 8px" }}>Profile settings</h1>
       <p style={{ marginTop: 0, color: "#555" }}>
         Choose your assistant language for speech recognition and text responses.
       </p>

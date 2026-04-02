@@ -39,7 +39,7 @@ export default function ClientTasksPage() {
 
   return (
     <main style={{ display: "grid", gap: 12 }}>
-      <h1 style={{ margin: 0 }}>Client onboarding tasks</h1>
+      <h1 className="vw-admin-page-title" style={{ margin: 0 }}>Client onboarding tasks</h1>
       <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, background: "#fff", padding: 10 }}>
         <div style={{ fontSize: 13, color: "#64748b" }}>Progress</div>
         <div style={{ height: 10, background: "#e2e8f0", borderRadius: 999, overflow: "hidden", marginTop: 6 }}>

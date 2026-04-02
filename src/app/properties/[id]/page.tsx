@@ -318,7 +318,7 @@ export default function PropertyCostsPage() {
 
       {property ? (
         <>
-          <h1 style={{ margin: "0 0 8px" }}>{property.name ?? "Property"}</h1>
+          <h1 className="vw-admin-page-title" style={{ margin: "0 0 8px" }}>{property.name ?? "Property"}</h1>
           <p style={{ margin: "0 0 8px", color: "#555" }}>
             {[property.address, property.city].filter(Boolean).join(" · ") || "Property operating costs"}
           </p>

@@ -254,7 +254,7 @@ export default function ContractToolPage() {
         <div style={{ display: "grid", gap: 20 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
             <div>
-              <h1 style={{ margin: 0, fontWeight: 700, letterSpacing: "-0.02em", color: c.text }}>Offers</h1>
+              <h1 className="vw-admin-page-title" style={{ margin: 0 }}>Offers</h1>
               <p style={{ margin: "4px 0 0", color: c.text, opacity: 0.72, fontSize: 14 }}>Create, edit and send offers. Accepting an offer opens a contract draft.</p>
             </div>
             <button
@@ -388,7 +388,7 @@ export default function ContractToolPage() {
         <div style={{ display: "grid", gap: 20 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
             <div>
-              <h1 style={{ margin: 0, fontWeight: 700, letterSpacing: "-0.02em", color: c.text }}>Contracts</h1>
+              <h1 className="vw-admin-page-title" style={{ margin: 0 }}>Contracts</h1>
               <p style={{ margin: "4px 0 0", color: c.text, opacity: 0.72, fontSize: 14 }}>Legal contracts and signing workflow.</p>
             </div>
             <button

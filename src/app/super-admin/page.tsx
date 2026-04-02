@@ -249,7 +249,7 @@ export default function SuperAdminDashboardPage() {
     <DashboardLayout>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
         <div>
-          <h1 style={{ margin: "0 0 8px", fontSize: "1.65rem", fontWeight: 700, color: "var(--petrol, #1a4a4a)" }}>All organizations</h1>
+          <h1 className="vw-admin-page-title" style={{ margin: "0 0 8px" }}>All organizations</h1>
           <p style={{ margin: 0, color: "rgba(26, 74, 74, 0.72)", maxWidth: 560 }}>
             All organizations, all properties, system-wide occupancy.
           </p>

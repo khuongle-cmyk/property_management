@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { FLOOR_PLANS_STORAGE_BUCKET } from "@/lib/floor-plans/storage-bucket";
+import { FLOOR_PLAN_BACKGROUND_SIGNED_URL_EXPIRY } from "@/lib/floor-plans/background-storage-path";
 
 export const runtime = "nodejs";
 
@@ -91,10 +92,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: upErr.message }, { status: 500 });
   }
 
-  const { data: pub } = admin.storage.from(FLOOR_PLANS_STORAGE_BUCKET).getPublicUrl(path);
+  const { data: signed, error: signErr } = await admin.storage
+    .from(FLOOR_PLANS_STORAGE_BUCKET)
+    .createSignedUrl(path, FLOOR_PLAN_BACKGROUND_SIGNED_URL_EXPIRY);
+  if (signErr || !signed?.signedUrl) {
+    console.error("[floor-plans/background-pdf] createSignedUrl", signErr);
+    return NextResponse.json({ error: signErr?.message ?? "Could not create signed URL" }, { status: 500 });
+  }
 
   return NextResponse.json({
-    publicUrl: pub.publicUrl,
+    publicUrl: signed.signedUrl,
     path,
   });
 }

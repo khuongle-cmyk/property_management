@@ -1045,7 +1045,7 @@ export default function SettingsImportPage() {
   return (
     <main style={{ display: "grid", gap: 14 }}>
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, background: "#fff" }}>
-        <h1 style={{ margin: 0 }}>Historical data import</h1>
+        <h1 className="vw-admin-page-title" style={{ margin: 0 }}>Historical data import</h1>
         <p style={{ color: "#64748b", marginBottom: 0 }}>
           Import 2+ years of revenue, costs, invoices, and occupancy for reporting baseline.
         </p>

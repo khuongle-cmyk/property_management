@@ -1,0 +1,155 @@
+@import "tailwindcss";
+
+/* Semantic UI tokens (shadcn-style) — used by marketing shell & dashboard */
+:root {
+  --foreground: #111827;
+  --muted-foreground: #6b7280;
+  --border: #e5e7eb;
+  --input: #ffffff;
+  --primary: #1a5c50;
+  --primary-foreground: #ffffff;
+  --muted: #f3f4f6;
+  --accent: #e5e7eb;
+  --card: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --foreground: #fafafa;
+    --muted-foreground: #a1a1aa;
+    --border: rgb(255 255 255 / 0.1);
+    --input: rgb(255 255 255 / 0.1);
+    --primary: #1a5c50;
+    --primary-foreground: #ffffff;
+    --muted: rgb(255 255 255 / 0.06);
+    --accent: rgb(255 255 255 / 0.1);
+    --card: rgb(255 255 255 / 0.05);
+  }
+}
+
+.dark {
+  --foreground: #fafafa;
+  --muted-foreground: #a1a1aa;
+  --border: rgb(255 255 255 / 0.1);
+  --input: rgb(255 255 255 / 0.1);
+  --primary: #1a5c50;
+  --primary-foreground: #ffffff;
+  --muted: rgb(255 255 255 / 0.06);
+  --accent: rgb(255 255 255 / 0.1);
+  --card: rgb(255 255 255 / 0.05);
+}
+
+@theme {
+  --color-foreground: var(--foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-card: var(--card);
+}
+
+/**
+ * Admin workspace (AppNav shell): primary page heading.
+ * Instrument Serif italic — match budget / dashboard titles. Not for public org site / customer portal.
+ */
+.vw-admin-page-title {
+  font-family: var(--font-instrument-serif), "Instrument Serif", serif;
+  font-size: 28px;
+  font-weight: 600;
+  font-style: italic;
+  color: #111827;
+  line-height: 1.2;
+}
+
+/** Admin: primary action buttons */
+.vw-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #1a5c50;
+  color: #fff;
+  border-radius: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.25;
+}
+.vw-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+.vw-btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/** Admin: secondary / outline buttons */
+.vw-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  color: #374151;
+  border-radius: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.25;
+}
+.vw-btn-secondary:hover:not(:disabled) {
+  background: #f9fafb;
+}
+.vw-btn-secondary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/** Admin: native selects */
+.vw-select {
+  border: 1px solid #d1d5db;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: #fff;
+  color: #111827;
+  font-size: 0.875rem;
+  font-family: inherit;
+  line-height: 1.25;
+  box-sizing: border-box;
+}
+
+/** Admin: tab bars */
+.vw-tab-active {
+  background: #1a5c50;
+  color: #fff;
+  border-radius: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.25;
+}
+.vw-tab-inactive {
+  background: #fff;
+  border: 1px solid #d1d5db;
+  color: #374151;
+  border-radius: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.25;
+}
+.vw-tab-inactive:hover {
+  background: #f9fafb;
+}

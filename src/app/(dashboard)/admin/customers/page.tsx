@@ -17,7 +17,6 @@ type TenantRow = { id: string; name: string };
 type PropertyRow = { id: string; name: string; city: string | null; tenant_id: string };
 type CompanyRow = {
   id: string;
-  tenant_id: string;
   property_id: string | null;
   name: string;
   business_id: string | null;
@@ -32,7 +31,7 @@ type CompanyRow = {
   contract_start: string | null;
   contract_end: string | null;
   notes: string | null;
-  properties: { name: string } | { name: string }[] | null;
+  properties: { name: string; tenant_id?: string | null } | { name: string; tenant_id?: string | null }[] | null;
 };
 
 function propertyName(p: CompanyRow["properties"]): string {
@@ -135,7 +134,7 @@ export default function AdminCustomersPage() {
     const { data: crows, error: cErr } = await supabase
       .from("customer_companies")
       .select(
-        "id, tenant_id, property_id, name, business_id, email, phone, address_line, city, postal_code, industry, company_size, space_type, contract_start, contract_end, notes, properties(name)",
+        "id, property_id, name, business_id, email, phone, address_line, city, postal_code, industry, company_size, space_type, contract_start, contract_end, notes, properties(name, tenant_id)",
       )
       .order("name", { ascending: true });
 
@@ -252,7 +251,7 @@ export default function AdminCustomersPage() {
   return (
     <DashboardLayout>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, color: "#0f172a" }}>Customer Companies</h1>
+        <h1 className="vw-admin-page-title" style={{ margin: 0 }}>Customer Companies</h1>
         <button
           type="button"
           onClick={openCreate}

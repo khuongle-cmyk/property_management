@@ -257,7 +257,7 @@ export default function FloorPlanViewerInner() {
       <div style={{ marginBottom: 12, display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
         <Link href="/floor-plans">← Floor planner</Link>
         <Link href={`/floor-plans/${id}/edit`}>Edit</Link>
-        <h1 style={{ margin: 0, flex: "1 1 auto" }}>{data.plan.name}</h1>
+        <h1 className="vw-admin-page-title" style={{ margin: 0, flex: "1 1 auto" }}>{data.plan.name}</h1>
         {data.plan.status === "draft" ? (
           <span style={{ fontSize: 13, color: "#92400e", background: "#fef3c7", padding: "4px 10px", borderRadius: 8 }}>Draft</span>
         ) : null}
