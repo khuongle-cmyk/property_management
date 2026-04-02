@@ -14,7 +14,18 @@ import { MOCK_EMAIL_UNREAD_COUNT } from "@/lib/email/mock-dashboard-data";
 
 const navFont = "var(--font-dm-sans), sans-serif";
 const SIDEBAR_W = 220;
-const COLLAPSE_STORAGE_KEY = "vw-sidebar-collapsed";
+/** Section is expanded only when `collapsed[id] === false`. Missing key or `true` = collapsed. */
+const COLLAPSIBLE_SECTION_IDS = [
+  "sales",
+  "crm",
+  "community",
+  "marketing",
+  "spaces",
+  "bookings",
+  "work",
+  "finance",
+  "tools",
+] as const;
 
 type NavItem = {
   href: string;
@@ -78,18 +89,6 @@ function navLinkIsActive(pathname: string, href: string, exact?: boolean): boole
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-function loadCollapsedFromStorage(): Record<string, boolean> {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = localStorage.getItem(COLLAPSE_STORAGE_KEY);
-    if (!raw) return {};
-    const p = JSON.parse(raw) as unknown;
-    return typeof p === "object" && p !== null && !Array.isArray(p) ? (p as Record<string, boolean>) : {};
-  } catch {
-    return {};
-  }
-}
-
 type AppNavProps = {
   /** From server layout (SSR session); avoids empty sidebar before hydration. */
   appNavInitial: AppNavInitialState;
@@ -120,10 +119,6 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
   const [showReportsNav, setShowReportsNav] = useState(appNavInitial.showReportsNav);
   const [showMarketingNav, setShowMarketingNav] = useState(appNavInitial.showMarketingNav);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-
-  useEffect(() => {
-    setCollapsed(loadCollapsedFromStorage());
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -193,59 +188,46 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
     };
   }, [mobileOpen]);
 
-  /** Expand sections that contain the current route so sub-links stay visible (persisted collapse no longer hides active area). */
+  /** All sections collapsed by default; expand only those that contain the active route. */
   useEffect(() => {
     const path = pathname ?? "";
     if (!path || !loggedIn) return;
-    const expand: Record<string, boolean> = {};
+
+    const next: Record<string, boolean> = {};
+    for (const id of COLLAPSIBLE_SECTION_IDS) {
+      next[id] = true;
+    }
 
     if (showCrmNav && (path === "/crm" || path.startsWith("/crm/"))) {
-      expand.sales = false;
-      expand.crm = false;
+      next.sales = false;
+      next.crm = false;
     }
     if (path === "/community" || path.startsWith("/community/")) {
-      expand.community = false;
+      next.community = false;
     }
     if (showMarketingNav && (path === "/marketing" || path.startsWith("/marketing/"))) {
-      expand.marketing = false;
+      next.marketing = false;
     }
     if (
       showRoomsNav &&
       /^\/(offices|meeting-rooms|venues|coworking|virtual-office|rooms)(\/|$)/.test(path)
     ) {
-      expand.spaces = false;
+      next.spaces = false;
     }
     if (path === "/bookings" || path.startsWith("/bookings/")) {
-      expand.bookings = false;
+      next.bookings = false;
     }
     if (path === "/tasks" || path.startsWith("/tasks/")) {
-      expand.work = false;
+      next.work = false;
     }
     if (path === "/reports" || path.startsWith("/reports/") || path === "/budget" || path.startsWith("/budget/")) {
-      expand.finance = false;
+      next.finance = false;
     }
     if (path === "/floor-plans" || path.startsWith("/floor-plans/") || path.startsWith("/tools/contract-tool")) {
-      expand.tools = false;
+      next.tools = false;
     }
 
-    if (Object.keys(expand).length === 0) return;
-    setCollapsed((prev) => {
-      let changed = false;
-      const next = { ...prev };
-      for (const [id, v] of Object.entries(expand)) {
-        if (prev[id] !== v) {
-          next[id] = v;
-          changed = true;
-        }
-      }
-      if (!changed) return prev;
-      try {
-        localStorage.setItem(COLLAPSE_STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        /* ignore */
-      }
-      return next;
-    });
+    setCollapsed(next);
   }, [pathname, loggedIn, showCrmNav, showMarketingNav, showRoomsNav]);
 
   async function onLogout() {
@@ -258,13 +240,8 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
 
   function toggleSection(sectionId: string) {
     setCollapsed((prev) => {
-      const next = { ...prev, [sectionId]: !prev[sectionId] };
-      try {
-        localStorage.setItem(COLLAPSE_STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        /* ignore */
-      }
-      return next;
+      const wasOpen = prev[sectionId] === false;
+      return { ...prev, [sectionId]: wasOpen ? true : false };
     });
   }
 
@@ -403,7 +380,7 @@ export default function AppNav({ appNavInitial }: AppNavProps) {
   function renderCollapsibleSection(id: string, title: string, items: NavItem[]) {
     const visibleItems = items.filter((i) => i.visible);
     if (!visibleItems.length) return null;
-    const isCollapsed = Boolean(collapsed[id]);
+    const isCollapsed = collapsed[id] !== false;
     return (
       <section>
         <button
