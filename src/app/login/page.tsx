@@ -43,6 +43,26 @@ export default function LoginPage() {
         return;
       }
 
+      const { data: memberships, error: mErr } = await supabase.from("memberships").select("role");
+      if (mErr) {
+        setLoading(false);
+        setError(mErr.message);
+        await supabase.auth.signOut();
+        return;
+      }
+
+      const roles = (memberships ?? []).map((m) => (m.role ?? "").toLowerCase());
+      const dashboardRoles = new Set(["super_admin", "admin", "owner", "manager"]);
+      const hasDashboardRole = roles.some((r) => dashboardRoles.has(r));
+
+      if (hasDashboardRole) {
+        setUserTypeCookie("admin");
+        setAppScopeCookie("dashboard");
+        router.push("/dashboard");
+        setLoading(false);
+        return;
+      }
+
       const { data: customerRow, error: cuErr } = await supabase
         .from("customer_users")
         .select("id")
@@ -64,34 +84,9 @@ export default function LoginPage() {
         return;
       }
 
-      const { data: memberships, error: mErr } = await supabase.from("memberships").select("role");
-      if (mErr) {
-        setLoading(false);
-        setError(mErr.message);
-        await supabase.auth.signOut();
-        return;
+      if (roles.length > 0) {
+        setUserTypeCookie("admin");
       }
-
-      const roles = (memberships ?? []).map((m) => (m.role ?? "").toLowerCase());
-      if (roles.length === 0) {
-        setLoading(false);
-        setError("Account not found");
-        await supabase.auth.signOut();
-        return;
-      }
-
-      setUserTypeCookie("admin");
-
-      const dashboardRoles = new Set(["super_admin", "admin", "owner", "manager"]);
-      const hasDashboardAccess = roles.some((r) => dashboardRoles.has(r));
-
-      if (hasDashboardAccess) {
-        setAppScopeCookie("dashboard");
-        router.push("/dashboard");
-        setLoading(false);
-        return;
-      }
-
       setAppScopeCookie("workspace");
       router.push("/bookings");
       setLoading(false);

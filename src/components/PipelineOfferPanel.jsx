@@ -56,7 +56,7 @@ export default function PipelineOfferPanel({ leadId, leadData = {} }) {
     customerName: leadData.customerName ?? "",
     customerEmail: leadData.customerEmail ?? "",
     customerCompany: leadData.customerCompany ?? "",
-    propertyId: leadData.propertyId ?? "",
+    propertyId: leadData.propertyId ?? null,
     monthlyPrice: leadData.monthlyPrice ?? "",
   };
 

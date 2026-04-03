@@ -2,8 +2,8 @@ export const LEAD_STAGES = [
   "new",
   "contacted",
   "viewing",
-  "offer_sent",
-  "negotiation",
+  "offer",
+  "contract",
   "won",
   "lost",
 ] as const;
@@ -14,8 +14,8 @@ export const LEAD_STAGE_LABEL: Record<LeadStage, string> = {
   new: "New",
   contacted: "Contacted",
   viewing: "Viewing",
-  offer_sent: "Offer sent",
-  negotiation: "Negotiation",
+  offer: "Offer",
+  contract: "Contract",
   won: "Won",
   lost: "Lost",
 };
@@ -28,7 +28,7 @@ export const LEAD_ACTIVITY_TYPES = [
   "viewing_completed",
   "note_added",
   "stage_changed",
-  "offer_sent",
+  "offer",
   "document_shared",
 ] as const;
 

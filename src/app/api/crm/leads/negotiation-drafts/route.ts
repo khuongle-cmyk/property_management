@@ -126,7 +126,7 @@ export async function POST(req: Request) {
 
   const { error: stageErr } = await admin
     .from("leads")
-    .update({ stage: "negotiation", stage_changed_at: new Date().toISOString() })
+    .update({ stage: "contract", stage_changed_at: new Date().toISOString() })
     .eq("id", leadId);
   if (stageErr) return NextResponse.json({ error: stageErr.message }, { status: 400 });
 

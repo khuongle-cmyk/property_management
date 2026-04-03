@@ -7,6 +7,7 @@ import { LEAD_STAGE_LABEL, LEAD_STAGES, type LeadStage, LOST_REASONS } from "@/l
 import { sumProposalMonthlyRent } from "@/lib/crm/proposal-items";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { LeadFormModal } from "@/components/crm/LeadFormModal";
+import OfferEditor from "@/components/OfferEditor";
 import { ytunnusFormatWarning, vatFiFormatWarning } from "@/lib/crm/finnish-company";
 import { formatDateTime } from "@/lib/date/format";
 
@@ -102,14 +103,9 @@ type ContractRow = {
 
 type ActivityRow = { id: string; activity_type: string; summary: string; details: string | null; occurred_at: string };
 type StageHistoryRow = { id: string; from_stage: string | null; to_stage: string; notes: string | null; changed_at: string };
-type RoomRow = { id: string; room_name: string | null; room_number: string | null };
 type CrmPropertyRow = { id: string; name: string | null; city: string | null };
 
-type OfferLineDraft = { key: string; spaceId: string; monthly: string; hourly: string; notes: string };
-
-function newOfferLine(): OfferLineDraft {
-  return { key: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`, spaceId: "", monthly: "", hourly: "", notes: "" };
-}
+type LeadOfferRow = { id: string; status: string | null };
 
 function spaceLabel(
   row: { room_name: string | null; room_number: string | null } | null | undefined,
@@ -117,13 +113,6 @@ function spaceLabel(
 ): string {
   if (!row) return fallbackId;
   return `${row.room_name ?? "Room"}${row.room_number ? ` (${row.room_number})` : ""}`;
-}
-
-function parseOptionalAmount(s: string): number | null {
-  const t = s.trim();
-  if (!t) return null;
-  const n = Number(t);
-  return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
 const cardStyle: React.CSSProperties = {
@@ -138,8 +127,8 @@ function stageBadge(stage: LeadStage): React.CSSProperties {
     new: "#1d4ed8",
     contacted: "#7c3aed",
     viewing: "#0f766e",
-    offer_sent: "#b45309",
-    negotiation: "#be123c",
+    offer: "#b45309",
+    contract: "#be123c",
     won: "#15803d",
     lost: "#475569",
   };
@@ -165,7 +154,7 @@ function LeadDetailPageInner() {
   const [lead, setLead] = useState<LeadRow | null>(null);
   const [proposals, setProposals] = useState<ProposalRow[]>([]);
   const [contracts, setContracts] = useState<ContractRow[]>([]);
-  const [rooms, setRooms] = useState<RoomRow[]>([]);
+  const [leadOffers, setLeadOffers] = useState<LeadOfferRow[]>([]);
   const [activities, setActivities] = useState<ActivityRow[]>([]);
   const [history, setHistory] = useState<StageHistoryRow[]>([]);
   const [memberships, setMemberships] = useState<{ role: string | null }[]>([]);
@@ -176,13 +165,6 @@ function LeadDetailPageInner() {
   const [offerOpen, setOfferOpen] = useState(false);
   const [wonOpen, setWonOpen] = useState(false);
   const [lostOpen, setLostOpen] = useState(false);
-  const [offerLines, setOfferLines] = useState<OfferLineDraft[]>(() => [newOfferLine()]);
-  const [offerMeta, setOfferMeta] = useState({
-    proposedStartDate: "",
-    leaseLengthMonths: "12",
-    specialConditions: "",
-    validUntil: "",
-  });
 
   const [authUserId, setAuthUserId] = useState<string | null>(null);
 
@@ -228,6 +210,13 @@ function LeadDetailPageInner() {
     }
     setProposals(props ?? []);
 
+    const { data: offerRows } = await supabase
+      .from("offers")
+      .select("id,status")
+      .eq("lead_id", leadId)
+      .order("created_at", { ascending: false });
+    setLeadOffers((offerRows as LeadOfferRow[]) ?? []);
+
     const ctrsQ = await supabase
       .from("room_contracts")
       .select(
@@ -245,16 +234,6 @@ function LeadDetailPageInner() {
         ).data
       : ctrsQ.data;
     setContracts((ctrs as ContractRow[]) ?? []);
-
-    const propId = (leadRow as LeadRow).property_id;
-    if (propId) {
-      const { data: rms } = await supabase
-        .from("bookable_spaces")
-        .select("id, room_name, room_number")
-        .eq("property_id", propId)
-        .order("room_name", { ascending: true });
-      setRooms((rms as RoomRow[]) ?? []);
-    } else setRooms([]);
 
     const [actQ, histQ] = await Promise.all([
       supabase.from("lead_activities").select("*").eq("lead_id", leadId).order("occurred_at", { ascending: false }),
@@ -289,11 +268,11 @@ function LeadDetailPageInner() {
 
   async function onStageSelect(next: LeadStage) {
     if (!lead || next === lead.stage) return;
-    if (next === "offer_sent") {
+    if (next === "offer") {
       setOfferOpen(true);
       return;
     }
-    if (next === "negotiation") {
+    if (next === "contract") {
       await enterNegotiation();
       return;
     }
@@ -308,61 +287,19 @@ function LeadDetailPageInner() {
     await patchLead({ stage: next, stage_changed_at: new Date().toISOString() });
   }
 
-  const offerRunningMonthlyTotal = useMemo(
-    () => offerLines.reduce((s, l) => s + (parseOptionalAmount(l.monthly) ?? 0), 0),
-    [offerLines]
-  );
-
-  async function createProposalAndMaybeAdvance() {
-    if (!lead) return;
-    if (!offerMeta.proposedStartDate || !offerMeta.validUntil) {
-      setError("Fill start date and valid until.");
-      return;
-    }
-    const items = offerLines
-      .map((l) => ({
-        spaceId: l.spaceId.trim(),
-        proposedMonthlyRent: parseOptionalAmount(l.monthly),
-        proposedHourlyRate: parseOptionalAmount(l.hourly),
-        notes: l.notes.trim() || null,
-      }))
-      .filter((x) => x.spaceId && (x.proposedMonthlyRent != null || x.proposedHourlyRate != null));
-    if (!items.length) {
-      setError("Add at least one room with a monthly rent and/or hourly rate.");
-      return;
-    }
-    setError(null);
-    const res = await fetch("/api/crm/proposals", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        leadId: lead.id,
-        items,
-        proposedStartDate: offerMeta.proposedStartDate,
-        leaseLengthMonths: offerMeta.leaseLengthMonths ? Number(offerMeta.leaseLengthMonths) : null,
-        specialConditions: offerMeta.specialConditions || null,
-        validUntil: offerMeta.validUntil,
-        status: "sent",
-      }),
-    });
-    const j = (await res.json()) as { error?: string };
-    if (!res.ok) {
-      setError(j.error ?? "Failed to create proposal");
-      return;
-    }
-    setOfferLines([newOfferLine()]);
-    setOfferMeta({ proposedStartDate: "", leaseLengthMonths: "12", specialConditions: "", validUntil: "" });
-    await loadLead();
-  }
-
   async function finalizeOfferStage() {
     if (!lead) return;
-    if (!proposals.filter((p) => ["draft", "sent", "negotiating"].includes(p.status)).length) {
-      setError("Add at least one proposal before Offer sent.");
+    const hasRoomProposals = proposals.some((p) => ["draft", "sent", "negotiating"].includes(p.status));
+    const hasContractOffers = leadOffers.some((o) => {
+      const s = (o.status ?? "").toLowerCase();
+      return s.length > 0 && !["declined", "expired"].includes(s);
+    });
+    if (!hasRoomProposals && !hasContractOffers) {
+      setError("Save at least one contract offer (above) or add a legacy room proposal before Offer.");
       return;
     }
     setError(null);
-    await patchLead({ stage: "offer_sent" });
+    await patchLead({ stage: "offer" });
     setOfferOpen(false);
     router.replace(`/crm/leads/${lead.id}`);
   }
@@ -482,9 +419,9 @@ function LeadDetailPageInner() {
 
       {error ? <p style={{ color: "#b91c1c", margin: 0 }}>{error}</p> : null}
 
-      {searchParams.get("focus") === "negotiation" ? (
+      {searchParams.get("focus") === "contract" ? (
         <p style={{ margin: 0, padding: 12, background: "#eff6ff", borderRadius: 8, fontSize: 14 }}>
-          You moved this lead to <strong>Negotiation</strong>. Use &quot;Start negotiation&quot; to create versioned contract drafts from your proposals.
+          You moved this lead to <strong>Contract</strong>. Use &quot;Start negotiation&quot; to create versioned contract drafts from your proposals.
         </p>
       ) : null}
 
@@ -599,12 +536,12 @@ function LeadDetailPageInner() {
           <h2 style={{ margin: 0, fontSize: 16 }}>Pipeline actions</h2>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             <button type="button" onClick={() => setOfferOpen(true)} style={{ padding: "8px 12px" }}>
-              Add proposals / Offer sent
+              Add proposals / Offer
             </button>
             <button
               type="button"
               onClick={() => void enterNegotiation()}
-              disabled={lead.stage === "negotiation" || !openProposals.length}
+              disabled={lead.stage === "contract" || !openProposals.length}
               style={{ padding: "8px 12px" }}
             >
               Start negotiation (contract drafts)
@@ -679,7 +616,7 @@ function LeadDetailPageInner() {
 
       {contracts.length > 0 ? (
         <section style={cardStyle}>
-          <h2 style={{ margin: "0 0 10px", fontSize: 16 }}>Contract drafts (negotiation)</h2>
+          <h2 style={{ margin: "0 0 10px", fontSize: 16 }}>Contract drafts</h2>
           <p style={{ margin: "0 0 10px", fontSize: 13, color: "#64748b" }}>
             Spaces stay <strong>available</strong> until you mark the lead Won — then every space on the chosen proposal becomes{" "}
             <strong>reserved</strong>.
@@ -761,119 +698,34 @@ function LeadDetailPageInner() {
 
       {offerOpen ? (
         <div style={modalOverlay}>
-          <div style={modalBox}>
-            <h3 style={{ marginTop: 0 }}>Offer sent — multi-room proposals</h3>
-            <p style={{ fontSize: 14, color: "#64748b" }}>
-              Build one proposal with several rooms (e.g. office + meeting room + hot desks). Status stays available until Won. Then confirm to
-              move stage to Offer sent.
+          <div style={modalBoxOffer}>
+            <h3 style={{ marginTop: 0 }}>Contract offer</h3>
+            <p style={{ fontSize: 14, color: "#64748b", marginBottom: 12 }}>
+              Use the same offer editor as the contract tool. Save your draft or mark as sent, then click below to move this lead to{" "}
+              <strong>Offer</strong>.
             </p>
-            {!lead.property_id ? <p style={{ color: "#b91c1c" }}>Set property on the lead first.</p> : null}
-            <p style={{ margin: "10px 0 0", fontSize: 14, fontWeight: 600 }}>
-              Total monthly (preview): €{offerRunningMonthlyTotal}/mo
-              <span style={{ fontWeight: 400, color: "#64748b" }}> (hourly lines are listed separately)</span>
-            </p>
-            <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
-              {offerLines.map((line) => (
-                <div
-                  key={line.key}
-                  style={{
-                    border: "1px solid #e5e7eb",
-                    borderRadius: 8,
-                    padding: 10,
-                    display: "grid",
-                    gap: 8,
-                  }}
-                >
-                  <select
-                    value={line.spaceId}
-                    onChange={(e) =>
-                      setOfferLines((rows) => rows.map((r) => (r.key === line.key ? { ...r, spaceId: e.target.value } : r)))
-                    }
-                    style={{ padding: 8 }}
-                  >
-                    <option value="">Select room…</option>
-                    {rooms.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {(r.room_name ?? "Room") + (r.room_number ? ` (${r.room_number})` : "")}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    placeholder="Monthly rent (€) — offices / desks"
-                    value={line.monthly}
-                    onChange={(e) =>
-                      setOfferLines((rows) => rows.map((r) => (r.key === line.key ? { ...r, monthly: e.target.value } : r)))
-                    }
-                    style={{ padding: 8 }}
-                  />
-                  <input
-                    placeholder="Hourly rate (€) — meeting rooms"
-                    value={line.hourly}
-                    onChange={(e) =>
-                      setOfferLines((rows) => rows.map((r) => (r.key === line.key ? { ...r, hourly: e.target.value } : r)))
-                    }
-                    style={{ padding: 8 }}
-                  />
-                  <input
-                    placeholder="Room-specific conditions"
-                    value={line.notes}
-                    onChange={(e) =>
-                      setOfferLines((rows) => rows.map((r) => (r.key === line.key ? { ...r, notes: e.target.value } : r)))
-                    }
-                    style={{ padding: 8 }}
-                  />
-                  <button
-                    type="button"
-                    disabled={offerLines.length <= 1}
-                    onClick={() => setOfferLines((rows) => rows.filter((r) => r.key !== line.key))}
-                    style={{ padding: "6px 10px", justifySelf: "start" }}
-                  >
-                    Remove this room
-                  </button>
-                </div>
-              ))}
-              <button
-                type="button"
-                onClick={() => setOfferLines((rows) => [...rows, newOfferLine()])}
-                style={{ padding: "8px 10px", justifySelf: "start" }}
-              >
-                + Add another room
-              </button>
-              <hr style={{ border: 0, borderTop: "1px solid #e5e7eb", margin: "4px 0" }} />
-              <input
-                type="date"
-                value={offerMeta.proposedStartDate}
-                onChange={(e) => setOfferMeta((s) => ({ ...s, proposedStartDate: e.target.value }))}
-                style={{ padding: 8 }}
-              />
-              <input
-                placeholder="Lease length (months)"
-                value={offerMeta.leaseLengthMonths}
-                onChange={(e) => setOfferMeta((s) => ({ ...s, leaseLengthMonths: e.target.value }))}
-                style={{ padding: 8 }}
-              />
-              <input
-                type="date"
-                placeholder="Valid until"
-                value={offerMeta.validUntil}
-                onChange={(e) => setOfferMeta((s) => ({ ...s, validUntil: e.target.value }))}
-                style={{ padding: 8 }}
-              />
-              <textarea
-                placeholder="Special conditions / notes (whole proposal)"
-                value={offerMeta.specialConditions}
-                onChange={(e) => setOfferMeta((s) => ({ ...s, specialConditions: e.target.value }))}
-                style={{ padding: 8 }}
-                rows={3}
-              />
-              <button type="button" onClick={() => void createProposalAndMaybeAdvance()} style={{ padding: "10px" }}>
-                Save proposal to list
-              </button>
-            </div>
-            <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
-              <button type="button" onClick={() => setOfferOpen(false)}>Cancel</button>
+            <OfferEditor
+              leadId={lead.id}
+              offerId={leadOffers[0]?.id ?? null}
+              initialData={{
+                companyId: lead.id,
+                customerName: lead.contact_person_name ?? "",
+                customerEmail: lead.email,
+                customerPhone: lead.phone ?? lead.contact_direct_phone ?? "",
+                customerCompany: lead.company_name,
+                propertyId: lead.property_id,
+              }}
+              onSaved={() => {
+                void loadLead();
+              }}
+              onCancel={() => {
+                setOfferOpen(false);
+                router.replace(`/crm/leads/${lead.id}`);
+              }}
+            />
+            <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end", borderTop: "1px solid #e5e7eb", paddingTop: 16 }}>
               <button type="button" onClick={() => void finalizeOfferStage()} style={{ padding: "8px 14px", fontWeight: 600 }}>
-                Done — set stage to Offer sent
+                Done — set stage to Offer
               </button>
             </div>
           </div>
@@ -1010,4 +862,9 @@ const modalBox: React.CSSProperties = {
   width: "100%",
   maxHeight: "90vh",
   overflow: "auto",
+};
+
+const modalBoxOffer: React.CSSProperties = {
+  ...modalBox,
+  maxWidth: 960,
 };

@@ -1,516 +1,979 @@
-"use client";
+'use client';
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { getSupabaseClient } from "@/lib/supabase/browser";
-import { LEAD_STAGE_LABEL, LEAD_STAGES, type LeadStage } from "@/lib/crm";
-import { CustomerImportModal } from "@/components/crm/CustomerImportModal";
-import { LeadFormModal } from "@/components/crm/LeadFormModal";
+import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
+import { dbStageValueFromLeadForm } from '@/lib/crm/lead-stage-form';
+import EditLeadModal from '@/components/shared/EditLeadModal';
 
-type LeadRow = {
+// ═══════════════════════════════════════════════════════════════
+// VillageWorks Design Manual Tokens
+// ═══════════════════════════════════════════════════════════════
+const C = {
+  darkGreen: '#21524F',
+  darkGreenHover: '#1a4340',
+  darkGreenLight: '#2a6b67',
+  beige: '#F3DFC6',
+  beigeLight: '#f9f1e5',
+  white: '#FFFFFF',
+  offWhite: '#faf8f5',
+  textPrimary: '#1a1a1a',
+  textSecondary: '#5a5550',
+  textMuted: '#8a8580',
+  border: '#e5e0da',
+  borderLight: '#f0ebe5',
+  red: '#c0392b',
+  redLight: '#fdf0ee',
+  yellow: '#d4a017',
+  yellowLight: '#fef9e7',
+  green: '#27ae60',
+  greenLight: '#eafaf1',
+  overlay: 'rgba(0,0,0,0.4)',
+};
+
+const F = {
+  heading: "'Instrument Serif', Georgia, serif",
+  body: "'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif",
+};
+
+// ═══════════════════════════════════════════════════════════════
+// Pipeline Stages — VillageWorks sales flow
+// ═══════════════════════════════════════════════════════════════
+const STAGES = [
+  { key: 'new', label: 'New', color: '#3498db', bg: '#ebf5fb' },
+  { key: 'contacted', label: 'Contacted', color: '#9b59b6', bg: '#f4ecf7' },
+  { key: 'viewing', label: 'Viewing', color: '#e67e22', bg: '#fef5e7' },
+  { key: 'offer', label: 'Offer', color: '#2980b9', bg: '#eaf2f8' },
+  { key: 'contract', label: 'Contract', color: C.yellow, bg: C.yellowLight },
+  { key: 'won', label: 'Won', color: C.green, bg: C.greenLight },
+  { key: 'lost', label: 'Lost', color: C.red, bg: C.redLight },
+];
+
+interface Lead {
   id: string;
-  tenant_id: string;
-  pipeline_owner: string;
-  property_id: string | null;
   company_name: string;
-  contact_person_name: string;
-  business_id?: string | null;
-  vat_number?: string | null;
-  company_type?: string | null;
-  industry_sector?: string | null;
-  company_size?: string | null;
-  company_website?: string | null;
-  billing_street?: string | null;
-  billing_postal_code?: string | null;
-  billing_city?: string | null;
-  billing_email?: string | null;
-  e_invoice_address?: string | null;
-  e_invoice_operator_code?: string | null;
-  contact_first_name?: string | null;
-  contact_last_name?: string | null;
-  contact_title?: string | null;
-  contact_direct_phone?: string | null;
+  contact_first_name: string;
+  contact_last_name: string;
   email: string;
-  phone: string | null;
+  phone: string;
+  stage: string;
   source: string;
-  interested_space_type: string | null;
-  approx_size_m2: number | null;
-  approx_budget_eur_month: number | null;
-  preferred_move_in_date: string | null;
-  notes: string | null;
-  assigned_agent_user_id: string | null;
-  stage: LeadStage;
-  archived?: boolean;
+  notes: string;
   created_at: string;
-};
-
-type PropertyRow = { id: string; name: string | null; city: string | null };
-type MembershipRow = { tenant_id: string | null; role: string | null };
-
-type ViewMode = "kanban" | "list";
-
-const cardStyle: React.CSSProperties = {
-  background: "#fff",
-  border: "1px solid #e6e6e6",
-  borderRadius: 12,
-  padding: 12,
-};
-
-function stageBadge(stage: LeadStage): React.CSSProperties {
-  const colors: Record<LeadStage, string> = {
-    new: "#1d4ed8",
-    contacted: "#7c3aed",
-    viewing: "#0f766e",
-    offer_sent: "#b45309",
-    negotiation: "#be123c",
-    won: "#15803d",
-    lost: "#475569",
-  };
-  return {
-    display: "inline-block",
-    borderRadius: 999,
-    padding: "2px 8px",
-    fontSize: 12,
-    color: "#fff",
-    background: colors[stage],
-  };
+  updated_at: string;
+  budget_eur_month: number | null;
+  interested_space_type: string;
+  next_action: string;
+  next_action_date: string;
+  pipeline_owner: string;
+  assigned_agent_user_id: string | null;
+  archived: boolean;
+  property_id?: string | null;
+  interested_property_id?: string | null;
+  contact_person_name?: string | null;
 }
 
-function countOpenProposals(rows: { lead_id: string | null; status: string }[] | null, leadId: string): number {
-  return (rows ?? []).filter(
-    (r) => r.lead_id === leadId && ["draft", "sent", "negotiating"].includes(r.status)
-  ).length;
+interface Agent {
+  id: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  display: string;
 }
 
-export default function CRMPage() {
+export default function SalesPipelinePage() {
+  const supabase = createClient();
   const router = useRouter();
-  const supabase = useMemo(() => getSupabaseClient(), []);
+  const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>("kanban");
-  const [leads, setLeads] = useState<LeadRow[]>([]);
-  const [properties, setProperties] = useState<PropertyRow[]>([]);
-  const [memberships, setMemberships] = useState<MembershipRow[]>([]);
-  const [proposalIndex, setProposalIndex] = useState<{ lead_id: string | null; status: string }[]>([]);
-  const [search, setSearch] = useState("");
-  const [propertyFilter, setPropertyFilter] = useState("all");
-  const [sortBy, setSortBy] = useState<"created_at" | "company_name" | "stage">("created_at");
+  const [view, setView] = useState<'kanban' | 'list'>('kanban');
+  const [search, setSearch] = useState('');
   const [showArchived, setShowArchived] = useState(false);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [draggedLeadId, setDraggedLeadId] = useState<string | null>(null);
+  const [dragOverStage, setDragOverStage] = useState<string | null>(null);
 
-  const [addLeadOpen, setAddLeadOpen] = useState(false);
-  const [importOpen, setImportOpen] = useState(false);
-  const [editingLead, setEditingLead] = useState<LeadRow | null>(null);
+  // User & agent filter
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [currentUserRole, setCurrentUserRole] = useState<string>('');
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [properties, setProperties] = useState<{ id: string; name: string }[]>([]);
+  const [selectedAgent, setSelectedAgent] = useState<string>('all');
+  const [agentsLoaded, setAgentsLoaded] = useState(false);
 
-  const primaryTenantId = useMemo(() => {
-    const prefer = memberships.filter(
-      (m) => m.tenant_id && ["super_admin", "owner", "manager"].includes((m.role ?? "").toLowerCase())
-    );
-    return prefer[0]?.tenant_id ?? memberships.find((m) => m.tenant_id)?.tenant_id ?? null;
-  }, [memberships]);
+  // Edit modal
+  const [editLeadId, setEditLeadId] = useState<string | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
-  const myRoles = useMemo(() => new Set(memberships.map((m) => (m.role ?? "").toLowerCase())), [memberships]);
-  const canManageLeads =
-    myRoles.has("super_admin") || myRoles.has("owner") || myRoles.has("manager") || myRoles.has("agent");
+  // Create modal
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [createForm, setCreateForm] = useState({
+    company_name: '',
+    contact_first_name: '',
+    contact_last_name: '',
+    email: '',
+    phone: '',
+    y_tunnus: '',
+    contact_status: 'Lead',
+    stage: 'new',
+    property_id: '',
+    source: '',
+    interested_space_type: '',
+    company_size: '',
+    industry: '',
+    notes: '',
+    assigned_agent_user_id: '',
+  });
+  const [creating, setCreating] = useState(false);
 
-  const loadAll = useCallback(async () => {
+  // ── Fetch current user, role, and agent list ──
+  useEffect(() => {
+    const init = async () => {
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      setCurrentUserId(user.id);
+
+      // Get role
+      const { data: membership } = await supabase
+        .from('memberships')
+        .select('role')
+        .eq('user_id', user.id)
+        .single();
+
+      const role = (membership?.role || '').trim().toLowerCase();
+      setCurrentUserRole(role);
+
+      // Default: super_admin sees all, others see own leads
+      if (role === 'super_admin') {
+        setSelectedAgent('all');
+      } else {
+        setSelectedAgent(user.id);
+      }
+
+      // Fetch agents from user_profiles joined with memberships
+      if (role === 'super_admin' || role === 'manager' || role === 'owner') {
+        const { data: members } = await supabase
+          .from('memberships')
+          .select('user_id, role');
+
+        if (members && members.length > 0) {
+          const userIds = [...new Set(members.map(m => m.user_id))];
+          const { data: profiles } = await supabase
+            .from('user_profiles')
+            .select('user_id, first_name, last_name, email')
+            .in('user_id', userIds);
+
+          if (profiles) {
+            const agentList: Agent[] = profiles.map(p => ({
+              id: p.user_id,
+              email: p.email || '',
+              first_name: p.first_name || '',
+              last_name: p.last_name || '',
+              display: [p.first_name, p.last_name].filter(Boolean).join(' ') || p.email || p.user_id.slice(0, 8),
+            }));
+            agentList.sort((a, b) => a.display.localeCompare(b.display));
+            setAgents(agentList);
+          }
+        }
+      }
+
+      const { data: props } = await supabase
+        .from('properties')
+        .select('id, name')
+        .order('name');
+      if (props) setProperties(props);
+
+      setAgentsLoaded(true);
+    };
+    init();
+  }, []);
+
+  // ── Fetch leads ──
+  const fetchLeads = useCallback(async () => {
     setLoading(true);
-    setError(null);
-    let leadsQuery = supabase.from("leads").select("*").order("created_at", { ascending: false });
-    if (!showArchived) {
-      leadsQuery = leadsQuery.or("archived.eq.false,archived.is.null");
-    }
-    const [leadsQ, propertiesQ, membershipsQ] = await Promise.all([
-      leadsQuery,
-      supabase.from("properties").select("id,name,city").order("name", { ascending: true }),
-      supabase.from("memberships").select("tenant_id,role"),
-    ]);
-    if (leadsQ.error) {
-      setError(leadsQ.error.message);
-      setLoading(false);
-      return;
-    }
-    const leadRows = (leadsQ.data as LeadRow[]) ?? [];
-    setLeads(leadRows);
-    setProperties((propertiesQ.data as PropertyRow[]) ?? []);
-    setMemberships((membershipsQ.data as MembershipRow[]) ?? []);
+    try {
+      let query = supabase
+        .from('leads')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-    const ids = leadRows.map((l) => l.id);
-    if (ids.length) {
-      const { data: propRows } = await supabase.from("room_proposals").select("lead_id,status").in("lead_id", ids);
-      setProposalIndex((propRows as { lead_id: string | null; status: string }[]) ?? []);
-    } else {
-      setProposalIndex([]);
+      if (!showArchived) {
+        query = query.or('archived.is.null,archived.eq.false');
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      setLeads(data || []);
+    } catch (err) {
+      console.error('Error fetching leads:', err);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  }, [supabase, showArchived]);
+  }, [showArchived]);
 
   useEffect(() => {
-    loadAll();
-  }, [loadAll]);
+    if (agentsLoaded) fetchLeads();
+  }, [fetchLeads, agentsLoaded]);
 
-  const filteredLeads = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    let rows = [...leads];
-    if (propertyFilter !== "all") rows = rows.filter((l) => l.property_id === propertyFilter);
-    if (q) {
-      rows = rows.filter((l) =>
-        [l.company_name, l.contact_person_name, l.email, l.phone ?? "", l.source].join(" ").toLowerCase().includes(q)
+  // ── Filter leads by search + agent ──
+  const filtered = leads.filter((l) => {
+    // Agent filter
+    if (selectedAgent !== 'all') {
+      if (l.assigned_agent_user_id !== selectedAgent) return false;
+    }
+    // Search filter
+    if (!search) return true;
+    const s = search.toLowerCase();
+    return (
+      (l.company_name || '').toLowerCase().includes(s) ||
+      (l.contact_first_name || '').toLowerCase().includes(s) ||
+      (l.contact_last_name || '').toLowerCase().includes(s) ||
+      (l.email || '').toLowerCase().includes(s)
+    );
+  });
+
+  const getStageLeads = (stageKey: string) =>
+    filtered.filter((l) => (l.stage || 'new') === stageKey);
+
+  // ── Drag & Drop ──
+  const handleDragStart = (leadId: string) => setDraggedLeadId(leadId);
+  const handleDragOver = (e: React.DragEvent, stageKey: string) => {
+    e.preventDefault();
+    setDragOverStage(stageKey);
+  };
+  const handleDragLeave = () => setDragOverStage(null);
+  const handleDrop = async (stageKey: string) => {
+    if (!draggedLeadId) return;
+    setDragOverStage(null);
+    try {
+      const { error } = await supabase
+        .from('leads')
+        .update({
+          stage: stageKey,
+          stage_changed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', draggedLeadId);
+      if (error) throw error;
+      setLeads((prev) =>
+        prev.map((l) => (l.id === draggedLeadId ? { ...l, stage: stageKey } : l))
       );
-    }
-    rows.sort((a, b) => {
-      if (sortBy === "company_name") return a.company_name.localeCompare(b.company_name);
-      if (sortBy === "stage") return LEAD_STAGES.indexOf(a.stage) - LEAD_STAGES.indexOf(b.stage);
-      return +new Date(b.created_at) - +new Date(a.created_at);
-    });
-    return rows;
-  }, [leads, propertyFilter, search, sortBy]);
-
-  const leadsByStage = useMemo(() => {
-    const m = new Map<LeadStage, LeadRow[]>();
-    for (const s of LEAD_STAGES) m.set(s, []);
-    for (const row of filteredLeads) m.get(row.stage)?.push(row);
-    return m;
-  }, [filteredLeads]);
-
-  const patchLead = useCallback(
-    async (leadId: string, patch: Record<string, unknown>) => {
-      setBusyId(leadId);
-      const { error: uErr } = await supabase.from("leads").update(patch).eq("id", leadId);
-      setBusyId(null);
-      if (uErr) {
-        setError(uErr.message);
-        return false;
+      if (stageKey === 'offer') {
+        router.push(`/crm/leads/${draggedLeadId}?focus=offer`);
       }
-      await loadAll();
-      return true;
-    },
-    [loadAll, supabase]
-  );
+    } catch (err) {
+      console.error('Error moving lead:', JSON.stringify(err, null, 2));
+    }
+    setDraggedLeadId(null);
+  };
 
-  async function onDropLead(leadId: string, toStage: LeadStage) {
-    const lead = leads.find((l) => l.id === leadId);
-    if (!lead || lead.stage === toStage) return;
+  // ── Create Lead ──
+  const handleCreate = async () => {
+    if (!createForm.company_name.trim()) return;
+    setCreating(true);
+    try {
+      const insertData: any = {
+        company_name: createForm.company_name,
+        contact_first_name: createForm.contact_first_name,
+        contact_last_name: createForm.contact_last_name,
+        email: createForm.email,
+        phone: createForm.phone,
+        y_tunnus: createForm.y_tunnus,
+        stage: dbStageValueFromLeadForm(createForm.stage),
+        interested_property_id: createForm.property_id || null,
+        source: createForm.source,
+        interested_space_type: createForm.interested_space_type,
+        company_size: createForm.company_size,
+        industry: createForm.industry,
+        notes: createForm.notes,
+        assigned_agent_user_id: createForm.assigned_agent_user_id || null,
+        pipeline_owner: 'platform',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      if (createForm.contact_status === 'Inactive') insertData.archived = true;
+      if (createForm.contact_status === 'Lost') insertData.stage = 'lost';
 
-    if (toStage === "negotiation") {
-      setBusyId(leadId);
-      const res = await fetch("/api/crm/leads/negotiation-drafts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leadId }),
+      const { error } = await supabase.from('leads').insert(insertData);
+      if (error) throw error;
+      setCreateForm({
+        company_name: '',
+        contact_first_name: '',
+        contact_last_name: '',
+        email: '',
+        phone: '',
+        y_tunnus: '',
+        contact_status: 'Lead',
+        stage: 'new',
+        property_id: '',
+        source: '',
+        interested_space_type: '',
+        company_size: '',
+        industry: '',
+        notes: '',
+        assigned_agent_user_id: '',
       });
-      const j = (await res.json()) as { error?: string };
-      setBusyId(null);
-      if (!res.ok) {
-        setError(j.error ?? "Could not start negotiation");
-        router.push(`/crm/leads/${leadId}?focus=negotiation`);
-        return;
-      }
-      await loadAll();
-      router.push(`/crm/leads/${leadId}`);
-      return;
+      setIsCreateModalOpen(false);
+      fetchLeads();
+    } catch (err) {
+      console.error('Error creating lead:', err);
+    } finally {
+      setCreating(false);
     }
+  };
 
-    if (["offer_sent", "won", "lost"].includes(toStage)) {
-      const focus = toStage === "offer_sent" ? "offer" : toStage === "won" ? "won" : "lost";
-      router.push(`/crm/leads/${leadId}?focus=${focus}`);
-      return;
-    }
+  // ── Stats ──
+  const totalLeads = filtered.length;
+  const wonLeads = filtered.filter((l) => l.stage === 'won').length;
+  const totalBudget = filtered.reduce((sum, l) => sum + (l.budget_eur_month || 0), 0);
 
-    const stageNote = window.prompt(`Optional note for moving ${lead.company_name} to ${LEAD_STAGE_LABEL[toStage]}`, "") ?? "";
-    await patchLead(leadId, {
-      stage: toStage,
-      stage_notes: stageNote || null,
-      stage_changed_at: new Date().toISOString(),
-    });
-  }
+  // ── Get agent name helper ──
+  const getAgentName = (userId: string | null) => {
+    if (!userId) return 'Unassigned';
+    const agent = agents.find(a => a.id === userId);
+    return agent ? agent.display : userId.slice(0, 8);
+  };
 
-  if (loading) return <p>Loading CRM...</p>;
-  if (error) return <p style={{ color: "#b91c1c" }}>{error}</p>;
+  // ── Can user filter by agents? ──
+  const canFilterAgents = currentUserRole === 'super_admin' || currentUserRole === 'manager' || currentUserRole === 'owner';
+
+  // ── Shared styles ──
+  const onInputFocus = (e: React.FocusEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+    e.target.style.borderColor = C.darkGreen;
+    e.target.style.boxShadow = '0 0 0 3px rgba(33,82,79,0.08)';
+  };
+  const onInputBlur = (e: React.FocusEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+    e.target.style.borderColor = C.border;
+    e.target.style.boxShadow = 'none';
+  };
+
+  const inputBase: React.CSSProperties = {
+    fontFamily: F.body, fontSize: '14px', color: C.textPrimary,
+    backgroundColor: C.white, border: `1px solid ${C.border}`, borderRadius: '8px',
+    padding: '10px 14px', width: '100%', outline: 'none',
+    transition: 'border-color 0.2s, box-shadow 0.2s', boxSizing: 'border-box',
+  };
+
+  const selectBase: React.CSSProperties = {
+    ...inputBase, appearance: 'none' as const,
+    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b6560' d='M2 4l4 4 4-4'/%3E%3C/svg%3E")`,
+    backgroundRepeat: 'no-repeat', backgroundPosition: 'right 14px center', paddingRight: '36px',
+  };
+
+  const labelBase: React.CSSProperties = {
+    fontFamily: F.body, fontSize: '13px', fontWeight: 500,
+    color: C.textSecondary, display: 'block', marginBottom: '4px',
+  };
+
+  const gridTwo: React.CSSProperties = {
+    display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px',
+  };
 
   return (
-    <div style={{ display: "grid", gap: 16 }}>
-      <section style={{ ...cardStyle, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <h1 className="vw-admin-page-title" style={{ margin: 0 }}>Sales Pipeline</h1>
-        <span style={{ flex: 1 }} />
-        <Link href="/crm" style={{ fontWeight: 700 }}>
-          CRM Pipeline
-        </Link>
-        <Link href="/crm/contacts">Contacts</Link>
-        <Link href="/crm/import">Import contacts</Link>
-        {canManageLeads ? (
-          <>
-            <button
-              type="button"
-              onClick={() => setAddLeadOpen(true)}
-              disabled={!primaryTenantId}
-              style={{
-                padding: "10px 16px",
-                fontWeight: 700,
-                background: primaryTenantId ? "#15803d" : "#94a3b8",
-                color: "#fff",
-                border: "none",
-                borderRadius: 10,
-                cursor: primaryTenantId ? "pointer" : "not-allowed",
-              }}
-            >
-              + Add lead
-            </button>
-            <button
-              type="button"
-              onClick={() => setImportOpen(true)}
-              disabled={!primaryTenantId}
-              style={{
-                padding: "10px 16px",
-                fontWeight: 600,
-                background: primaryTenantId ? "#1d4ed8" : "#94a3b8",
-                color: "#fff",
-                border: "none",
-                borderRadius: 10,
-                cursor: primaryTenantId ? "pointer" : "not-allowed",
-              }}
-            >
-              Import customers
-            </button>
-          </>
-        ) : null}
-        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14 }}>
-          <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
-          Show archived (lost)
-        </label>
-        <button type="button" onClick={() => setViewMode("kanban")} style={{ padding: "8px 10px" }}>
-          Kanban
-        </button>
-        <button type="button" onClick={() => setViewMode("list")} style={{ padding: "8px 10px" }}>
-          List
-        </button>
-      </section>
+    <div style={{ backgroundColor: C.offWhite, minHeight: '100vh', fontFamily: F.body, color: C.textPrimary }}>
 
-      {!primaryTenantId && canManageLeads ? (
-        <p style={{ margin: 0, fontSize: 14, color: "#b45309" }}>
-          Add lead / import requires a membership with an organization. Ask an admin to add you to a tenant.
-        </p>
-      ) : null}
+      {/* ── Page Header ── */}
+      <div style={{ padding: '32px 32px 0' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '24px' }}>
+          <div>
+            <h1 style={{ fontFamily: F.heading, fontSize: '32px', fontWeight: 400, color: C.textPrimary, margin: 0, lineHeight: 1.1 }}>
+              Sales Pipeline
+            </h1>
+            <p style={{ fontFamily: F.body, fontSize: '14px', color: C.textMuted, margin: '6px 0 0' }}>
+              Manage leads from first contact to closed deal
+            </p>
+          </div>
+          <button onClick={() => setIsCreateModalOpen(true)} style={{
+            fontFamily: F.body, fontSize: '14px', fontWeight: 600, color: C.white,
+            backgroundColor: C.darkGreen, border: 'none', borderRadius: '10px',
+            padding: '11px 22px', cursor: 'pointer', transition: 'background-color 0.2s',
+            display: 'flex', alignItems: 'center', gap: '8px',
+          }}
+            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = C.darkGreenHover)}
+            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = C.darkGreen)}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="8" y1="3" x2="8" y2="13" /><line x1="3" y1="8" x2="13" y2="8" />
+            </svg>
+            New Lead
+          </button>
+        </div>
 
-      <section style={{ ...cardStyle, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search company, contact name, email, phone…"
-          style={{ padding: 8, minWidth: 280 }}
-        />
-        <select value={propertyFilter} onChange={(e) => setPropertyFilter(e.target.value)} style={{ padding: 8 }}>
-          <option value="all">All properties</option>
-          {properties.map((p) => (
-            <option key={p.id} value={p.id}>
-              {(p.name ?? "Unnamed property") + (p.city ? ` (${p.city})` : "")}
-            </option>
-          ))}
-        </select>
-        <select value={sortBy} onChange={(e) => setSortBy(e.target.value as "created_at" | "company_name" | "stage")} style={{ padding: 8 }}>
-          <option value="created_at">Sort: newest</option>
-          <option value="company_name">Sort: company</option>
-          <option value="stage">Sort: pipeline stage</option>
-        </select>
-        <span style={{ fontSize: 13, color: "#64748b" }}>
-          Search applies to both Kanban and List. Drag to Offer / Negotiation / Won / Lost opens the lead detail to complete the step.
-        </span>
-      </section>
-
-      {viewMode === "kanban" ? (
-        <section style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(210px, 1fr))", gap: 12, overflowX: "auto" }}>
-          {LEAD_STAGES.map((stage) => (
-            <div
-              key={stage}
-              style={{ ...cardStyle, minHeight: 380, background: "#fafafa" }}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault();
-                const leadId = e.dataTransfer.getData("text/plain");
-                if (leadId) void onDropLead(leadId, stage);
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
-                <strong>{LEAD_STAGE_LABEL[stage]}</strong>
-                <span style={{ marginLeft: "auto", color: "#666", fontSize: 12 }}>{(leadsByStage.get(stage) ?? []).length}</span>
-              </div>
-              <div style={{ display: "grid", gap: 8 }}>
-                {(leadsByStage.get(stage) ?? []).map((lead) => {
-                  const n = countOpenProposals(proposalIndex, lead.id);
-                  return (
-                    <div
-                      key={lead.id}
-                      draggable
-                      onDragStart={(e) => e.dataTransfer.setData("text/plain", lead.id)}
-                      style={{
-                        border: "1px solid #e2e8f0",
-                        borderRadius: 10,
-                        background: "#fff",
-                        padding: 10,
-                        cursor: "grab",
-                        opacity: busyId === lead.id ? 0.6 : 1,
-                      }}
-                    >
-                      <Link
-                        href={`/crm/leads/${lead.id}`}
-                        onClick={(e) => e.stopPropagation()}
-                        style={{ color: "#111", textDecoration: "none", fontWeight: 600 }}
-                      >
-                        {lead.company_name}
-                      </Link>
-                      <div style={{ fontSize: 13, color: "#374151" }}>{lead.contact_person_name}</div>
-                      <div style={{ fontSize: 12, color: "#666", marginTop: 6 }}>{lead.email}</div>
-                      {lead.phone ? <div style={{ fontSize: 12, color: "#666" }}>{lead.phone}</div> : null}
-                      <div style={{ marginTop: 8, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                        <span style={stageBadge(lead.stage)}>{LEAD_STAGE_LABEL[lead.stage]}</span>
-                        {n > 0 ? (
-                          <span
-                            style={{
-                              fontSize: 11,
-                              padding: "2px 8px",
-                              borderRadius: 999,
-                              background: "#e0f2fe",
-                              color: "#0369a1",
-                            }}
-                          >
-                            {n} proposal{n === 1 ? "" : "s"}
-                          </span>
-                        ) : null}
-                        {canManageLeads ? (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              setEditingLead(lead);
-                            }}
-                            style={{
-                              marginLeft: "auto",
-                              fontSize: 12,
-                              padding: "4px 8px",
-                              borderRadius: 6,
-                              border: "1px solid #cbd5e1",
-                              background: "#fff",
-                              cursor: "pointer",
-                            }}
-                          >
-                            Edit
-                          </button>
-                        ) : null}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+        {/* ── Stats Bar ── */}
+        <div style={{ display: 'flex', gap: '16px', marginBottom: '20px' }}>
+          {[
+            { label: 'Total Leads', value: totalLeads },
+            { label: 'Won', value: wonLeads },
+            { label: 'Pipeline Value', value: `€${totalBudget.toLocaleString()}/mo` },
+          ].map((stat) => (
+            <div key={stat.label} style={{
+              backgroundColor: C.white, border: `1px solid ${C.border}`, borderRadius: '10px',
+              padding: '14px 20px', flex: 1, maxWidth: '220px',
+            }}>
+              <p style={{
+                fontFamily: F.body, fontSize: '12px', fontWeight: 500, color: C.textMuted,
+                margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.04em',
+              }}>{stat.label}</p>
+              <p style={{ fontFamily: F.heading, fontSize: '22px', fontWeight: 400, color: C.darkGreen, margin: 0 }}>
+                {stat.value}
+              </p>
             </div>
           ))}
-        </section>
-      ) : null}
+        </div>
 
-      {viewMode === "list" ? (
-        <section style={cardStyle}>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        {/* ── Toolbar ── */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          gap: '16px', paddingBottom: '20px', borderBottom: `1px solid ${C.border}`,
+          flexWrap: 'wrap',
+        }}>
+          {/* Left side: Search + Agent filter */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, flexWrap: 'wrap' }}>
+            {/* Search */}
+            <div style={{ position: 'relative', minWidth: '220px', maxWidth: '320px', flex: 1 }}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke={C.textMuted} strokeWidth="1.5" strokeLinecap="round"
+                style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>
+                <circle cx="7" cy="7" r="5" /><line x1="11" y1="11" x2="14" y2="14" />
+              </svg>
+              <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search companies, contacts..."
+                style={{ ...inputBase, paddingLeft: '36px' }}
+                onFocus={onInputFocus} onBlur={onInputBlur} />
+            </div>
+
+            {/* Agent filter dropdown */}
+            {canFilterAgents && agents.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke={C.textMuted} strokeWidth="1.5" strokeLinecap="round">
+                  <circle cx="8" cy="5" r="3" /><path d="M2 14c0-3 2.5-5 6-5s6 2 6 5" />
+                </svg>
+                <select
+                  value={selectedAgent}
+                  onChange={(e) => setSelectedAgent(e.target.value)}
+                  style={{
+                    ...selectBase,
+                    width: 'auto',
+                    minWidth: '180px',
+                    padding: '8px 36px 8px 12px',
+                    fontSize: '13px',
+                    fontWeight: 500,
+                  }}
+                  onFocus={onInputFocus}
+                  onBlur={onInputBlur}
+                >
+                  <option value="all">All users</option>
+                  <option value="unassigned">Unassigned leads</option>
+                  {agents.map((agent) => (
+                    <option key={agent.id} value={agent.id}>
+                      {agent.display}{agent.id === currentUserId ? ' (me)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+
+          {/* Right side: Archive toggle + View toggle */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <label style={{
+              fontFamily: F.body, fontSize: '13px', color: C.textMuted,
+              display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer',
+            }}>
+              <input type="checkbox" checked={showArchived}
+                onChange={(e) => setShowArchived(e.target.checked)}
+                style={{ accentColor: C.darkGreen }} />
+              Show archived
+            </label>
+
+            <div style={{
+              display: 'flex', backgroundColor: C.white,
+              border: `1px solid ${C.border}`, borderRadius: '8px', overflow: 'hidden',
+            }}>
+              {(['kanban', 'list'] as const).map((v) => (
+                <button key={v} onClick={() => setView(v)} style={{
+                  fontFamily: F.body, fontSize: '13px',
+                  fontWeight: view === v ? 600 : 400,
+                  color: view === v ? C.white : C.textSecondary,
+                  backgroundColor: view === v ? C.darkGreen : 'transparent',
+                  border: 'none', padding: '7px 16px', cursor: 'pointer',
+                  transition: 'all 0.2s', textTransform: 'capitalize',
+                }}>{v}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Main Content ── */}
+      <div style={{ padding: '20px 32px 32px' }}>
+        {loading ? (
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '80px 0', fontFamily: F.body, fontSize: '14px', color: C.textMuted,
+          }}>
+            <svg width="20" height="20" viewBox="0 0 20 20" style={{ marginRight: '10px', animation: 'spin 1s linear infinite' }}>
+              <circle cx="10" cy="10" r="8" stroke={C.darkGreen} strokeWidth="2" fill="none" strokeDasharray="36 14" />
+            </svg>
+            Loading pipeline...
+          </div>
+        ) : view === 'kanban' ? (
+          /* ═══ KANBAN VIEW ═══ */
+          <div style={{ display: 'flex', gap: '16px', overflowX: 'auto', paddingBottom: '16px' }}>
+            {STAGES.filter((s) => showArchived || s.key !== 'lost').map((stage) => {
+              const stageLeads = getStageLeads(stage.key);
+              const isOver = dragOverStage === stage.key;
+              return (
+                <div key={stage.key}
+                  onDragOver={(e) => handleDragOver(e, stage.key)}
+                  onDragLeave={handleDragLeave}
+                  onDrop={() => handleDrop(stage.key)}
+                  style={{
+                    minWidth: '260px', width: '260px', flexShrink: 0,
+                    display: 'flex', flexDirection: 'column',
+                    maxHeight: 'calc(100vh - 300px)',
+                  }}
+                >
+                  {/* Column Header */}
+                  <div style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    marginBottom: '12px', padding: '0 4px',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: stage.color }} />
+                      <span style={{ fontFamily: F.body, fontSize: '14px', fontWeight: 600, color: C.textPrimary }}>{stage.label}</span>
+                    </div>
+                    <span style={{
+                      fontFamily: F.body, fontSize: '12px', fontWeight: 600, color: C.textMuted,
+                      backgroundColor: C.white, border: `1px solid ${C.border}`,
+                      borderRadius: '12px', padding: '2px 10px',
+                    }}>{stageLeads.length}</span>
+                  </div>
+
+                  {/* Column Body */}
+                  <div style={{
+                    backgroundColor: isOver ? C.beigeLight : C.borderLight,
+                    borderRadius: '12px', padding: '8px', flex: 1, overflowY: 'auto',
+                    transition: 'background-color 0.2s',
+                    border: isOver ? `2px dashed ${C.darkGreen}` : '2px solid transparent',
+                    minHeight: '120px',
+                  }}>
+                    {stageLeads.length === 0 ? (
+                      <div style={{ fontFamily: F.body, fontSize: '12px', color: C.textMuted, textAlign: 'center', padding: '32px 12px' }}>
+                        No leads
+                      </div>
+                    ) : (
+                      stageLeads.map((lead) => (
+                        <div key={lead.id} draggable
+                          onDragStart={() => handleDragStart(lead.id)}
+                          onClick={() => { setEditLeadId(lead.id); setIsEditModalOpen(true); }}
+                          style={{
+                            backgroundColor: C.white, borderRadius: '10px',
+                            padding: '14px 16px', marginBottom: '8px', cursor: 'grab',
+                            border: `1px solid ${C.border}`,
+                            transition: 'box-shadow 0.2s, transform 0.15s',
+                            boxShadow: draggedLeadId === lead.id ? '0 8px 24px rgba(0,0,0,0.12)' : '0 1px 3px rgba(0,0,0,0.04)',
+                            opacity: draggedLeadId === lead.id ? 0.6 : 1,
+                          }}
+                          onMouseEnter={(e) => {
+                            if (draggedLeadId !== lead.id) {
+                              e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)';
+                              e.currentTarget.style.transform = 'translateY(-1px)';
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)';
+                            e.currentTarget.style.transform = 'none';
+                          }}
+                        >
+                          <p style={{ fontFamily: F.body, fontSize: '14px', fontWeight: 600, color: C.textPrimary, margin: '0 0 6px', lineHeight: 1.3 }}>
+                            {lead.company_name || 'Unnamed'}
+                          </p>
+                          <p style={{ fontFamily: F.body, fontSize: '12px', color: C.textSecondary, margin: '0 0 4px' }}>
+                            {[lead.contact_first_name, lead.contact_last_name].filter(Boolean).join(' ') || '—'}
+                          </p>
+                          {lead.email && (
+                            <p style={{
+                              fontFamily: F.body, fontSize: '11px', color: C.textMuted,
+                              margin: '0 0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            }}>{lead.email}</p>
+                          )}
+
+                          {/* Tags */}
+                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '4px' }}>
+                            {lead.interested_space_type && (
+                              <span style={{
+                                fontFamily: F.body, fontSize: '10px', fontWeight: 500,
+                                color: C.darkGreen, backgroundColor: C.beigeLight,
+                                borderRadius: '6px', padding: '2px 8px', textTransform: 'capitalize',
+                              }}>{lead.interested_space_type.replace(/_/g, ' ')}</span>
+                            )}
+                            {lead.budget_eur_month && (
+                              <span style={{
+                                fontFamily: F.body, fontSize: '10px', fontWeight: 500,
+                                color: C.darkGreenLight, backgroundColor: '#eaf5f4',
+                                borderRadius: '6px', padding: '2px 8px',
+                              }}>€{lead.budget_eur_month.toLocaleString()}/mo</span>
+                            )}
+                            {lead.source && (
+                              <span style={{
+                                fontFamily: F.body, fontSize: '10px', fontWeight: 500,
+                                color: C.textMuted, backgroundColor: C.borderLight,
+                                borderRadius: '6px', padding: '2px 8px', textTransform: 'capitalize',
+                              }}>{lead.source.replace(/_/g, ' ')}</span>
+                            )}
+                          </div>
+
+                          {/* Assigned agent badge */}
+                          {lead.assigned_agent_user_id && (
+                            <div style={{
+                              marginTop: '8px', display: 'flex', alignItems: 'center', gap: '4px',
+                            }}>
+                              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke={C.darkGreen} strokeWidth="1.2" strokeLinecap="round">
+                                <circle cx="5" cy="3.5" r="2" /><path d="M1.5 9c0-2 1.5-3.5 3.5-3.5s3.5 1.5 3.5 3.5" />
+                              </svg>
+                              <span style={{ fontFamily: F.body, fontSize: '10px', color: C.darkGreen, fontWeight: 500 }}>
+                                {getAgentName(lead.assigned_agent_user_id)}
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Next action */}
+                          {lead.next_action && (
+                            <div style={{
+                              marginTop: '6px', paddingTop: '6px', borderTop: `1px solid ${C.borderLight}`,
+                              display: 'flex', alignItems: 'center', gap: '4px',
+                            }}>
+                              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke={C.yellow} strokeWidth="1.5" strokeLinecap="round">
+                                <circle cx="5" cy="5" r="4" /><path d="M5 3v2l1.5 1" />
+                              </svg>
+                              <span style={{ fontFamily: F.body, fontSize: '10px', color: C.textMuted }}>
+                                {lead.next_action}
+                                {lead.next_action_date && ` · ${new Date(lead.next_action_date).toLocaleDateString('fi-FI')}`}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          /* ═══ LIST VIEW ═══ */
+          <div style={{ backgroundColor: C.white, borderRadius: '12px', border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: F.body, fontSize: '13px' }}>
               <thead>
-                <tr>
-                  {["Company", "Contact", "Email", "Phone", "Proposals", "Stage", "Actions"].map((h) => (
-                    <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "8px 6px" }}>
-                      {h}
-                    </th>
+                <tr style={{ backgroundColor: C.beigeLight }}>
+                  {['Company', 'Contact', 'Email', 'Stage', 'Assigned To', 'Space Type', 'Budget', 'Next Action'].map((h) => (
+                    <th key={h} style={{
+                      textAlign: 'left', padding: '12px 16px', fontWeight: 600,
+                      fontSize: '12px', color: C.textSecondary,
+                      textTransform: 'uppercase', letterSpacing: '0.04em',
+                      borderBottom: `1px solid ${C.border}`,
+                    }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {filteredLeads.map((lead) => {
-                  const n = countOpenProposals(proposalIndex, lead.id);
+                {filtered.map((lead, i) => {
+                  const stage = STAGES.find((s) => s.key === lead.stage) || STAGES[0];
                   return (
-                    <tr key={lead.id}>
-                      <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{lead.company_name}</td>
-                      <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{lead.contact_person_name}</td>
-                      <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{lead.email}</td>
-                      <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{lead.phone ?? "—"}</td>
-                      <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>{n}</td>
-                      <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>
-                        <span style={stageBadge(lead.stage)}>{LEAD_STAGE_LABEL[lead.stage]}</span>
+                    <tr key={lead.id}
+                      onClick={() => { setEditLeadId(lead.id); setIsEditModalOpen(true); }}
+                      style={{
+                        cursor: 'pointer',
+                        borderBottom: i < filtered.length - 1 ? `1px solid ${C.borderLight}` : 'none',
+                        transition: 'background-color 0.15s',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = C.offWhite)}
+                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                    >
+                      <td style={{ padding: '12px 16px', fontWeight: 600, color: C.textPrimary }}>{lead.company_name || '—'}</td>
+                      <td style={{ padding: '12px 16px', color: C.textSecondary }}>
+                        {[lead.contact_first_name, lead.contact_last_name].filter(Boolean).join(' ') || '—'}
                       </td>
-                      <td style={{ padding: "8px 6px", borderBottom: "1px solid #f1f5f9" }}>
-                        <Link href={`/crm/leads/${lead.id}`} style={{ marginRight: 10 }}>
-                          Open
-                        </Link>
-                        {canManageLeads ? (
-                          <button type="button" onClick={() => setEditingLead(lead)} style={{ fontSize: 13 }}>
-                            Edit
-                          </button>
-                        ) : null}
+                      <td style={{ padding: '12px 16px', color: C.textMuted }}>{lead.email || '—'}</td>
+                      <td style={{ padding: '12px 16px' }}>
+                        <span style={{
+                          fontSize: '11px', fontWeight: 600, color: stage.color,
+                          backgroundColor: stage.bg, borderRadius: '6px', padding: '3px 10px',
+                        }}>{stage.label}</span>
                       </td>
+                      <td style={{ padding: '12px 16px', color: C.textSecondary, fontSize: '12px' }}>
+                        {getAgentName(lead.assigned_agent_user_id)}
+                      </td>
+                      <td style={{ padding: '12px 16px', color: C.textSecondary, textTransform: 'capitalize' }}>
+                        {(lead.interested_space_type || '—').replace(/_/g, ' ')}
+                      </td>
+                      <td style={{ padding: '12px 16px', color: C.textSecondary }}>
+                        {lead.budget_eur_month ? `€${lead.budget_eur_month.toLocaleString()}` : '—'}
+                      </td>
+                      <td style={{ padding: '12px 16px', color: C.textMuted, fontSize: '12px' }}>{lead.next_action || '—'}</td>
                     </tr>
                   );
                 })}
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={8} style={{ padding: '48px 16px', textAlign: 'center', color: C.textMuted }}>
+                      No leads found
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
-        </section>
-      ) : null}
+        )}
+      </div>
 
-      {primaryTenantId ? (
-        <LeadFormModal
-          open={addLeadOpen}
-          mode="create"
-          tenantId={primaryTenantId}
-          properties={properties}
-          onClose={() => setAddLeadOpen(false)}
-          onSaved={loadAll}
-        />
-      ) : null}
+      {/* ═══ CREATE LEAD MODAL ═══ */}
+      {isCreateModalOpen && (
+        <div style={{
+          position: 'fixed', inset: 0, backgroundColor: C.overlay,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 50, padding: '20px',
+        }} onClick={() => setIsCreateModalOpen(false)}>
+          <div style={{
+            backgroundColor: C.offWhite, borderRadius: '16px', width: '100%',
+            maxWidth: '640px', maxHeight: '90vh', display: 'flex', flexDirection: 'column',
+            boxShadow: '0 25px 60px rgba(0,0,0,0.15)', overflow: 'hidden',
+          }} onClick={(e) => e.stopPropagation()}>
 
-      {editingLead ? (
-        <LeadFormModal
-          open={!!editingLead}
-          mode="edit"
-          leadId={editingLead.id}
-          tenantId={editingLead.tenant_id}
-          properties={properties}
-          initial={{
-            company_name: editingLead.company_name,
-            contact_person_name: editingLead.contact_person_name,
-            contact_first_name: editingLead.contact_first_name,
-            contact_last_name: editingLead.contact_last_name,
-            contact_title: editingLead.contact_title,
-            contact_direct_phone: editingLead.contact_direct_phone,
-            email: editingLead.email,
-            phone: editingLead.phone,
-            source: editingLead.source,
-            property_id: editingLead.property_id,
-            interested_space_type: editingLead.interested_space_type,
-            approx_size_m2: editingLead.approx_size_m2,
-            approx_budget_eur_month: editingLead.approx_budget_eur_month,
-            preferred_move_in_date: editingLead.preferred_move_in_date,
-            notes: editingLead.notes,
-            business_id: editingLead.business_id,
-            vat_number: editingLead.vat_number,
-            company_type: editingLead.company_type,
-            industry_sector: editingLead.industry_sector,
-            company_size: editingLead.company_size,
-            company_website: editingLead.company_website,
-            billing_street: editingLead.billing_street,
-            billing_postal_code: editingLead.billing_postal_code,
-            billing_city: editingLead.billing_city,
-            billing_email: editingLead.billing_email,
-            e_invoice_address: editingLead.e_invoice_address,
-            e_invoice_operator_code: editingLead.e_invoice_operator_code,
-          }}
-          onClose={() => setEditingLead(null)}
-          onSaved={loadAll}
-        />
-      ) : null}
+            {/* Header */}
+            <div style={{
+              padding: '28px 32px 20px', borderBottom: `1px solid ${C.border}`,
+              display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+            }}>
+              <div>
+                <h2 style={{ fontFamily: F.heading, fontSize: '24px', fontWeight: 400, color: C.textPrimary, margin: 0 }}>
+                  New Lead
+                </h2>
+                <p style={{ fontFamily: F.body, fontSize: '13px', color: C.textMuted, margin: '4px 0 0' }}>
+                  Add a new company to your pipeline
+                </p>
+              </div>
+              <button onClick={() => setIsCreateModalOpen(false)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textMuted, padding: '4px' }}>
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="5" y1="5" x2="15" y2="15" /><line x1="15" y1="5" x2="5" y2="15" />
+                </svg>
+              </button>
+            </div>
 
-      <CustomerImportModal
-        open={importOpen}
-        tenantId={primaryTenantId}
-        onClose={() => setImportOpen(false)}
-        onImported={loadAll}
+            {/* Body */}
+            <div style={{ padding: '24px 32px', overflowY: 'auto', flex: 1 }}>
+              <div style={{ marginBottom: '14px' }}>
+                <label style={labelBase}>Company name <span style={{ color: C.red }}>*</span></label>
+                <input value={createForm.company_name}
+                  onChange={(e) => setCreateForm((p) => ({ ...p, company_name: e.target.value }))}
+                  placeholder="e.g. Acme Oy" style={inputBase}
+                  onFocus={onInputFocus} onBlur={onInputBlur} />
+              </div>
+
+              <div style={gridTwo}>
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={labelBase}>Y-tunnus</label>
+                  <input value={createForm.y_tunnus}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, y_tunnus: e.target.value }))}
+                    placeholder="1234567-8" style={inputBase}
+                    onFocus={onInputFocus} onBlur={onInputBlur} />
+                </div>
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={labelBase}>Industry</label>
+                  <input value={createForm.industry}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, industry: e.target.value }))}
+                    style={inputBase} onFocus={onInputFocus} onBlur={onInputBlur} />
+                </div>
+              </div>
+
+              <div style={gridTwo}>
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={labelBase}>First name</label>
+                  <input value={createForm.contact_first_name}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, contact_first_name: e.target.value }))}
+                    style={inputBase} onFocus={onInputFocus} onBlur={onInputBlur} />
+                </div>
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={labelBase}>Last name</label>
+                  <input value={createForm.contact_last_name}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, contact_last_name: e.target.value }))}
+                    style={inputBase} onFocus={onInputFocus} onBlur={onInputBlur} />
+                </div>
+              </div>
+
+              <div style={gridTwo}>
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={labelBase}>Email</label>
+                  <input type="email" value={createForm.email}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, email: e.target.value }))}
+                    placeholder="name@company.com" style={inputBase}
+                    onFocus={onInputFocus} onBlur={onInputBlur} />
+                </div>
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={labelBase}>Phone</label>
+                  <input type="tel" value={createForm.phone}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, phone: e.target.value }))}
+                    placeholder="+358" style={inputBase}
+                    onFocus={onInputFocus} onBlur={onInputBlur} />
+                </div>
+              </div>
+
+              <div style={gridTwo}>
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={labelBase}>Property</label>
+                  <select value={createForm.property_id}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, property_id: e.target.value }))}
+                    style={selectBase} onFocus={onInputFocus} onBlur={onInputBlur}>
+                    <option value="">— Select —</option>
+                    {properties.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name || p.id.slice(0, 8)}</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={labelBase}>Space interest</label>
+                  <select value={createForm.interested_space_type}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, interested_space_type: e.target.value }))}
+                    style={selectBase} onFocus={onInputFocus} onBlur={onInputBlur}>
+                    <option value="">— Select —</option>
+                    <option value="private_office">Private Office</option>
+                    <option value="open_desk">Open Desk</option>
+                    <option value="meeting_room">Meeting Room</option>
+                    <option value="event_space">Event / Venue</option>
+                    <option value="virtual_office">Virtual Office</option>
+                    <option value="coworking">Coworking</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style={gridTwo}>
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={labelBase}>Contact Status</label>
+                  <select value={createForm.contact_status}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, contact_status: e.target.value }))}
+                    style={selectBase} onFocus={onInputFocus} onBlur={onInputBlur}>
+                    <option value="Lead">Lead</option>
+                    <option value="Pipeline lead">Pipeline lead</option>
+                    <option value="Active">Active</option>
+                    <option value="Inactive">Inactive</option>
+                    <option value="Lost">Lost</option>
+                  </select>
+                </div>
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={labelBase}>Stage</label>
+                  <select value={createForm.stage}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, stage: e.target.value }))}
+                    style={selectBase} onFocus={onInputFocus} onBlur={onInputBlur}>
+                    {STAGES.map((s) => (
+                      <option key={s.key} value={s.key}>{s.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div style={gridTwo}>
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={labelBase}>Source</label>
+                  <select value={createForm.source}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, source: e.target.value }))}
+                    style={selectBase} onFocus={onInputFocus} onBlur={onInputBlur}>
+                    <option value="">— Select —</option>
+                    <option value="website">Website</option>
+                    <option value="referral">Referral</option>
+                    <option value="tour">Office Tour</option>
+                    <option value="cold_call">Cold Call</option>
+                    <option value="linkedin">LinkedIn</option>
+                    <option value="event">Event</option>
+                    <option value="partner">Partner</option>
+                    <option value="chatbot">Chatbot</option>
+                    <option value="email_campaign">Email campaign</option>
+                    <option value="walk_in">Walk-in</option>
+                  </select>
+                </div>
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={labelBase}>Company size</label>
+                  <select value={createForm.company_size}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, company_size: e.target.value }))}
+                    style={selectBase} onFocus={onInputFocus} onBlur={onInputBlur}>
+                    <option value="">— Select —</option>
+                    <option value="1-10">1–10 employees</option>
+                    <option value="11-50">11–50 employees</option>
+                    <option value="51-200">51–200 employees</option>
+                    <option value="200+">200+ employees</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Assign to agent */}
+              {canFilterAgents && agents.length > 0 && (
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={labelBase}>Assign to</label>
+                  <select value={createForm.assigned_agent_user_id}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, assigned_agent_user_id: e.target.value }))}
+                    style={selectBase} onFocus={onInputFocus} onBlur={onInputBlur}>
+                    <option value="">— Unassigned —</option>
+                    {agents.map((agent) => (
+                      <option key={agent.id} value={agent.id}>
+                        {agent.display}{agent.id === currentUserId ? ' (me)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div style={{ marginBottom: '14px' }}>
+                <label style={labelBase}>Notes</label>
+                <textarea value={createForm.notes}
+                  onChange={(e) => setCreateForm((p) => ({ ...p, notes: e.target.value }))}
+                  placeholder="Initial notes..."
+                  style={{ ...inputBase, minHeight: '70px', resize: 'vertical' as const }}
+                  onFocus={onInputFocus} onBlur={onInputBlur} />
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div style={{
+              padding: '16px 32px', borderTop: `1px solid ${C.border}`,
+              display: 'flex', justifyContent: 'flex-end', gap: '12px', backgroundColor: '#f0ece6',
+            }}>
+              <button onClick={() => setIsCreateModalOpen(false)} style={{
+                fontFamily: F.body, fontSize: '14px', fontWeight: 500, color: C.textSecondary,
+                backgroundColor: 'transparent', border: `1px solid ${C.border}`,
+                borderRadius: '8px', padding: '10px 20px', cursor: 'pointer',
+              }}>Cancel</button>
+              <button onClick={handleCreate}
+                disabled={creating || !createForm.company_name.trim()}
+                style={{
+                  fontFamily: F.body, fontSize: '14px', fontWeight: 600, color: C.white,
+                  backgroundColor: C.darkGreen, border: 'none', borderRadius: '8px',
+                  padding: '10px 24px', cursor: 'pointer',
+                  opacity: creating || !createForm.company_name.trim() ? 0.5 : 1,
+                  transition: 'background-color 0.2s',
+                }}
+                onMouseEnter={(e) => { if (!creating) e.currentTarget.style.backgroundColor = C.darkGreenHover; }}
+                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = C.darkGreen; }}
+              >{creating ? 'Creating...' : 'Create Lead'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ EDIT LEAD MODAL ═══ */}
+      <EditLeadModal
+        isOpen={isEditModalOpen}
+        onClose={() => { setIsEditModalOpen(false); setEditLeadId(null); }}
+        leadId={editLeadId}
+        onSave={() => fetchLeads()}
+        onDelete={() => fetchLeads()}
       />
+
+      <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   );
 }

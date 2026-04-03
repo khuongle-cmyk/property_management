@@ -435,7 +435,7 @@ export async function GET(req: Request) {
       .select("approx_budget_eur_month, property_id")
       .in("tenant_id", ownerTenantIds)
       .eq("archived", false)
-      .in("stage", ["new", "contacted", "viewing", "offer_sent", "negotiation"])
+      .in("stage", ["new", "contacted", "viewing", "offer", "contract"])
       .or(propertyScopeOr);
     if (lErr && lErr.code !== "42P01") {
       return NextResponse.json({ error: lErr.message }, { status: 500 });

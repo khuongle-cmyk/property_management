@@ -45,8 +45,8 @@ function mapUiStageToLeadStage(label: string): LeadStage {
   const m: Record<string, LeadStage> = {
     New: "new",
     Viewing: "viewing",
-    Proposal: "offer_sent",
-    Negotiation: "negotiation",
+    Proposal: "offer",
+    Negotiation: "contract",
     Contacted: "contacted",
     Won: "won",
     Lost: "lost",

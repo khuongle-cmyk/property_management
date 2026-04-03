@@ -888,7 +888,7 @@ export default function DashboardPage() {
                 <input
                   value={pipelineStagesText}
                   onChange={(e) => setPipelineStagesText(e.target.value)}
-                  placeholder="new, contacted, viewing, offer_sent, negotiation, won, lost"
+                  placeholder="new, contacted, viewing, offer, contract, won, lost"
                   style={{ padding: 10, borderRadius: 8, border: "1px solid #ddd" }}
                 />
               </label>

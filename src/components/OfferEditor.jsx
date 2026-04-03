@@ -4,7 +4,7 @@
  * OfferEditor — Contract tool offers (CRM contact = public.leads; same as CRM module)
  *
  *   <OfferEditor />
- *   <OfferEditor leadId="uuid" initialData={{ ... }} onOfferAccepted={() => {}} />
+ *   <OfferEditor leadId="uuid" initialData={{ ... }} onOfferAccepted={() => {}} onCancel={() => {}} />
  */
 
 import { useState, useEffect, useCallback, useMemo, Fragment } from "react";
@@ -128,7 +128,18 @@ async function buildOfferVersionChain(supabase, startId) {
   return chain.reverse();
 }
 
-export default function OfferEditor({ leadId = null, initialData = {}, offerId = null, onSaved, onOfferAccepted, onDeleted }) {
+/**
+ * @param {{
+ *   leadId?: string | null,
+ *   offerId?: string | null,
+ *   initialData?: Record<string, unknown>,
+ *   onSaved?: (payload?: { newOfferId?: string }) => void,
+ *   onOfferAccepted?: () => void,
+ *   onDeleted?: () => void,
+ *   onCancel?: () => void,
+ * }} props
+ */
+export default function OfferEditor({ leadId = null, initialData = {}, offerId = null, onSaved, onOfferAccepted, onDeleted, onCancel }) {
   const supabase = getSupabaseClient();
   const [ConfirmModal, confirm] = useConfirm();
 
@@ -148,28 +159,41 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
   const [sendEmailMsg, setSendEmailMsg] = useState(null);
   const [copiedLink, setCopiedLink] = useState(false);
   const [markSentNote, setMarkSentNote] = useState(false);
+  const [leadPropertySaving, setLeadPropertySaving] = useState(false);
+  const [leadPropertyUiMode, setLeadPropertyUiMode] = useState(() => {
+    if (!leadId) return "n/a";
+    const p = initialData?.propertyId;
+    return p != null && String(p).trim() !== "" ? "locked" : "pick";
+  });
 
-  const [form, setForm] = useState({
-    title: "Offer",
-    status: "draft",
-    version: 1,
-    companyId: "",
-    customerName: "",
-    customerEmail: "",
-    customerPhone: "",
-    customerCompany: "",
-    propertyId: "",
-    spaceDetails: "",
-    monthlyPrice: "",
-    contractLengthMonths: 12,
-    startDate: "",
-    introText: DEFAULT_INTRO,
-    termsText: DEFAULT_TERMS,
-    notes: "",
-    templateName: "",
-    isTemplate: false,
-    publicToken: "",
-    ...initialData,
+  const [form, setForm] = useState(() => {
+    const merged = {
+      title: "Offer",
+      status: "draft",
+      version: 1,
+      companyId: "",
+      customerName: "",
+      customerEmail: "",
+      customerPhone: "",
+      customerCompany: "",
+      propertyId: "",
+      spaceDetails: "",
+      monthlyPrice: "",
+      contractLengthMonths: 12,
+      startDate: "",
+      introText: DEFAULT_INTRO,
+      termsText: DEFAULT_TERMS,
+      notes: "",
+      templateName: "",
+      isTemplate: false,
+      publicToken: "",
+      ...initialData,
+    };
+    const rawPid = merged.propertyId;
+    return {
+      ...merged,
+      propertyId: rawPid != null && String(rawPid).trim() !== "" ? String(rawPid) : "",
+    };
   });
 
   const applyLeadProfile = useCallback((row) => {
@@ -227,6 +251,7 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
       if (cancelled || !data) return;
       setSavedOfferId(data.id);
       setLoadedRow({ id: data.id, status: data.status ?? "draft", version: data.version ?? 1, parentOfferId: data.parent_offer_id ?? null });
+      const nextPid = data.property_id != null && String(data.property_id).trim() !== "" ? String(data.property_id) : "";
       setForm({
         title: data.title ?? "Offer",
         status: data.status ?? "draft",
@@ -236,7 +261,7 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
         customerEmail: data.customer_email ?? "",
         customerPhone: data.customer_phone ?? "",
         customerCompany: data.customer_company ?? "",
-        propertyId: data.property_id ?? "",
+        propertyId: nextPid,
         spaceDetails: data.space_details ?? "",
         monthlyPrice: data.monthly_price ?? "",
         contractLengthMonths: data.contract_length_months ?? 12,
@@ -248,6 +273,9 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
         isTemplate: data.is_template ?? false,
         publicToken: data.public_token ?? "",
       });
+      if (leadId) {
+        setLeadPropertyUiMode(nextPid ? "locked" : "pick");
+      }
     });
     buildOfferVersionChain(supabase, offerId).then((ch) => {
       if (!cancelled) setVersionHistory(ch);
@@ -255,7 +283,7 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
     return () => {
       cancelled = true;
     };
-  }, [offerId, supabase]);
+  }, [offerId, supabase, leadId]);
 
   useEffect(() => {
     supabase.from("properties").select("id,name,address,city,tenant_id").order("name").then(({ data }) => setProperties(data ?? []));
@@ -312,6 +340,24 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
 
   function set(field) {
     return (val) => setForm((f) => ({ ...f, [field]: val }));
+  }
+
+  const leadRequiresProperty = Boolean(leadId);
+  const hasLeadPropertySelected = Boolean(String(form.propertyId ?? "").trim());
+
+  async function onLeadPropertySelected(selectedId) {
+    if (!leadId || !selectedId) return;
+    setLeadPropertySaving(true);
+    setSaveMsg(null);
+    const { error } = await supabase.from("leads").update({ property_id: selectedId }).eq("id", leadId);
+    setLeadPropertySaving(false);
+    if (error) {
+      setSaveMsg({ type: "error", text: error.message });
+      return;
+    }
+    setForm((f) => ({ ...f, propertyId: selectedId }));
+    setLeadPropertyUiMode("locked");
+    onSaved?.();
   }
 
   function applyTemplate(templateId) {
@@ -563,7 +609,7 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
     window.setTimeout(() => setCopiedLink(false), 2000);
   }
 
-  const selectedProperty = properties.find((p) => p.id === form.propertyId);
+  const selectedProperty = properties.find((p) => String(p.id) === String(form.propertyId ?? ""));
 
   const previewHtml = useMemo(() => {
     const rentCol = c.primary;
@@ -594,10 +640,22 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
   const verLabel = `v${form.version ?? 1}.0`;
 
   async function nextFromDetails() {
+    if (leadRequiresProperty && !hasLeadPropertySelected) {
+      setSaveMsg({ type: "error", text: "Select a property for this lead." });
+      return;
+    }
     const r = await save();
     if (!r?.error) {
       setActiveTab("content");
     }
+  }
+
+  function trySetOfferStep(nextKey) {
+    if (leadRequiresProperty && !hasLeadPropertySelected && nextKey !== "details") {
+      setSaveMsg({ type: "error", text: "Select a property for this lead before continuing." });
+      return;
+    }
+    setActiveTab(nextKey);
   }
 
   return (
@@ -621,6 +679,25 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
           <StatusBadge status={form.status} />
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {onCancel ? (
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={saving}
+              style={{
+                padding: "8px 16px",
+                borderRadius: 8,
+                border: `1px solid ${c.border}`,
+                background: c.white,
+                color: c.text,
+                fontWeight: 600,
+                cursor: "pointer",
+                fontSize: 13,
+              }}
+            >
+              Cancel
+            </button>
+          ) : null}
           {loadedRow?.id ? (
             <button
               onClick={() => void deleteOffer()}
@@ -732,7 +809,7 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
               <Fragment key={step.key}>
                 <button
                   type="button"
-                  onClick={() => setActiveTab(step.key)}
+                  onClick={() => trySetOfferStep(step.key)}
                   style={{
                     display: "flex",
                     flexDirection: "column",
@@ -791,6 +868,59 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
 
       {activeTab === "details" && (
         <>
+          {leadId ? (
+            <Section title="Property">
+              {leadPropertyUiMode === "locked" && hasLeadPropertySelected ? (
+                <Field label="Property">
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: c.text }}>
+                      {selectedProperty?.name ?? "—"}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={leadPropertySaving}
+                      onClick={() => setLeadPropertyUiMode("pick")}
+                      style={{
+                        padding: "6px 12px",
+                        borderRadius: 8,
+                        border: `1px solid ${c.border}`,
+                        background: c.white,
+                        color: c.primary,
+                        fontWeight: 600,
+                        cursor: leadPropertySaving ? "not-allowed" : "pointer",
+                        fontSize: 13,
+                      }}
+                    >
+                      Change
+                    </button>
+                  </div>
+                </Field>
+              ) : (
+                <Field label="Property *" hint="Saved to this lead. Required before the next step.">
+                  <select
+                    value={form.propertyId ?? ""}
+                    onChange={(e) => void onLeadPropertySelected(e.target.value)}
+                    disabled={leadPropertySaving || properties.length === 0}
+                    style={{
+                      ...inputStyleBase,
+                      opacity: leadPropertySaving ? 0.75 : 1,
+                      cursor: leadPropertySaving ? "wait" : "pointer",
+                    }}
+                  >
+                    <option value="" disabled>
+                      {properties.length === 0 ? "Loading properties…" : "Select property…"}
+                    </option>
+                    {properties.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              )}
+            </Section>
+          ) : null}
+
           <Section title="Company (CRM)">
             <Field
               label="CRM contact"
@@ -925,16 +1055,18 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
           </Section>
 
           <Section title="Space & pricing">
-            <Field label="Property">
-              <select value={form.propertyId} onChange={(e) => set("propertyId")(e.target.value)} style={inputStyleBase}>
-                <option value="">Select property…</option>
-                {properties.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} — {p.city}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            {!leadId ? (
+              <Field label="Property">
+                <select value={form.propertyId ?? ""} onChange={(e) => set("propertyId")(e.target.value)} style={inputStyleBase}>
+                  <option value="">Select property…</option>
+                  {properties.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} — {p.city}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            ) : null}
             <Field label="Space / room details" hint="e.g. Office 4B, 2nd floor, 24 m²">
               <Input value={form.spaceDetails} onChange={set("spaceDetails")} placeholder="Office 4B…" />
             </Field>
@@ -985,15 +1117,16 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
             <div />
             <button
               type="button"
+              disabled={saving || (leadRequiresProperty && !hasLeadPropertySelected)}
               onClick={() => void nextFromDetails()}
               style={{
                 padding: "10px 20px",
                 borderRadius: 8,
                 border: "none",
-                background: c.primary,
+                background: leadRequiresProperty && !hasLeadPropertySelected ? c.border : c.primary,
                 color: c.white,
                 fontWeight: 600,
-                cursor: "pointer",
+                cursor: saving || (leadRequiresProperty && !hasLeadPropertySelected) ? "not-allowed" : "pointer",
                 fontSize: 14
               }}
             >
@@ -1018,7 +1151,7 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 24, paddingTop: 16, borderTop: `1px solid ${c.border}` }}>
             <button
               type="button"
-              onClick={() => setActiveTab("details")}
+              onClick={() => trySetOfferStep("details")}
               style={{
                 padding: "10px 20px",
                 borderRadius: 8,
@@ -1034,7 +1167,7 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab("preview")}
+              onClick={() => trySetOfferStep("preview")}
               style={{
                 padding: "10px 20px",
                 borderRadius: 8,
@@ -1216,7 +1349,7 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 24, paddingTop: 16, borderTop: `1px solid ${c.border}` }}>
             <button
               type="button"
-              onClick={() => setActiveTab("content")}
+              onClick={() => trySetOfferStep("content")}
               style={{
                 padding: "10px 20px",
                 borderRadius: 8,

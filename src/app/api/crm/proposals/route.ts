@@ -137,7 +137,7 @@ export async function POST(req: Request) {
 
   await admin.from("lead_activities").insert({
     lead_id: leadId,
-    activity_type: "offer_sent",
+    activity_type: "offer",
     actor_user_id: user.id,
     summary: "Room proposal created",
     details: `Proposal ${proposalId} with ${rows.length} space(s); ~€${totalMo}/mo recurring`,
