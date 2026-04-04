@@ -19,6 +19,8 @@ export async function GET(req: Request) {
   const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
   const dueFrom = (url.searchParams.get("dueFrom") ?? "").trim();
   const dueTo = (url.searchParams.get("dueTo") ?? "").trim();
+  const archivedParam = (url.searchParams.get("archived") ?? "").trim().toLowerCase();
+  const archivedOnly = archivedParam === "1" || archivedParam === "true" || archivedParam === "yes";
 
   const { data: memberships } = await supabase.from("memberships").select("tenant_id,role").eq("user_id", user.id);
   const roleRows = (memberships ?? []).map((m) => ({
@@ -33,7 +35,7 @@ export async function GET(req: Request) {
   const canViewAll = roleRows.some((m) => ["super_admin", "owner", "manager"].includes(m.role));
   let query = supabase
     .from("client_tasks")
-    .select("id,tenant_id,contract_id,contact_id,property_id,room_id,title,description,category,status,assigned_to_user_id,due_date,completed_at,notes,order_index,created_at,updated_at")
+    .select("id,tenant_id,contract_id,contact_id,property_id,room_id,title,description,category,status,priority,type,assigned_to_user_id,due_date,completed_at,notes,order_index,created_at,updated_at")
     .order("due_date", { ascending: true, nullsFirst: false });
   if (!isSuperAdmin) query = query.in("tenant_id", tenantIds);
   if (view === "my" || (!canViewAll && view === "all")) query = query.eq("assigned_to_user_id", user.id);
@@ -53,12 +55,14 @@ export async function GET(req: Request) {
   const today = new Date().toISOString().slice(0, 10);
   const weekEnd = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
   const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString().slice(0, 10);
-  const stats = {
-    myTasksToday: rows.filter((r) => r.assigned_to_user_id === user.id && r.status !== "done" && r.due_date === today).length,
-    overdue: rows.filter((r) => r.status !== "done" && r.due_date && r.due_date < today).length,
-    dueThisWeek: rows.filter((r) => r.status !== "done" && r.due_date && r.due_date >= today && r.due_date <= weekEnd).length,
-    completedThisMonth: rows.filter((r) => r.status === "done" && r.completed_at && String(r.completed_at).slice(0, 10) >= monthStart).length,
-  };
+  const stats = archivedOnly
+    ? { myTasksToday: 0, overdue: 0, dueThisWeek: 0, completedThisMonth: 0 }
+    : {
+        myTasksToday: rows.filter((r) => r.assigned_to_user_id === user.id && r.status !== "done" && r.due_date === today).length,
+        overdue: rows.filter((r) => r.status !== "done" && r.due_date && r.due_date < today).length,
+        dueThisWeek: rows.filter((r) => r.status !== "done" && r.due_date && r.due_date >= today && r.due_date <= weekEnd).length,
+        completedThisMonth: rows.filter((r) => r.status === "done" && r.completed_at && String(r.completed_at).slice(0, 10) >= monthStart).length,
+      };
   return NextResponse.json({ tasks: rows, stats });
 }
 
@@ -98,6 +102,12 @@ export async function POST(req: Request) {
     statusRaw === "todo" || statusRaw === "in_progress" || statusRaw === "done" || statusRaw === "skipped"
       ? statusRaw
       : "todo";
+
+  let priority = String(body.priority ?? "medium").toLowerCase();
+  if (!["urgent", "high", "medium", "low"].includes(priority)) priority = "medium";
+
+  let taskType = String(body.type ?? "internal").toLowerCase();
+  if (!["operations", "internal", "service_request"].includes(taskType)) taskType = "internal";
 
   const description = body.description == null || body.description === "" ? null : String(body.description);
   const assigned_to_user_id =
@@ -148,6 +158,8 @@ export async function POST(req: Request) {
     description,
     category,
     status,
+    priority,
+    type: taskType,
     assigned_to_user_id,
     due_date,
     notes,

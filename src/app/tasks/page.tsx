@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import type { CSSProperties, FocusEvent } from "react";
-import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties, DragEvent, FocusEvent } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { formatDateTime } from "@/lib/date/format";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 
@@ -41,10 +41,15 @@ type Task = {
   room_id: string | null;
   category: string;
   status: "todo" | "in_progress" | "done" | "skipped";
+  priority: "urgent" | "high" | "medium" | "low";
+  type: "operations" | "internal" | "service_request";
   assigned_to_user_id: string | null;
   due_date: string | null;
   notes: string | null;
+  archived?: boolean;
 };
+
+type BoardDropTarget = Task["status"] | "archive" | "restore" | null;
 
 const onInputFocus = (e: FocusEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
   e.target.style.borderColor = C.darkGreen;
@@ -128,6 +133,62 @@ function statusLabelPretty(s: Task["status"]): string {
   return s;
 }
 
+const priorityColors: Record<Task["priority"], string> = {
+  urgent: "#c0392b",
+  high: "#d4a017",
+  medium: "#2980b9",
+  low: "#8a8580",
+};
+
+function priorityDot(p: Task["priority"]): CSSProperties {
+  return {
+    display: "inline-block",
+    width: 8,
+    height: 8,
+    borderRadius: "50%",
+    backgroundColor: priorityColors[p],
+    flexShrink: 0,
+  };
+}
+
+const typeColors: Record<Task["type"], { bg: string; fg: string }> = {
+  operations: { bg: "#e8f4fd", fg: "#1a6fa8" },
+  internal: { bg: "#fef9e7", fg: "#8a6d1b" },
+  service_request: { bg: "#eafaf1", fg: "#1a8a4a" },
+};
+
+function typeBadgeStyle(t: Task["type"]): CSSProperties {
+  return {
+    fontFamily: F.body,
+    fontSize: 10,
+    fontWeight: 600,
+    padding: "2px 8px",
+    borderRadius: 6,
+    backgroundColor: typeColors[t].bg,
+    color: typeColors[t].fg,
+    display: "inline-block",
+    textTransform: "capitalize" as const,
+    whiteSpace: "nowrap",
+  };
+}
+
+function typeLabelPretty(t: Task["type"]): string {
+  if (t === "service_request") return "service req";
+  return t;
+}
+
+function normalizeTaskRow(t: Task): Task {
+  let priority: Task["priority"] = "medium";
+  if (t.priority === "urgent" || t.priority === "high" || t.priority === "medium" || t.priority === "low") {
+    priority = t.priority;
+  }
+  let taskType: Task["type"] = "internal";
+  if (t.type === "operations" || t.type === "internal" || t.type === "service_request") {
+    taskType = t.type;
+  }
+  return { ...t, priority, type: taskType };
+}
+
 const categoryBadgeStyle: CSSProperties = {
   fontFamily: F.body,
   fontSize: 11,
@@ -146,9 +207,15 @@ export default function TasksPage() {
   const [view, setView] = useState<"my" | "all">("my");
   const [status, setStatus] = useState("");
   const [category, setCategory] = useState("");
+  const [priorityFilter, setPriorityFilter] = useState("");
   const [propertyFilter, setPropertyFilter] = useState("");
   const [q, setQ] = useState("");
-  const [mode, setMode] = useState<"list" | "board">("list");
+  const [mode, setMode] = useState<"list" | "board" | "calendar">("list");
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const now = new Date();
+    return { year: now.getFullYear(), month: now.getMonth() };
+  });
+  const [showArchive, setShowArchive] = useState(false);
   const [openTask, setOpenTask] = useState<Task | null>(null);
   const [timeline, setTimeline] = useState<Array<{ id: string; type: string; created_at: string; actor_user_id: string | null; actor_name?: string | null; text: string }>>([]);
   const [members, setMembers] = useState<Array<{ user_id: string; role: string | null; name?: string; label: string }>>([]);
@@ -163,6 +230,8 @@ export default function TasksPage() {
     description: "",
     category: "admin",
     status: "todo" as Task["status"],
+    priority: "medium" as Task["priority"],
+    type: "internal" as Task["type"],
     assigned_to_user_id: "",
     due_date: "",
     contact_id: "",
@@ -177,14 +246,16 @@ export default function TasksPage() {
   >([]);
   /** Per company section (property + contact): when true, task table is collapsed. */
   const [companyTasksCollapsed, setCompanyTasksCollapsed] = useState<Record<string, boolean>>({});
+  const [boardDraggingId, setBoardDraggingId] = useState<string | null>(null);
+  const [boardDropTarget, setBoardDropTarget] = useState<BoardDropTarget>(null);
+  const boardCardClickOkRef = useRef(true);
 
   const filteredTasks = useMemo(() => {
     let result = tasks;
-    if (propertyFilter) {
-      result = result.filter((t) => t.property_id === propertyFilter);
-    }
+    if (propertyFilter) result = result.filter((t) => t.property_id === propertyFilter);
+    if (priorityFilter) result = result.filter((t) => t.priority === priorityFilter);
     return result;
-  }, [tasks, propertyFilter]);
+  }, [tasks, propertyFilter, priorityFilter]);
 
   const groupedTasks = useMemo(() => {
     type CompanyGroup = { companyName: string; contactId: string; tasks: Task[] };
@@ -228,6 +299,17 @@ export default function TasksPage() {
     return out;
   }, [filteredTasks]);
 
+  const tasksByDate = useMemo(() => {
+    const map: Record<string, Task[]> = {};
+    for (const t of filteredTasks) {
+      if (t.due_date) {
+        if (!map[t.due_date]) map[t.due_date] = [];
+        map[t.due_date].push(t);
+      }
+    }
+    return map;
+  }, [filteredTasks]);
+
   const sortedPropertyEntries = useMemo(
     () =>
       Object.entries(groupedTasks.properties).sort((a, b) =>
@@ -241,15 +323,16 @@ export default function TasksPage() {
   async function load() {
     const params = new URLSearchParams();
     params.set("view", view);
+    if (showArchive) params.set("archived", "1");
     if (status) params.set("status", status);
     if (category) params.set("category", category);
     if (q) params.set("q", q);
     const r = await fetch(`/api/tasks?${params.toString()}`);
     const j = (await r.json()) as { tasks?: Task[]; stats?: typeof stats };
     if (r.ok) {
-      const nextTasks = j.tasks ?? [];
+      const nextTasks = (j.tasks ?? []).map((row) => normalizeTaskRow(row as Task));
       setTasks(nextTasks);
-      setStats(j.stats ?? stats);
+      if (!showArchive) setStats(j.stats ?? stats);
       const tenantIds = [...new Set(nextTasks.map((t) => String(t.tenant_id ?? "")).filter(Boolean))];
       if (tenantIds.length) {
         const rm = await fetch(`/api/tasks/members?tenantIds=${encodeURIComponent(tenantIds.join(","))}`);
@@ -294,7 +377,7 @@ export default function TasksPage() {
   }
   useEffect(() => {
     void load();
-  }, [view, status, category]);
+  }, [view, status, category, showArchive]);
 
   useEffect(() => {
     async function loadDropdowns() {
@@ -347,6 +430,40 @@ export default function TasksPage() {
     await load();
   }
 
+  async function updateBoardTaskStatus(taskId: string, newStatus: Task["status"]) {
+    await fetch(`/api/tasks/${encodeURIComponent(taskId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: newStatus }),
+    });
+    await load();
+    if (openTask?.id === taskId) {
+      setOpenTask((prev) => (prev ? { ...prev, status: newStatus } : null));
+    }
+  }
+
+  async function setTaskArchived(taskId: string, archived: boolean) {
+    const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ archived }),
+    });
+    const j = (await res.json().catch(() => ({}))) as { error?: string };
+    if (!res.ok) {
+      alert(j.error ?? "Could not update archive");
+      return;
+    }
+    await load();
+    if (openTask?.id === taskId) {
+      if (archived) {
+        if (!showArchive) setOpenTask(null);
+        else setOpenTask((p) => (p ? { ...p, archived: true } : null));
+      } else {
+        setOpenTask(null);
+      }
+    }
+  }
+
   async function openDetail(task: Task) {
     setOpenTask(task);
     const [ra, rm] = await Promise.all([
@@ -370,7 +487,7 @@ export default function TasksPage() {
     await openDetail(openTask);
   }
 
-  async function updateTaskDetail(patch: Partial<Pick<Task, "assigned_to_user_id" | "due_date" | "status">>) {
+  async function updateTaskDetail(patch: Partial<Pick<Task, "assigned_to_user_id" | "due_date" | "status" | "priority" | "type">>) {
     if (!openTask) return;
     await fetch(`/api/tasks/${openTask.id}`, {
       method: "PATCH",
@@ -393,6 +510,8 @@ export default function TasksPage() {
           description: newTask.description || null,
           category: newTask.category,
           status: newTask.status,
+          priority: newTask.priority,
+          type: newTask.type,
           assigned_to_user_id: newTask.assigned_to_user_id || null,
           due_date: newTask.due_date || null,
           contact_id: newTask.contact_id || null,
@@ -407,6 +526,8 @@ export default function TasksPage() {
           description: "",
           category: "admin",
           status: "todo",
+          priority: "medium",
+          type: "internal",
           assigned_to_user_id: "",
           due_date: "",
           contact_id: "",
@@ -433,6 +554,9 @@ export default function TasksPage() {
     fontFamily: F.body,
     fontSize: 13,
     color: C.textPrimary,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   };
 
   function renderTaskRow(t: Task) {
@@ -448,20 +572,30 @@ export default function TasksPage() {
           e.currentTarget.style.backgroundColor = "transparent";
         }}
       >
-        <td style={{ ...cellBase, width: 44 }}>
-          <input
-            type="checkbox"
-            checked={t.status === "done"}
-            onChange={() => void quickComplete(t)}
-            style={{ width: 18, height: 18, accentColor: C.darkGreen, cursor: "pointer" }}
-          />
+        <td style={{ ...cellBase, width: 44, padding: "12px 8px" }}>
+          {showArchive ? (
+            <span style={{ color: C.textMuted, fontSize: 12 }}>—</span>
+          ) : (
+            <input
+              type="checkbox"
+              checked={t.status === "done"}
+              onChange={() => void quickComplete(t)}
+              style={{ width: 18, height: 18, accentColor: C.darkGreen, cursor: "pointer" }}
+            />
+          )}
         </td>
-        <td style={cellBase}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>{t.title}</div>
+        <td style={{ ...cellBase, whiteSpace: "normal" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={priorityDot(t.priority)} title={t.priority} />
+            <div>
+              <div style={{ fontWeight: 600, marginBottom: 2 }}>{t.title}</div>
+              <span style={typeBadgeStyle(t.type)}>{typeLabelPretty(t.type)}</span>
+            </div>
+          </div>
           {t.contact_id ? (
             <Link
               href={`/tasks/client/${encodeURIComponent(t.contact_id)}`}
-              style={{ fontFamily: F.body, fontSize: 13, fontWeight: 600, color: C.darkGreen, textDecoration: "none" }}
+              style={{ fontFamily: F.body, fontSize: 13, fontWeight: 600, color: C.darkGreen, textDecoration: "none", display: "inline-block", marginTop: 8 }}
             >
               Client view
             </Link>
@@ -482,21 +616,55 @@ export default function TasksPage() {
           <span style={statusBadgeStyle(t.status)}>{statusLabelPretty(t.status)}</span>
         </td>
         <td style={cellBase}>
-          <button
-            type="button"
-            onClick={() => void openDetail(t)}
-            style={{ ...btnSecondary, padding: "8px 14px", fontSize: 13 }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.borderColor = C.darkGreen;
-              e.currentTarget.style.color = C.darkGreen;
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.borderColor = C.border;
-              e.currentTarget.style.color = C.textPrimary;
-            }}
-          >
-            Details
-          </button>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+            {!showArchive && (t.status === "done" || t.status === "skipped") ? (
+              <button
+                type="button"
+                onClick={() => void setTaskArchived(t.id, true)}
+                style={{ ...btnSecondary, padding: "8px 14px", fontSize: 13 }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = C.darkGreen;
+                  e.currentTarget.style.color = C.darkGreen;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = C.border;
+                  e.currentTarget.style.color = C.textPrimary;
+                }}
+              >
+                Archive
+              </button>
+            ) : null}
+            {showArchive ? (
+              <button
+                type="button"
+                onClick={() => void setTaskArchived(t.id, false)}
+                style={{ ...btnPrimary, padding: "8px 14px", fontSize: 13 }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = C.darkGreenHover;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = C.darkGreen;
+                }}
+              >
+                Restore
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => void openDetail(t)}
+              style={{ ...btnSecondary, padding: "8px 14px", fontSize: 13 }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = C.darkGreen;
+                e.currentTarget.style.color = C.darkGreen;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = C.border;
+                e.currentTarget.style.color = C.textPrimary;
+              }}
+            >
+              Details
+            </button>
+          </div>
         </td>
       </tr>
     );
@@ -515,11 +683,23 @@ export default function TasksPage() {
     backgroundColor: C.beige,
   };
 
-  const tableHead = (
+  const colWidths = [44, 280, 100, 120, 100, 90, 120];
+
+  const tableColGroup = (
+    <colgroup>
+      {colWidths.map((w, i) => (
+        <col key={i} style={{ width: w }} />
+      ))}
+    </colgroup>
+  );
+
+  const columnHeaders = ["", "Task", "Category", "Assignee", "Due", "Status", "Actions"];
+
+  const tableHeadRow = (
     <thead>
       <tr>
-        {["", "Task", "Category", "Assignee", "Due", "Status", "Actions"].map((h) => (
-          <th key={h} style={thStyle}>
+        {columnHeaders.map((h, i) => (
+          <th key={h || `col-${i}`} style={thStyle}>
             {h}
           </th>
         ))}
@@ -529,6 +709,87 @@ export default function TasksPage() {
 
   const boardStageLabel = (s: Task["status"]) =>
     ({ todo: "To do", in_progress: "In progress", done: "Done", skipped: "Skipped" } as const)[s];
+
+  const boardStages = showArchive ? (["done", "skipped"] as const) : (["todo", "in_progress", "done", "skipped"] as const);
+
+  const archiveColumnShell = (
+    subtitle: string,
+    dropId: "archive" | "restore",
+    onDrop: (taskId: string) => void,
+  ) => (
+    <div
+      key={dropId}
+      style={{ minWidth: 260, width: 260, flexShrink: 0, display: "flex", flexDirection: "column", maxHeight: "calc(100vh - 280px)" }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, padding: "0 4px" }}>
+        <span style={{ fontFamily: F.body, fontSize: 14, fontWeight: 600, color: C.textPrimary }}>{dropId === "archive" ? "Archive" : "Restore"}</span>
+      </div>
+      <div
+        role="region"
+        aria-label={dropId === "archive" ? "Archive drop zone" : "Restore to active board"}
+        onDragOver={(e: DragEvent<HTMLDivElement>) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          setBoardDropTarget(dropId);
+        }}
+        onDragEnter={(e: DragEvent<HTMLDivElement>) => {
+          e.preventDefault();
+          setBoardDropTarget(dropId);
+        }}
+        onDragLeave={(e: DragEvent<HTMLDivElement>) => {
+          const next = e.relatedTarget as Node | null;
+          if (!next || !e.currentTarget.contains(next)) setBoardDropTarget((cur) => (cur === dropId ? null : cur));
+        }}
+        onDrop={(e: DragEvent<HTMLDivElement>) => {
+          e.preventDefault();
+          setBoardDropTarget(null);
+          const id = e.dataTransfer.getData("text/task-id");
+          if (!id) return;
+          onDrop(id);
+        }}
+        style={{
+          backgroundColor: dropId === "archive" ? "#ece8e2" : "#e8f4f0",
+          borderRadius: 12,
+          padding: 12,
+          flex: 1,
+          overflowY: "auto",
+          border: `2px dashed ${boardDropTarget === dropId ? C.darkGreen : C.border}`,
+          minHeight: 120,
+          transition: "border-color 0.15s ease",
+        }}
+      >
+        <p style={{ margin: 0, fontFamily: F.body, fontSize: 12, color: C.textSecondary, lineHeight: 1.45, textAlign: "center", padding: "20px 8px" }}>{subtitle}</p>
+      </div>
+    </div>
+  );
+
+  // Calendar helpers
+  function getCalendarDays(year: number, month: number) {
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const daysInMonth = lastDay.getDate();
+    let startDow = firstDay.getDay() - 1;
+    if (startDow < 0) startDow = 6;
+    const days: Array<{ date: number; month: number; year: number; isCurrentMonth: boolean }> = [];
+    const prevLastDay = new Date(year, month, 0).getDate();
+    for (let i = startDow - 1; i >= 0; i--) {
+      days.push({ date: prevLastDay - i, month: month === 0 ? 11 : month - 1, year: month === 0 ? year - 1 : year, isCurrentMonth: false });
+    }
+    for (let d = 1; d <= daysInMonth; d++) {
+      days.push({ date: d, month, year, isCurrentMonth: true });
+    }
+    const remainder = days.length % 7;
+    if (remainder > 0) {
+      for (let d = 1; d <= 7 - remainder; d++) {
+        days.push({ date: d, month: month === 11 ? 0 : month + 1, year: month === 11 ? year + 1 : year, isCurrentMonth: false });
+      }
+    }
+    return days;
+  }
+
+  const calendarDays = getCalendarDays(calendarMonth.year, calendarMonth.month);
+  const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  const todayStr = new Date().toISOString().slice(0, 10);
 
   return (
     <main
@@ -554,7 +815,7 @@ export default function TasksPage() {
             lineHeight: 1.15,
           }}
         >
-          Tasks
+          Tasks{showArchive ? " — Archive" : ""}
         </h1>
         <button
           type="button"
@@ -649,6 +910,49 @@ export default function TasksPage() {
           <option value="all">All tasks</option>
         </select>
 
+        <div
+          style={{
+            display: "flex",
+            gap: 0,
+            border: "1px solid #e5e0da",
+            borderRadius: 8,
+            overflow: "hidden",
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setShowArchive(false)}
+            style={{
+              fontFamily: "'DM Sans', sans-serif",
+              fontSize: 13,
+              fontWeight: !showArchive ? 600 : 400,
+              color: !showArchive ? "#fff" : "#5a5550",
+              backgroundColor: !showArchive ? "#21524F" : "transparent",
+              border: "none",
+              padding: "8px 14px",
+              cursor: "pointer",
+            }}
+          >
+            Active
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowArchive(true)}
+            style={{
+              fontFamily: "'DM Sans', sans-serif",
+              fontSize: 13,
+              fontWeight: showArchive ? 600 : 400,
+              color: showArchive ? "#fff" : "#5a5550",
+              backgroundColor: showArchive ? "#21524F" : "transparent",
+              border: "none",
+              padding: "8px 14px",
+              cursor: "pointer",
+            }}
+          >
+            Archive
+          </button>
+        </div>
+
         <select
           value={status}
           onChange={(e) => setStatus(e.target.value)}
@@ -694,6 +998,27 @@ export default function TasksPage() {
           <option value="portal">Portal</option>
           <option value="orientation">Orientation</option>
           <option value="email">Email</option>
+        </select>
+
+        <select
+          value={priorityFilter}
+          onChange={(e) => setPriorityFilter(e.target.value)}
+          style={{
+            fontFamily: "'DM Sans', sans-serif",
+            fontSize: 13,
+            padding: "8px 12px",
+            borderRadius: 8,
+            border: "1px solid #e5e0da",
+            backgroundColor: "#fff",
+            color: "#1a1a1a",
+            outline: "none",
+          }}
+        >
+          <option value="">All priorities</option>
+          <option value="urgent">Urgent</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
         </select>
 
         <select
@@ -760,6 +1085,22 @@ export default function TasksPage() {
           >
             Board
           </button>
+          <button
+            type="button"
+            onClick={() => setMode("calendar")}
+            style={{
+              fontFamily: "'DM Sans', sans-serif",
+              fontSize: 13,
+              fontWeight: mode === "calendar" ? 600 : 400,
+              color: mode === "calendar" ? "#fff" : "#5a5550",
+              backgroundColor: mode === "calendar" ? "#21524F" : "transparent",
+              border: "none",
+              padding: "7px 16px",
+              cursor: "pointer",
+            }}
+          >
+            Calendar
+          </button>
         </div>
 
         <button
@@ -817,88 +1158,76 @@ export default function TasksPage() {
                     overflow: "hidden",
                   }}
                 >
-                  {sortedCompanies.map(([contactId, compGroup]) => {
-                    const completedComp = compGroup.tasks.filter((t) => t.status === "done").length;
-                    const companySectionKey = `${propId}::${contactId}`;
-                    const tasksHidden = !!companyTasksCollapsed[companySectionKey];
-                    return (
-                      <div key={`${propId}-${contactId}`}>
-                        <div
-                          style={{
-                            backgroundColor: "#f5f0ea",
-                            padding: "8px 16px",
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            borderBottom: "1px solid #e5e0da",
-                            fontFamily: "'DM Sans', sans-serif",
-                          }}
-                        >
-                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <span style={{ fontSize: 15, fontWeight: 600, color: "#1a1a1a" }}>{compGroup.companyName}</span>
-                            <span style={{ fontSize: 11, color: "#8a8580" }}>({compGroup.tasks.length} tasks)</span>
-                          </div>
-                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                            <button
-                              type="button"
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, background: C.white, tableLayout: "fixed" }}>
+                    {tableColGroup}
+                    {tableHeadRow}
+                    <tbody>
+                      {sortedCompanies.map(([contactId, compGroup]) => {
+                        const completedComp = compGroup.tasks.filter((t) => t.status === "done").length;
+                        const companySectionKey = `${propId}::${contactId}`;
+                        const tasksHidden = !!companyTasksCollapsed[companySectionKey];
+                        return (
+                          <Fragment key={`${propId}-${contactId}`}>
+                            <tr
+                              role="button"
+                              tabIndex={0}
                               aria-expanded={!tasksHidden}
-                              aria-label={tasksHidden ? "Show tasks" : "Hide tasks"}
+                              aria-label={tasksHidden ? `Show tasks for ${compGroup.companyName}` : `Hide tasks for ${compGroup.companyName}`}
+                              style={{ backgroundColor: "#f5f0ea", cursor: "pointer" }}
                               onClick={() =>
                                 setCompanyTasksCollapsed((prev) => ({
                                   ...prev,
                                   [companySectionKey]: !prev[companySectionKey],
                                 }))
                               }
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                width: 32,
-                                height: 32,
-                                padding: 0,
-                                border: `1px solid ${C.border}`,
-                                borderRadius: 8,
-                                backgroundColor: C.white,
-                                color: C.textPrimary,
-                                cursor: "pointer",
-                                flexShrink: 0,
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  setCompanyTasksCollapsed((prev) => ({
+                                    ...prev,
+                                    [companySectionKey]: !prev[companySectionKey],
+                                  }));
+                                }
                               }}
                             >
-                              <svg
-                                width={14}
-                                height={14}
-                                viewBox="0 0 14 14"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth={1.5}
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                style={{
-                                  transform: tasksHidden ? "rotate(-90deg)" : "rotate(0deg)",
-                                  transition: "transform 0.2s ease",
-                                }}
-                                aria-hidden
-                              >
-                                <path d="M3.5 5.25L7 8.75l3.5-3.5" />
-                              </svg>
-                            </button>
-                            <span style={{ fontSize: 11, color: "#5a5550" }}>
-                              {completedComp}/{compGroup.tasks.length} completed
-                            </span>
-                          </div>
-                        </div>
-
-                        {tasksHidden ? null : (
-                          <div style={{ overflowX: "auto", background: C.white }}>
-                            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, background: C.white }}>
-                              {tableHead}
-                              <tbody>{compGroup.tasks.map((t) => renderTaskRow(t))}</tbody>
-                            </table>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                              <td colSpan={7} style={{ padding: "8px 16px", borderBottom: `1px solid ${C.border}` }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontFamily: F.body }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                    <svg
+                                      width={14}
+                                      height={14}
+                                      viewBox="0 0 14 14"
+                                      fill="none"
+                                      stroke={C.textPrimary}
+                                      strokeWidth={1.5}
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      style={{
+                                        transform: tasksHidden ? "rotate(-90deg)" : "rotate(0deg)",
+                                        transition: "transform 0.2s ease",
+                                        flexShrink: 0,
+                                      }}
+                                      aria-hidden
+                                    >
+                                      <path d="M3.5 5.25L7 8.75l3.5-3.5" />
+                                    </svg>
+                                    <span style={{ fontSize: 15, fontWeight: 600, color: C.textPrimary }}>{compGroup.companyName}</span>
+                                    <span style={{ fontSize: 11, color: C.textMuted }}>
+                                      ({compGroup.tasks.length} {compGroup.tasks.length === 1 ? "task" : "tasks"})
+                                    </span>
+                                  </div>
+                                  <span style={{ fontSize: 11, color: C.textSecondary }}>
+                                    {completedComp}/{compGroup.tasks.length} completed
+                                  </span>
+                                </div>
+                              </td>
+                            </tr>
+                            {tasksHidden ? null : compGroup.tasks.map((t) => renderTaskRow(t))}
+                          </Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             );
@@ -924,21 +1253,31 @@ export default function TasksPage() {
                   border: "1px solid #e5e0da",
                   borderTop: "none",
                   borderRadius: "0 0 10px 10px",
-                  overflowX: "auto",
+                  overflow: "hidden",
                   background: C.white,
                 }}
               >
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, background: C.white }}>
-                  {tableHead}
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, background: C.white, tableLayout: "fixed" }}>
+                  {tableColGroup}
+                  {tableHeadRow}
                   <tbody>{groupedTasks.ungrouped.map((t) => renderTaskRow(t))}</tbody>
                 </table>
               </div>
             </div>
           ) : null}
         </section>
-      ) : (
+      ) : null}
+
+      {mode === "board" ? (
         <section style={{ display: "flex", gap: 16, overflowX: "auto", paddingBottom: 8 }}>
-          {(["todo", "in_progress", "done", "skipped"] as const).map((s) => {
+          {showArchive
+            ? archiveColumnShell(
+                "Drag archived tasks here to return them to the active board.",
+                "restore",
+                (id) => void setTaskArchived(id, false),
+              )
+            : null}
+          {boardStages.map((s) => {
             const colTasks = grouped[s] ?? [];
             return (
               <div key={s} style={{ minWidth: 260, width: 260, flexShrink: 0, display: "flex", flexDirection: "column", maxHeight: "calc(100vh - 280px)" }}>
@@ -960,33 +1299,82 @@ export default function TasksPage() {
                   </span>
                 </div>
                 <div
+                  role="list"
+                  aria-label={`${boardStageLabel(s)} column`}
+                  onDragOver={(e: DragEvent<HTMLDivElement>) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                    setBoardDropTarget(s);
+                  }}
+                  onDragEnter={(e: DragEvent<HTMLDivElement>) => {
+                    e.preventDefault();
+                    setBoardDropTarget(s);
+                  }}
+                  onDragLeave={(e: DragEvent<HTMLDivElement>) => {
+                    const next = e.relatedTarget as Node | null;
+                    if (!next || !e.currentTarget.contains(next)) setBoardDropTarget((cur) => (cur === s ? null : cur));
+                  }}
+                  onDrop={(e: DragEvent<HTMLDivElement>) => {
+                    e.preventDefault();
+                    setBoardDropTarget(null);
+                    const id = e.dataTransfer.getData("text/task-id");
+                    if (!id) return;
+                    const dropped = tasks.find((tk) => tk.id === id);
+                    if (!dropped || dropped.status === s) return;
+                    void updateBoardTaskStatus(id, s);
+                  }}
                   style={{
                     backgroundColor: C.borderLight,
                     borderRadius: 12,
                     padding: 8,
                     flex: 1,
                     overflowY: "auto",
-                    border: `2px solid transparent`,
+                    border: `2px solid ${boardDropTarget === s ? C.darkGreen : "transparent"}`,
                     minHeight: 120,
+                    transition: "border-color 0.15s ease",
                   }}
                 >
                   {colTasks.length === 0 ? (
-                    <div style={{ fontFamily: F.body, fontSize: 12, color: C.textMuted, textAlign: "center", padding: "28px 12px" }}>No tasks</div>
+                    <div style={{ fontFamily: F.body, fontSize: 12, color: C.textMuted, textAlign: "center", padding: "28px 12px" }}>
+                      {boardDraggingId ? "Drop here" : "No tasks"}
+                    </div>
                   ) : (
                     colTasks.map((t) => (
                       <div
                         key={t.id}
+                        draggable
+                        role="listitem"
+                        onDragStart={(e: DragEvent<HTMLDivElement>) => {
+                          boardCardClickOkRef.current = false;
+                          setBoardDraggingId(t.id);
+                          e.dataTransfer.setData("text/task-id", t.id);
+                          e.dataTransfer.effectAllowed = "move";
+                        }}
+                        onDragEnd={() => {
+                          setBoardDraggingId(null);
+                          setBoardDropTarget(null);
+                          window.setTimeout(() => {
+                            boardCardClickOkRef.current = true;
+                          }, 50);
+                        }}
+                        onClick={() => {
+                          if (!boardCardClickOkRef.current) return;
+                          void openDetail(t);
+                        }}
                         style={{
                           backgroundColor: C.white,
                           borderRadius: 10,
-                          padding: "14px 16px",
+                          padding: "12px 14px",
                           marginBottom: 8,
-                          cursor: "pointer",
+                          cursor: "grab",
                           border: `1px solid ${C.border}`,
-                          transition: "box-shadow 0.2s, transform 0.15s",
+                          borderLeft: `3px solid ${priorityColors[t.priority]}`,
+                          transition: "box-shadow 0.2s, transform 0.15s, opacity 0.15s",
                           boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+                          opacity: boardDraggingId === t.id ? 0.55 : 1,
                         }}
                         onMouseEnter={(e) => {
+                          if (boardDraggingId) return;
                           e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.08)";
                           e.currentTarget.style.transform = "translateY(-1px)";
                         }}
@@ -995,29 +1383,30 @@ export default function TasksPage() {
                           e.currentTarget.style.transform = "none";
                         }}
                       >
-                        <div style={{ fontFamily: F.body, fontSize: 14, fontWeight: 600, color: C.textPrimary, margin: "0 0 8px", lineHeight: 1.3 }}>{t.title}</div>
-                        <div style={{ marginBottom: 8 }}>
-                          <span style={statusBadgeStyle(t.status)}>{statusLabelPretty(t.status)}</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                          <span style={priorityDot(t.priority)} title={t.priority} />
+                          <span style={{ fontFamily: F.body, fontSize: 13, fontWeight: 600, color: C.textPrimary, lineHeight: 1.3, flex: 1 }}>{t.title}</span>
                         </div>
-                        <div style={{ fontFamily: F.body, fontSize: 12, color: C.textSecondary, marginBottom: 4 }}>{t.due_date ?? "No due date"}</div>
-                        <div style={{ fontFamily: F.body, fontSize: 12, color: C.textMuted }}>
-                          {t.assigned_to_user_id
-                            ? allMemberNames[t.assigned_to_user_id] ?? `${t.assigned_to_user_id.slice(0, 8)}…`
-                            : "Unassigned"}
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                          <span style={typeBadgeStyle(t.type)}>{typeLabelPretty(t.type)}</span>
+                          {t.property_id && propertyNames[t.property_id] ? (
+                            <span style={{ fontFamily: F.body, fontSize: 10, color: C.textMuted, padding: "2px 6px", backgroundColor: C.borderLight, borderRadius: 4 }}>
+                              {propertyNames[t.property_id]}
+                            </span>
+                          ) : null}
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => void openDetail(t)}
-                          style={{ ...btnPrimary, marginTop: 10, width: "100%", padding: "8px 12px", fontSize: 13 }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.backgroundColor = C.darkGreenHover;
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.backgroundColor = C.darkGreen;
-                          }}
-                        >
-                          Open
-                        </button>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ fontFamily: F.body, fontSize: 11, color: t.due_date && t.due_date < new Date().toISOString().slice(0, 10) && t.status !== "done" ? C.red : C.textSecondary }}>
+                            {t.due_date ?? "No due date"}
+                          </span>
+                          {t.assigned_to_user_id ? (
+                            <div style={{ width: 22, height: 22, borderRadius: "50%", backgroundColor: C.beige, color: C.darkGreen, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700, fontFamily: F.body }}>
+                              {initials(allMemberNames[t.assigned_to_user_id] ?? null)}
+                            </div>
+                          ) : (
+                            <span style={{ fontFamily: F.body, fontSize: 10, color: C.textMuted }}>Unassigned</span>
+                          )}
+                        </div>
                       </div>
                     ))
                   )}
@@ -1025,8 +1414,195 @@ export default function TasksPage() {
               </div>
             );
           })}
+          {!showArchive
+            ? archiveColumnShell(
+                "Drag done or skipped tasks here to archive them.",
+                "archive",
+                (id) => {
+                  const dropped = tasks.find((tk) => tk.id === id);
+                  if (!dropped) return;
+                  if (dropped.status !== "done" && dropped.status !== "skipped") {
+                    alert("Only completed or skipped tasks can be archived.");
+                    return;
+                  }
+                  void setTaskArchived(id, true);
+                },
+              )
+            : null}
         </section>
-      )}
+      ) : null}
+
+      {mode === "calendar" ? (
+        <section>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <h2 style={{ margin: 0, fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 22, fontWeight: 400, color: "#1a1a1a" }}>
+                {monthNames[calendarMonth.month]} {calendarMonth.year}
+              </h2>
+              <button
+                type="button"
+                onClick={() => {
+                  const now = new Date();
+                  setCalendarMonth({ year: now.getFullYear(), month: now.getMonth() });
+                }}
+                style={{
+                  fontFamily: "'DM Sans', sans-serif",
+                  fontSize: 12,
+                  fontWeight: 500,
+                  color: "#21524F",
+                  backgroundColor: "transparent",
+                  border: "1px solid #21524F",
+                  borderRadius: 6,
+                  padding: "4px 12px",
+                  cursor: "pointer",
+                }}
+              >
+                Today
+              </button>
+            </div>
+            <div style={{ display: "flex", gap: 4 }}>
+              <button
+                type="button"
+                onClick={() => setCalendarMonth((p) => (p.month === 0 ? { year: p.year - 1, month: 11 } : { year: p.year, month: p.month - 1 }))}
+                style={{
+                  fontFamily: "'DM Sans', sans-serif",
+                  fontSize: 13,
+                  fontWeight: 500,
+                  color: "#5a5550",
+                  backgroundColor: "#fff",
+                  border: "1px solid #e5e0da",
+                  borderRadius: 8,
+                  padding: "6px 14px",
+                  cursor: "pointer",
+                }}
+              >
+                ‹ Prev
+              </button>
+              <button
+                type="button"
+                onClick={() => setCalendarMonth((p) => (p.month === 11 ? { year: p.year + 1, month: 0 } : { year: p.year, month: p.month + 1 }))}
+                style={{
+                  fontFamily: "'DM Sans', sans-serif",
+                  fontSize: 13,
+                  fontWeight: 500,
+                  color: "#5a5550",
+                  backgroundColor: "#fff",
+                  border: "1px solid #e5e0da",
+                  borderRadius: 8,
+                  padding: "6px 14px",
+                  cursor: "pointer",
+                }}
+              >
+                Next ›
+              </button>
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", border: "1px solid #e5e0da", borderRadius: 10, overflow: "hidden" }}>
+            {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
+              <div
+                key={d}
+                style={{
+                  padding: "8px 6px",
+                  textAlign: "center",
+                  fontFamily: "'DM Sans', sans-serif",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: "#8a8580",
+                  backgroundColor: "#F3DFC6",
+                  borderBottom: "1px solid #e5e0da",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.04em",
+                }}
+              >
+                {d}
+              </div>
+            ))}
+            {calendarDays.map((day, idx) => {
+              const dateStr = `${day.year}-${String(day.month + 1).padStart(2, "0")}-${String(day.date).padStart(2, "0")}`;
+              const dayTasks = tasksByDate[dateStr] ?? [];
+              const isToday = dateStr === todayStr;
+              const isWeekend = idx % 7 >= 5;
+              return (
+                <div
+                  key={`${dateStr}-${idx}`}
+                  style={{
+                    minHeight: 90,
+                    padding: 4,
+                    backgroundColor: !day.isCurrentMonth ? "#f5f3f0" : isWeekend ? "#fdfcfa" : "#fff",
+                    borderBottom: "1px solid #e5e0da",
+                    borderRight: (idx + 1) % 7 !== 0 ? "1px solid #e5e0da" : "none",
+                    opacity: day.isCurrentMonth ? 1 : 0.4,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontFamily: "'DM Sans', sans-serif",
+                      fontSize: 12,
+                      fontWeight: isToday ? 700 : 400,
+                      color: isToday ? "#fff" : "#5a5550",
+                      marginBottom: 4,
+                      width: isToday ? 22 : "auto",
+                      height: isToday ? 22 : "auto",
+                      borderRadius: isToday ? "50%" : 0,
+                      backgroundColor: isToday ? "#21524F" : "transparent",
+                      display: isToday ? "flex" : "block",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      padding: isToday ? 0 : "0 2px",
+                    }}
+                  >
+                    {day.date}
+                  </div>
+                  {dayTasks.slice(0, 3).map((t) => {
+                    const tcMap: Record<string, { bg: string; fg: string }> = {
+                      operations: { bg: "#e8f4fd", fg: "#1a6fa8" },
+                      internal: { bg: "#fef9e7", fg: "#8a6d1b" },
+                      service_request: { bg: "#eafaf1", fg: "#1a8a4a" },
+                    };
+                    const tc = tcMap[t.type] ?? { bg: "#f0ebe5", fg: "#5a5550" };
+                    return (
+                      <div
+                        key={t.id}
+                        onClick={() => void openDetail(t)}
+                        title={`${t.title} (${t.priority})`}
+                        style={{
+                          fontFamily: "'DM Sans', sans-serif",
+                          fontSize: 10,
+                          fontWeight: 500,
+                          color: tc.fg,
+                          backgroundColor: tc.bg,
+                          borderLeft: `2px solid ${priorityColors[t.priority]}`,
+                          borderRadius: "0 4px 4px 0",
+                          padding: "2px 5px",
+                          marginBottom: 2,
+                          cursor: "pointer",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          textDecoration: t.status === "done" ? "line-through" : "none",
+                          opacity: t.status === "done" ? 0.5 : 0.9,
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.opacity = "1";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.opacity = t.status === "done" ? "0.5" : "0.9";
+                        }}
+                      >
+                        {t.title}
+                      </div>
+                    );
+                  })}
+                  {dayTasks.length > 3 ? (
+                    <div style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 9, color: "#8a8580", padding: "1px 5px" }}>+{dayTasks.length - 3} more</div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
 
       {openTask ? (
         <div
@@ -1072,6 +1648,19 @@ export default function TasksPage() {
             <p style={{ margin: 0, fontFamily: F.body, fontSize: 14, color: C.textSecondary, lineHeight: 1.5 }}>
               {openTask.description ?? "No description"}
             </p>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontFamily: F.body, fontSize: 12, color: C.textSecondary }}>
+                <span style={priorityDot(openTask.priority)} />
+                <span style={{ textTransform: "capitalize" }}>{openTask.priority} priority</span>
+              </span>
+              <span style={typeBadgeStyle(openTask.type)}>{typeLabelPretty(openTask.type)}</span>
+              <span style={statusBadgeStyle(openTask.status)}>{statusLabelPretty(openTask.status)}</span>
+              {openTask.property_id && propertyNames[openTask.property_id] ? (
+                <span style={{ fontFamily: F.body, fontSize: 11, color: C.textMuted, padding: "2px 8px", backgroundColor: C.borderLight, borderRadius: 6 }}>
+                  {propertyNames[openTask.property_id]}
+                </span>
+              ) : null}
+            </div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
               <button
                 type="button"
@@ -1099,6 +1688,29 @@ export default function TasksPage() {
               >
                 Mark complete
               </button>
+              {openTask.archived ? (
+                <button
+                  type="button"
+                  onClick={() => void setTaskArchived(openTask.id, false)}
+                  style={btnPrimary}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = C.darkGreenHover;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = C.darkGreen;
+                  }}
+                >
+                  Restore from archive
+                </button>
+              ) : openTask.status === "done" || openTask.status === "skipped" ? (
+                <button
+                  type="button"
+                  onClick={() => void setTaskArchived(openTask.id, true)}
+                  style={btnSecondary}
+                >
+                  Move to archive
+                </button>
+              ) : null}
               <label style={{ display: "grid", gap: 6, fontFamily: F.body, fontSize: 13, color: C.textSecondary, fontWeight: 500 }}>
                 Status
                 <select
@@ -1141,6 +1753,35 @@ export default function TasksPage() {
                   onFocus={onInputFocus}
                   onBlur={onInputBlur}
                 />
+              </label>
+              <label style={{ display: "grid", gap: 6, fontFamily: F.body, fontSize: 13, color: C.textSecondary, fontWeight: 500 }}>
+                Priority
+                <select
+                  value={openTask.priority}
+                  onChange={(e) => void updateTaskDetail({ priority: e.target.value as Task["priority"] })}
+                  style={{ ...selectBase, minWidth: 140, backgroundColor: C.white }}
+                  onFocus={onInputFocus}
+                  onBlur={onInputBlur}
+                >
+                  <option value="urgent">Urgent</option>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+              </label>
+              <label style={{ display: "grid", gap: 6, fontFamily: F.body, fontSize: 13, color: C.textSecondary, fontWeight: 500 }}>
+                Type
+                <select
+                  value={openTask.type}
+                  onChange={(e) => void updateTaskDetail({ type: e.target.value as Task["type"] })}
+                  style={{ ...selectBase, minWidth: 160, backgroundColor: C.white }}
+                  onFocus={onInputFocus}
+                  onBlur={onInputBlur}
+                >
+                  <option value="internal">Internal</option>
+                  <option value="operations">Operations</option>
+                  <option value="service_request">Service Request</option>
+                </select>
               </label>
             </div>
             <div style={{ display: "grid", gap: 12 }}>
@@ -1434,6 +2075,56 @@ export default function TasksPage() {
                         {m.label}
                       </option>
                     ))}
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <div style={{ marginBottom: 14 }}>
+                  <label style={{ fontSize: 13, fontWeight: 500, color: "#5a5550", display: "block", marginBottom: 4 }}>Priority</label>
+                  <select
+                    value={newTask.priority}
+                    onChange={(e) => setNewTask((p) => ({ ...p, priority: e.target.value as Task["priority"] }))}
+                    style={{
+                      fontFamily: "'DM Sans', sans-serif",
+                      fontSize: 14,
+                      color: "#1a1a1a",
+                      backgroundColor: "#fff",
+                      border: "1px solid #e5e0da",
+                      borderRadius: 8,
+                      padding: "10px 14px",
+                      width: "100%",
+                      outline: "none",
+                      boxSizing: "border-box",
+                    }}
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="urgent">Urgent</option>
+                  </select>
+                </div>
+                <div style={{ marginBottom: 14 }}>
+                  <label style={{ fontSize: 13, fontWeight: 500, color: "#5a5550", display: "block", marginBottom: 4 }}>Type</label>
+                  <select
+                    value={newTask.type}
+                    onChange={(e) => setNewTask((p) => ({ ...p, type: e.target.value as Task["type"] }))}
+                    style={{
+                      fontFamily: "'DM Sans', sans-serif",
+                      fontSize: 14,
+                      color: "#1a1a1a",
+                      backgroundColor: "#fff",
+                      border: "1px solid #e5e0da",
+                      borderRadius: 8,
+                      padding: "10px 14px",
+                      width: "100%",
+                      outline: "none",
+                      boxSizing: "border-box",
+                    }}
+                  >
+                    <option value="internal">Internal</option>
+                    <option value="operations">Operations</option>
+                    <option value="service_request">Service Request</option>
                   </select>
                 </div>
               </div>
