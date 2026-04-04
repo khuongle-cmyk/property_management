@@ -93,6 +93,63 @@ export async function POST(req: Request) {
       throw new Error(err.message || "Failed to send email");
     }
 
+    // Send to counter-signer if dual signing is required
+    const { data: contractFull } = await admin
+      .from("contracts")
+      .select("requires_counter_sign, counter_signer_user_id")
+      .eq("id", contractId)
+      .single();
+
+    if (contractFull?.requires_counter_sign && contractFull?.counter_signer_user_id) {
+      const { data: signerProfile } = await admin
+        .from("user_profiles")
+        .select("email, first_name, last_name")
+        .eq("user_id", contractFull.counter_signer_user_id)
+        .single();
+
+      if (signerProfile?.email) {
+        const signerName = [signerProfile.first_name, signerProfile.last_name].filter(Boolean).join(" ") || "Team member";
+        const counterSignUrl = `${baseUrl}/contracts/${token}?role=counter`;
+
+        await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${resendKey}`,
+          },
+          body: JSON.stringify({
+            from: "VillageWorks <contracts@villageworks.com>",
+            to: signerProfile.email,
+            subject: `Counter-sign required: ${contractTitle}`,
+            html: `
+          <div style="font-family: 'DM Sans', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 32px;">
+            <div style="background: #21524F; padding: 24px 32px; border-radius: 12px 12px 0 0;">
+              <h1 style="color: #ffffff; margin: 0; font-size: 20px;">VillageWorks</h1>
+            </div>
+            <div style="background: #ffffff; padding: 32px; border: 1px solid #e5e0da; border-top: none; border-radius: 0 0 12px 12px;">
+              <h2 style="color: #21524F; margin: 0 0 16px;">Counter-Signature Required</h2>
+              <p style="color: #2c2825; font-size: 15px; line-height: 1.6;">Dear ${signerName},</p>
+              <p style="color: #2c2825; font-size: 15px; line-height: 1.6;">
+                The contract <strong>"${contractTitle}"</strong> has been sent to the client for signing and requires your counter-signature as the VillageWorks representative.
+              </p>
+              <p style="color: #2c2825; font-size: 15px; line-height: 1.6;">
+                You can counter-sign directly from the Contract Editor in the CRM pipeline, or use the link below.
+              </p>
+              <div style="text-align: center; margin: 32px 0;">
+                <a href="${counterSignUrl}" style="display: inline-block; background: #2563eb; color: #ffffff; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 15px;">
+                  Review & Counter-Sign
+                </a>
+              </div>
+              <hr style="border: none; border-top: 1px solid #e5e0da; margin: 24px 0;">
+              <p style="color: #8a8580; font-size: 12px;">This is an internal VillageWorks notification.</p>
+            </div>
+          </div>
+        `,
+          }),
+        });
+      }
+    }
+
     // Update contract status to "sent"
     await admin
       .from("contracts")

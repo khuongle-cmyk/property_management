@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 
 const petrol = "#21524F";
 const cream = "#faf8f5";
@@ -28,6 +28,10 @@ type ContractData = {
   signing_method: string | null;
   signed_at: string | null;
   signed_by_name: string | null;
+  requires_counter_sign: boolean;
+  counter_signed_by_name: string | null;
+  counter_signed_at: string | null;
+  counter_signer_user_id: string | null;
   furniture_included: boolean;
   furniture_description: string | null;
   furniture_monthly_price: number | null;
@@ -38,7 +42,9 @@ type PropertyRow = { name: string | null; address: string | null; city: string |
 
 export default function ContractSignPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const token = typeof params.token === "string" ? params.token : "";
+  const isCounterSigner = searchParams.get("role") === "counter";
 
   const [contract, setContract] = useState<ContractData | null>(null);
   const [property, setProperty] = useState<PropertyRow>(null);
@@ -53,6 +59,25 @@ export default function ContractSignPage() {
   const [signed, setSigned] = useState(false);
   const [signError, setSignError] = useState<string | null>(null);
 
+  const applyContractPayload = useCallback(
+    (data: { contract: ContractData; property?: PropertyRow; companyName?: string | null }) => {
+      setContract(data.contract);
+      if (data.property !== undefined) setProperty(data.property);
+      if (data.companyName !== undefined) setCompanyName(data.companyName);
+      const c = data.contract;
+      const reqCounter = Boolean(c.requires_counter_sign);
+      const fullyDone =
+        c.status === "signed_digital" ||
+        c.status === "signed_paper" ||
+        c.status === "active" ||
+        Boolean(c.signed_at && !reqCounter) ||
+        Boolean(reqCounter && c.signed_at && c.counter_signed_at);
+      setSigned(fullyDone);
+      if (c.customer_name && !isCounterSigner) setSignerName(c.customer_name);
+    },
+    [isCounterSigner],
+  );
+
   useEffect(() => {
     if (!token) return;
     fetch(`/api/contracts/${token}/sign`)
@@ -61,16 +86,16 @@ export default function ContractSignPage() {
         if (data.error) {
           setError(data.error);
         } else {
-          setContract(data.contract);
-          setProperty(data.property);
-          setCompanyName(data.companyName);
-          if (data.contract?.signed_at) setSigned(true);
-          if (data.contract?.customer_name) setSignerName(data.contract.customer_name);
+          applyContractPayload({
+            contract: data.contract,
+            property: data.property,
+            companyName: data.companyName,
+          });
         }
       })
       .catch(() => setError("Failed to load contract"))
       .finally(() => setLoading(false));
-  }, [token]);
+  }, [token, applyContractPayload]);
 
   const handleSign = async () => {
     if (!signerName.trim() || signerName.trim().length < 2) {
@@ -91,9 +116,11 @@ export default function ContractSignPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           signedByName: signerName.trim(),
+          isCounterSign: isCounterSigner,
           signatureData: JSON.stringify({
-            method: "typed_name",
+            method: isCounterSigner ? "counter_sign_typed" : "typed_name",
             name: signerName.trim(),
+            role: isCounterSigner ? "villageworks_representative" : "client",
             timestamp: new Date().toISOString(),
             userAgent: navigator.userAgent,
           }),
@@ -102,7 +129,17 @@ export default function ContractSignPage() {
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to sign");
-      setSigned(true);
+      const refresh = await fetch(`/api/contracts/${token}/sign`).then((r) => r.json());
+      if (!refresh.error && refresh.contract) {
+        applyContractPayload({
+          contract: refresh.contract,
+          property: refresh.property,
+          companyName: refresh.companyName,
+        });
+      } else {
+        setSigned(true);
+      }
+      setAgreed(false);
     } catch (e) {
       setSignError(e instanceof Error ? e.message : "Failed to sign contract");
     } finally {
@@ -278,10 +315,45 @@ export default function ContractSignPage() {
               </p>
             </div>
           )}
+
+          {contract.requires_counter_sign && (
+            <div style={{ padding: "0 40px 32px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+              <div style={{ padding: 20, border: `1px solid ${border}`, borderRadius: 8 }}>
+                <p style={{ fontSize: 12, color: textMuted, margin: "0 0 8px", textTransform: "uppercase" }}>Client Signature</p>
+                {contract.signed_at ? (
+                  <>
+                    <p style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 24, color: petrol, margin: "0 0 4px", fontStyle: "italic" }}>
+                      {contract.signed_by_name}
+                    </p>
+                    <p style={{ fontSize: 11, color: textMuted, margin: 0 }}>
+                      Signed: {new Date(contract.signed_at).toLocaleDateString("fi-FI")}
+                    </p>
+                  </>
+                ) : (
+                  <p style={{ fontSize: 14, color: textMuted, fontStyle: "italic" }}>Awaiting signature</p>
+                )}
+              </div>
+              <div style={{ padding: 20, border: `1px solid ${border}`, borderRadius: 8 }}>
+                <p style={{ fontSize: 12, color: textMuted, margin: "0 0 8px", textTransform: "uppercase" }}>VillageWorks Representative</p>
+                {contract.counter_signed_at ? (
+                  <>
+                    <p style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 24, color: "#2563eb", margin: "0 0 4px", fontStyle: "italic" }}>
+                      {contract.counter_signed_by_name}
+                    </p>
+                    <p style={{ fontSize: 11, color: textMuted, margin: 0 }}>
+                      Signed: {new Date(contract.counter_signed_at).toLocaleDateString("fi-FI")}
+                    </p>
+                  </>
+                ) : (
+                  <p style={{ fontSize: 14, color: textMuted, fontStyle: "italic" }}>Awaiting counter-signature</p>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Signing section */}
-        {!signed && contract.signing_method === "esign" && (
+        {!signed && !isCounterSigner && contract.signing_method === "esign" && (
           <div style={{
             background: white, borderRadius: 16, border: `1px solid ${border}`,
             padding: "32px 40px", marginTop: 24,
@@ -374,6 +446,121 @@ export default function ContractSignPage() {
             <p style={{ fontSize: 12, color: textMuted, textAlign: "center", marginTop: 12 }}>
               Your IP address and timestamp will be recorded for verification purposes.
             </p>
+          </div>
+        )}
+
+        {isCounterSigner && !contract.counter_signed_at && contract.requires_counter_sign && (
+          <div
+            style={{
+              background: white,
+              borderRadius: 16,
+              border: `1px solid ${border}`,
+              padding: "32px 40px",
+              marginTop: 24,
+              boxShadow: "0 4px 20px rgba(0,0,0,0.06)",
+            }}
+          >
+            <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 22, fontWeight: 400, color: textDark, margin: "0 0 8px" }}>
+              Counter-sign this contract
+            </h2>
+            <p style={{ fontSize: 14, color: textMuted, margin: "0 0 24px" }}>
+              As the VillageWorks representative, please review and counter-sign this contract.
+            </p>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 13, fontWeight: 600, color: textDark, display: "block", marginBottom: 6 }}>
+                Your full name *
+              </label>
+              <input
+                type="text"
+                value={signerName}
+                onChange={(e) => setSignerName(e.target.value)}
+                placeholder="Enter your full name"
+                style={{
+                  width: "100%",
+                  padding: "12px 16px",
+                  fontSize: 16,
+                  border: `1px solid ${border}`,
+                  borderRadius: 8,
+                  outline: "none",
+                  boxSizing: "border-box",
+                  fontFamily: "'Instrument Serif', Georgia, serif",
+                }}
+              />
+            </div>
+            {signerName.trim() && (
+              <div
+                style={{
+                  background: "#f0f9f4",
+                  border: "1px dashed #d1e7dd",
+                  borderRadius: 8,
+                  padding: "24px 32px",
+                  marginBottom: 20,
+                  textAlign: "center",
+                }}
+              >
+                <p style={{ fontSize: 11, color: textMuted, margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                  Counter-signature preview
+                </p>
+                <p style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 32, color: "#2563eb", margin: 0, fontStyle: "italic" }}>
+                  {signerName.trim()}
+                </p>
+                <p style={{ fontSize: 11, color: textMuted, margin: "8px 0 0" }}>VillageWorks Representative</p>
+              </div>
+            )}
+            <label
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 10,
+                cursor: "pointer",
+                marginBottom: 24,
+                fontSize: 14,
+                color: textDark,
+                lineHeight: 1.5,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={agreed}
+                onChange={(e) => setAgreed(e.target.checked)}
+                style={{ accentColor: "#2563eb", marginTop: 3, width: 18, height: 18 }}
+              />
+              <span>
+                I, <strong>{signerName.trim() || "___"}</strong>, confirm that I am authorized to sign this contract on behalf of VillageWorks Finland Oy.
+              </span>
+            </label>
+            {signError && (
+              <div
+                style={{
+                  background: "#fdf0ee",
+                  border: `1px solid ${red}`,
+                  borderRadius: 8,
+                  padding: "10px 14px",
+                  marginBottom: 16,
+                  fontSize: 13,
+                  color: red,
+                }}
+              >
+                {signError}
+              </div>
+            )}
+            <button
+              onClick={handleSign}
+              disabled={signing || !signerName.trim() || !agreed}
+              style={{
+                width: "100%",
+                padding: "14px 24px",
+                background: !signerName.trim() || !agreed ? border : "#2563eb",
+                color: white,
+                border: "none",
+                borderRadius: 10,
+                fontSize: 16,
+                fontWeight: 600,
+                cursor: !signerName.trim() || !agreed ? "not-allowed" : "pointer",
+              }}
+            >
+              {signing ? "Signing..." : "✍ Counter-Sign Contract"}
+            </button>
           </div>
         )}
 
