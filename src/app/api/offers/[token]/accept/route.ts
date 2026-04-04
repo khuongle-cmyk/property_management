@@ -58,7 +58,7 @@ export async function GET(_req: Request, context: Ctx) {
     const { data: offer, error } = await admin
       .from("offers")
       .select(
-        "id,title,status,public_token,customer_name,customer_company,company_id,property_id,space_details,monthly_price,contract_length_months,start_date,intro_text,terms_text,is_template,accepted_at,customer_email,customer_phone",
+        "id,title,status,public_token,customer_name,customer_company,company_id,property_id,space_details,monthly_price,contract_length_months,start_date,intro_text,terms_text,furniture_included,furniture_description,furniture_monthly_price,pricing_notes,is_template,accepted_at,customer_email,customer_phone",
       )
       .eq("public_token", token)
       .eq("is_template", false)
@@ -138,7 +138,7 @@ export async function POST(_req: Request, context: Ctx) {
     }
 
     const offerTitle = row.title ?? "Offer";
-    const contractTitle = `Rental Agreement — ${offerTitle}`;
+    const contractTitle = offerTitle.replace(/^Offer\s*[–—-]\s*/i, "Contract – ");
 
     const createdBy = typeof row.created_by === "string" ? row.created_by : null;
 
@@ -161,6 +161,10 @@ export async function POST(_req: Request, context: Ctx) {
       contract_body: DEFAULT_CONTRACT_BODY,
       intro_text: row.intro_text ?? null,
       terms_text: row.terms_text ?? null,
+      furniture_included: row.furniture_included ?? false,
+      furniture_description: row.furniture_description ?? null,
+      furniture_monthly_price: row.furniture_monthly_price ?? null,
+      pricing_notes: row.pricing_notes ?? null,
       status: "draft",
       version: 1,
       signing_method: "esign",

@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { dbStageValueFromLeadForm } from '@/lib/crm/lead-stage-form';
 import EditLeadModal from '@/components/shared/EditLeadModal';
 
 // ═══════════════════════════════════════════════════════════════
@@ -353,25 +352,29 @@ export default function SalesPipelinePage() {
     setCreating(true);
     try {
       const insertData: any = {
-        company_name: createForm.company_name,
-        tenant_id: currentTenantId,
-        contact_first_name: createForm.contact_first_name.trim() || null,
-        contact_last_name: createForm.contact_last_name.trim() || null,
-        contact_person_name: [createForm.contact_first_name, createForm.contact_last_name].filter(Boolean).join(' ') || 'Unknown',
-        email: createForm.email.trim() || null,
-        phone: createForm.phone.trim() || null,
-        y_tunnus: createForm.y_tunnus.trim() || null,
-        stage: dbStageValueFromLeadForm(createForm.stage),
-        interested_property_id: createForm.property_id || null,
-        source: createForm.source.trim() || null,
-        interested_space_type: createForm.interested_space_type.trim() || null,
-        company_size: createForm.company_size.trim() || null,
-        industry: createForm.industry.trim() || null,
-        notes: createForm.notes.trim() || null,
-        assigned_agent_user_id: createForm.assigned_agent_user_id || null,
+        company_name: createForm.company_name.trim(),
+        contact_person_name:
+          [createForm.contact_first_name, createForm.contact_last_name].filter(Boolean).join(' ') ||
+          createForm.company_name.trim(),
+        email: createForm.email || '',
+        source: createForm.source || 'other',
+        stage: 'new',
         pipeline_owner: 'platform',
+        tenant_id: currentTenantId,
+        stage_changed_at: new Date().toISOString(),
+        archived: false,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
+        contact_first_name: createForm.contact_first_name.trim() || null,
+        contact_last_name: createForm.contact_last_name.trim() || null,
+        phone: createForm.phone.trim() || null,
+        y_tunnus: createForm.y_tunnus.trim() || null,
+        property_id: createForm.property_id || null,
+        interested_space_type: createForm.interested_space_type.trim() || null,
+        company_size: createForm.company_size.trim() || null,
+        industry_sector: createForm.industry.trim() || null,
+        notes: createForm.notes.trim() || null,
+        assigned_agent_user_id: createForm.assigned_agent_user_id || null,
       };
       if (createForm.contact_status === 'Inactive') insertData.archived = true;
       if (createForm.contact_status === 'Lost') insertData.stage = 'lost';

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { getSupabaseClient } from "@/lib/supabase/browser";
 import { LEAD_SOURCES, LEAD_STAGE_LABEL, LEAD_STAGES, type LeadStage } from "@/lib/crm";
@@ -91,6 +91,7 @@ type ContactRecord = {
   customerCompanyId: string | null;
   readonly: boolean;
   notes: string | null;
+  archived?: boolean | null;
 };
 
 type SortBy = "recent_added" | "company_az" | "contact_az" | "contact_za";
@@ -228,6 +229,100 @@ export default function CrmContactsPage() {
   const [showConvertModal, setShowConvertModal] = useState(false);
   const [convertLead, setConvertLead] = useState<ConvertToCustomerLead | null>(null);
   const [archiveConfirm, setArchiveConfirm] = useState<ContactRecord | null>(null);
+
+  const [activeTab, setActiveTab] = useState<"contacts" | "archive">("contacts");
+  const [archivedLeads, setArchivedLeads] = useState<ContactRecord[]>([]);
+  const [archiveLoading, setArchiveLoading] = useState(false);
+  const [permanentDeleteConfirm, setPermanentDeleteConfirm] = useState<ContactRecord | null>(null);
+  const [importExportMenuOpen, setImportExportMenuOpen] = useState(false);
+  const importExportMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!importExportMenuOpen) return;
+    const close = (e: MouseEvent) => {
+      if (importExportMenuRef.current && !importExportMenuRef.current.contains(e.target as Node)) {
+        setImportExportMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [importExportMenuOpen]);
+
+  const fetchArchivedLeads = useCallback(async () => {
+    setArchiveLoading(true);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        setArchivedLeads([]);
+        return;
+      }
+      const { data: memRows } = await supabase.from("memberships").select("tenant_id, role").eq("user_id", user.id);
+      const memberships = (memRows ?? []) as MembershipRow[];
+      const roles = memberships.map((m) => (m.role ?? "").toLowerCase() as Role);
+      const superAdmin = roles.includes("super_admin");
+      const tenantIds = [...new Set(memberships.map((m) => m.tenant_id).filter(Boolean))] as string[];
+      const editAllowed = roles.some((r) => ["super_admin", "manager", "owner", "agent"].includes(r));
+
+      let query = supabase.from("leads").select("*").or("archived.eq.true,stage.eq.lost,stage.eq.won");
+      if (!superAdmin) {
+        if (!tenantIds.length) {
+          setArchivedLeads([]);
+          return;
+        }
+        query = query.in("tenant_id", tenantIds);
+      }
+      const { data, error } = await query.order("updated_at", { ascending: false });
+      if (error) throw error;
+      let rows = (data ?? []) as LeadRow[];
+      if (!superAdmin && roles.includes("owner") && !roles.includes("manager")) {
+        rows = rows.filter((l) => l.assigned_agent_user_id === user.id || l.created_by_user_id === user.id);
+      }
+      const mapped: ContactRecord[] = rows.map((l) => ({
+        id: `lead_${l.id}`,
+        companyName: l.company_name || "—",
+        contactName: l.contact_person_name || "—",
+        contactTitle: l.contact_title,
+        email: l.email || null,
+        phone: l.phone,
+        status:
+          l.archived === true
+            ? "pipeline_lead"
+            : l.stage === "won"
+              ? ("active_tenant" as ContactStatus)
+              : ("pipeline_lead" as ContactStatus),
+        propertyName: null,
+        propertyId: l.property_id,
+        stage: l.stage,
+        source: l.source,
+        companySize: l.company_size,
+        industry: l.industry_sector,
+        budget: l.approx_budget_eur_month,
+        moveInDate: l.preferred_move_in_date,
+        addedAt: l.created_at,
+        updatedAt: l.updated_at ?? l.created_at,
+        assignedAgentName: null,
+        spaceType: l.interested_space_type,
+        yTunnus: l.business_id,
+        tenantId: l.tenant_id,
+        leadId: l.id,
+        customerCompanyId: l.customer_company_id ?? null,
+        readonly: !editAllowed || roles.includes("customer_service"),
+        notes: l.notes ?? null,
+        archived: l.archived,
+      }));
+      setArchivedLeads(mapped);
+    } catch (err) {
+      console.error("Error fetching archived leads:", err);
+    } finally {
+      setArchiveLoading(false);
+    }
+  }, [supabase]);
+
+  useEffect(() => {
+    if (activeTab === "archive") void fetchArchivedLeads();
+  }, [activeTab, fetchArchivedLeads]);
 
   useEffect(() => {
     if (!toast) return;
@@ -596,6 +691,40 @@ export default function CrmContactsPage() {
     await loadAll();
   }
 
+  async function permanentDeleteLead(leadId: string) {
+    const { error: upErr } = await supabase
+      .from("leads")
+      .update({
+        won_room_id: null,
+        won_proposal_id: null,
+        assigned_agent_user_id: null,
+        interested_property_id: null,
+      })
+      .eq("id", leadId);
+    if (upErr) {
+      console.error("Error clearing lead references:", upErr);
+      alert("Failed to prepare delete: " + upErr.message);
+      return;
+    }
+    const { error } = await supabase.from("leads").delete().eq("id", leadId);
+    if (error) {
+      console.error("Error permanently deleting lead:", error);
+      alert("Failed to delete: " + error.message);
+    } else {
+      void fetchArchivedLeads();
+    }
+  }
+
+  async function restoreLead(leadId: string) {
+    const { error } = await supabase.from("leads").update({ archived: false, stage: "new" }).eq("id", leadId);
+    if (error) {
+      console.error("Error restoring lead:", error);
+    } else {
+      void fetchArchivedLeads();
+      void loadAll();
+    }
+  }
+
   async function openConvertToCustomer(r: ContactRecord) {
     if (!r.leadId || !r.tenantId) return;
     const { data, error: qErr } = await supabase.from("leads").select("*").eq("id", r.leadId).maybeSingle();
@@ -724,16 +853,27 @@ export default function CrmContactsPage() {
           Contacts / Client database
         </h1>
         <nav style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-          <Link href="/crm" style={tabInactive}>
-            CRM Pipeline
-          </Link>
-          <Link href="/crm/contacts" style={tabActiveNav}>
+          <Link
+            href="/crm/contacts"
+            onClick={() => {
+              setActiveTab("contacts");
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
+            style={{
+              ...(activeTab === "contacts" ? tabActiveNav : tabInactive),
+              cursor: "pointer",
+            }}
+          >
             Contacts
           </Link>
-          <Link href="/crm/import" style={tabInactive}>
-            Import contacts
-          </Link>
-          {canEdit ? (
+          <button
+            type="button"
+            onClick={() => setActiveTab(activeTab === "archive" ? "contacts" : "archive")}
+            style={activeTab === "archive" ? tabActiveNav : tabInactive}
+          >
+            Archive
+          </button>
+          {canEdit && activeTab === "contacts" ? (
             <button
               type="button"
               onClick={() => setShowCreateModal(true)}
@@ -749,6 +889,8 @@ export default function CrmContactsPage() {
         </nav>
       </header>
 
+      {activeTab === "contacts" && (
+        <>
       {/* Toolbar */}
       <section
         style={{
@@ -853,12 +995,103 @@ export default function CrmContactsPage() {
             </span>
           </button>
         </div>
-        <button type="button" style={outlineBtn} onClick={exportExcel}>
-          Export Excel
-        </button>
-        <button type="button" style={outlineBtn} onClick={exportCsv}>
-          Export CSV
-        </button>
+        <div ref={importExportMenuRef} style={{ position: "relative" }}>
+          <button
+            type="button"
+            style={{ ...outlineBtn, display: "inline-flex", alignItems: "center", gap: 6 }}
+            aria-expanded={importExportMenuOpen}
+            aria-haspopup="menu"
+            onClick={() => setImportExportMenuOpen((o) => !o)}
+          >
+            Import / Export
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden style={{ flexShrink: 0 }}>
+              <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          {importExportMenuOpen ? (
+            <div
+              role="menu"
+              style={{
+                position: "absolute",
+                top: "100%",
+                right: 0,
+                marginTop: 6,
+                minWidth: 220,
+                background: VW.white,
+                border: `1px solid ${VW.border}`,
+                borderRadius: 10,
+                boxShadow: "0 8px 24px rgba(0,0,0,0.1)",
+                zIndex: 50,
+                overflow: "hidden",
+                fontFamily: "'DM Sans', sans-serif",
+              }}
+            >
+              <Link
+                href="/crm/import"
+                role="menuitem"
+                onClick={() => setImportExportMenuOpen(false)}
+                style={{
+                  display: "block",
+                  padding: "12px 16px",
+                  fontSize: 14,
+                  fontWeight: 600,
+                  color: VW.text,
+                  textDecoration: "none",
+                  borderBottom: `1px solid ${VW.border}`,
+                }}
+              >
+                Import contacts
+              </Link>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  exportExcel();
+                  setImportExportMenuOpen(false);
+                }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "12px 16px",
+                  fontSize: 14,
+                  fontWeight: 600,
+                  color: VW.text,
+                  border: "none",
+                  background: VW.white,
+                  cursor: "pointer",
+                  fontFamily: "'DM Sans', sans-serif",
+                  borderBottom: `1px solid ${VW.border}`,
+                }}
+              >
+                Export Excel
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  exportCsv();
+                  setImportExportMenuOpen(false);
+                }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "12px 16px",
+                  fontSize: 14,
+                  fontWeight: 600,
+                  color: VW.text,
+                  border: "none",
+                  background: VW.white,
+                  cursor: "pointer",
+                  fontFamily: "'DM Sans', sans-serif",
+                }}
+              >
+                Export CSV
+              </button>
+            </div>
+          ) : null}
+        </div>
       </section>
 
       <div
@@ -1226,6 +1459,213 @@ export default function CrmContactsPage() {
           )}
         </section>
       </div>
+        </>
+      )}
+
+      {activeTab === "archive" && (
+        <div style={{ padding: "20px 0" }}>
+          <h2
+            style={{
+              fontFamily: "'Instrument Serif', serif",
+              fontSize: 22,
+              fontWeight: 400,
+              color: VW.text,
+              marginBottom: 16,
+            }}
+          >
+            Archived & Closed Leads
+          </h2>
+          <p style={{ fontSize: 13, color: VW.textSecondary, marginBottom: 20 }}>
+            Archived leads, won deals, and lost leads. You can restore or permanently delete records here.
+          </p>
+
+          {archiveLoading ? (
+            <p style={{ color: VW.textSecondary }}>Loading archived data...</p>
+          ) : archivedLeads.length === 0 ? (
+            <p style={{ color: VW.textSecondary }}>No archived leads found.</p>
+          ) : (
+            <div style={{ border: `1px solid ${VW.border}`, borderRadius: 12, overflow: "hidden" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: VW.pageBg }}>
+                    <th
+                      style={{
+                        textAlign: "left",
+                        padding: "12px 16px",
+                        fontWeight: 600,
+                        fontSize: 12,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.04em",
+                        borderBottom: `1px solid ${VW.border}`,
+                      }}
+                    >
+                      Company
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "left",
+                        padding: "12px 16px",
+                        fontWeight: 600,
+                        fontSize: 12,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.04em",
+                        borderBottom: `1px solid ${VW.border}`,
+                      }}
+                    >
+                      Contact
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "left",
+                        padding: "12px 16px",
+                        fontWeight: 600,
+                        fontSize: 12,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.04em",
+                        borderBottom: `1px solid ${VW.border}`,
+                      }}
+                    >
+                      Email
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "left",
+                        padding: "12px 16px",
+                        fontWeight: 600,
+                        fontSize: 12,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.04em",
+                        borderBottom: `1px solid ${VW.border}`,
+                      }}
+                    >
+                      Stage
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "left",
+                        padding: "12px 16px",
+                        fontWeight: 600,
+                        fontSize: 12,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.04em",
+                        borderBottom: `1px solid ${VW.border}`,
+                      }}
+                    >
+                      Reason
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "left",
+                        padding: "12px 16px",
+                        fontWeight: 600,
+                        fontSize: 12,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.04em",
+                        borderBottom: `1px solid ${VW.border}`,
+                      }}
+                    >
+                      Archived
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "left",
+                        padding: "12px 16px",
+                        fontWeight: 600,
+                        fontSize: 12,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.04em",
+                        borderBottom: `1px solid ${VW.border}`,
+                      }}
+                    >
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {archivedLeads.map((lead, i) => (
+                    <tr key={lead.id} style={{ borderBottom: i < archivedLeads.length - 1 ? `1px solid ${VW.border}` : "none" }}>
+                      <td style={{ padding: "12px 16px", fontWeight: 600 }}>{lead.companyName}</td>
+                      <td style={{ padding: "12px 16px" }}>{lead.contactName}</td>
+                      <td style={{ padding: "12px 16px", color: VW.textSecondary }}>{lead.email || "—"}</td>
+                      <td style={{ padding: "12px 16px" }}>
+                        <span
+                          style={{
+                            fontSize: 11,
+                            fontWeight: 600,
+                            padding: "3px 10px",
+                            borderRadius: 6,
+                            color: lead.stage === "won" ? "#27ae60" : lead.stage === "lost" ? "#c0392b" : VW.textSecondary,
+                            background: lead.stage === "won" ? "#eafaf1" : lead.stage === "lost" ? "#fdf0ee" : VW.beige,
+                          }}
+                        >
+                          {lead.stage === "won" ? "Won" : lead.stage === "lost" ? "Lost" : lead.stage ? LEAD_STAGE_LABEL[lead.stage] : "—"}
+                        </span>
+                      </td>
+                      <td style={{ padding: "12px 16px", color: VW.textSecondary, fontSize: 12 }}>{lead.notes || "—"}</td>
+                      <td style={{ padding: "12px 16px", color: VW.textSecondary, fontSize: 12 }}>{lead.archived ? "Yes" : "No"}</td>
+                      <td style={{ padding: "12px 16px" }}>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          {lead.leadId && canEdit && !lead.readonly ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => lead.leadId && void restoreLead(lead.leadId)}
+                                style={{
+                                  fontSize: 12,
+                                  color: VW.petrol,
+                                  background: "none",
+                                  border: "none",
+                                  cursor: "pointer",
+                                  fontWeight: 600,
+                                  textDecoration: "underline",
+                                }}
+                              >
+                                Restore
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setPermanentDeleteConfirm(lead)}
+                                style={{
+                                  fontSize: 12,
+                                  color: "#c0392b",
+                                  background: "none",
+                                  border: "none",
+                                  cursor: "pointer",
+                                  fontWeight: 600,
+                                  textDecoration: "underline",
+                                }}
+                              >
+                                Delete forever
+                              </button>
+                            </>
+                          ) : (
+                            <span style={{ fontSize: 12, color: VW.textSecondary }}>—</span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {permanentDeleteConfirm && (
+            <ConfirmModal
+              isOpen={true}
+              title="Permanently delete lead?"
+              message={`Are you sure you want to permanently delete "${permanentDeleteConfirm.companyName}"? This action cannot be undone and all associated data will be removed.`}
+              confirmLabel="Delete permanently"
+              variant="danger"
+              onConfirm={() => {
+                if (permanentDeleteConfirm.leadId) void permanentDeleteLead(permanentDeleteConfirm.leadId);
+                setPermanentDeleteConfirm(null);
+              }}
+              onCancel={() => setPermanentDeleteConfirm(null)}
+            />
+          )}
+        </div>
+      )}
 
       {emailTarget && emailTarget.leadId && emailTarget.tenantId ? (
         <div

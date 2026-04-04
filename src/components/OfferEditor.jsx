@@ -422,7 +422,15 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
       company_id: form.companyId || null,
       lead_id: form.companyId || leadId || null,
       source_offer_id: sourceOfferId,
-      title: `Contract — ${form.title}`,
+      title: (() => {
+        const raw = form.title || "Office Room";
+        // Remove "Offer – " or "Offer — " prefix if present
+        const cleaned = raw.replace(/^Offer\s*[–—-]\s*/i, "");
+        let t = `Contract – ${cleaned}`;
+        if (Number(form.quantity) > 1) t += ` (×${form.quantity})`;
+        return t;
+      })(),
+      quantity: form.quantity ? Number(form.quantity) : 1,
       status: "draft",
       signing_method: "esign",
       customer_name: form.customerName || null,
@@ -434,6 +442,10 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
       monthly_price: form.monthlyPrice ? Number(form.monthlyPrice) : null,
       contract_length_months: form.contractLengthMonths ? Number(form.contractLengthMonths) : null,
       start_date: form.startDate || null,
+      furniture_included: form.furnitureIncluded ?? false,
+      furniture_description: form.furnitureDescription || null,
+      furniture_monthly_price: form.furnitureMonthlyPrice ? Number(form.furnitureMonthlyPrice) : null,
+      pricing_notes: form.pricingNotes || null,
       intro_text: form.introText || null,
       terms_text: form.termsText || null,
       notes: form.notes || null,
@@ -670,7 +682,7 @@ export default function OfferEditor({ leadId = null, initialData = {}, offerId =
         <tr><td style="padding:10px 14px;font-weight:600">Contract length</td><td style="padding:10px 14px">${form.contractLengthMonths ? `${form.contractLengthMonths} months` : "—"}</td></tr>
         <tr style="background:${c.hover}"><td style="padding:10px 14px;font-weight:600">Proposed start</td><td style="padding:10px 14px">${form.startDate || "To be agreed"}</td></tr>
         ${form.furnitureIncluded ? `<tr style="background:${c.hover}"><td style="padding:10px 14px;font-weight:600">Furniture</td><td style="padding:10px 14px">${form.furnitureDescription || "Included"}</td></tr>
-<tr><td style="padding:10px 14px;font-weight:600">Furniture rent</td><td style="padding:10px 14px">€${form.furnitureMonthlyPrice ? Number(form.furnitureMonthlyPrice).toLocaleString("en-IE") : "0"}/month excl. VAT</td></tr>` : ""}
+<tr><td style="padding:10px 14px;font-weight:600">Furniture rent</td><td style="padding:10px 14px">€${form.furnitureMonthlyPrice ? Number(form.furnitureMonthlyPrice).toLocaleString("en-IE") : "0"}/month excl. VAT</td></tr>` : ""}${form.furnitureIncluded && form.furnitureMonthlyPrice && form.monthlyPrice ? `<tr style="background:${c.primary}"><td style="padding:10px 14px;font-weight:700;color:${c.white}">Total monthly</td><td style="padding:10px 14px;font-weight:700;color:${c.white}">€${(Number(form.monthlyPrice) + Number(form.furnitureMonthlyPrice)).toLocaleString()} / month excl. VAT</td></tr>` : ""}
       </table>
       <h3 style="font-size:15px;border-bottom:1px solid ${c.border};padding-bottom:6px;color:${c.text}">Terms &amp; conditions</h3>
       <p style="font-size:13px;color:${c.text};opacity:0.85">${(form.termsText || "").replace(/\n/g, "<br>")}</p>

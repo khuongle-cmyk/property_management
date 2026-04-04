@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
+import { createOnboardingTasksFromContract } from "@/lib/tasks/automation";
 
 type Ctx = { params: Promise<{ token: string }> };
 
@@ -88,6 +89,55 @@ export async function POST(_req: Request, context: Ctx) {
           ? "Add column signed_at to public.contracts (see sql/contracts_public_signing.sql)."
           : undefined;
       return NextResponse.json({ error: uErr.message, hint }, { status: 500 });
+    }
+
+    const contract = row;
+    const { data: contractForLead } = await admin
+      .from("contracts")
+      .select("lead_id, company_id")
+      .eq("id", contract.id)
+      .maybeSingle();
+    const leadIdToWin = contractForLead?.lead_id || contractForLead?.company_id;
+    if (leadIdToWin) {
+      const now = new Date().toISOString();
+      const { error: leadErr } = await admin
+        .from("leads")
+        .update({
+          stage: "won",
+          stage_changed_at: now,
+          won_at: now,
+          lost_reason: null,
+          archived: false,
+        })
+        .eq("id", leadIdToWin);
+      if (leadErr) {
+        console.error("Error moving lead to won after contract sign:", leadErr);
+      }
+    }
+
+    // Create onboarding tasks from the signed contract
+    try {
+      // Get the full contract data for task creation
+      const { data: fullContract } = await admin
+        .from("contracts")
+        .select("id, tenant_id, lead_id, company_id, property_id, start_date")
+        .eq("id", contract.id)
+        .single();
+
+      if (fullContract && fullContract.tenant_id && fullContract.property_id) {
+        await createOnboardingTasksFromContract({
+          supabase: admin,
+          contractId: fullContract.id,
+          tenantId: fullContract.tenant_id,
+          leadId: fullContract.lead_id || fullContract.company_id || null,
+          propertyId: fullContract.property_id,
+          roomId: null,
+          contractStartDate: fullContract.start_date || new Date().toISOString().slice(0, 10),
+        });
+      }
+    } catch (taskErr) {
+      console.error("Error creating onboarding tasks:", taskErr);
+      // Don't fail the signing if task creation fails
     }
 
     return NextResponse.json({ ok: true });

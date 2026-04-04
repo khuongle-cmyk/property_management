@@ -488,7 +488,7 @@ export default function ContractEditor({ leadId = null, initialData = {}, contra
         <tr><td style="padding:10px 14px;font-weight:600">Contract length</td><td style="padding:10px 14px">${form.contractLengthMonths ? `${form.contractLengthMonths} months` : "—"}</td></tr>
         <tr style="background:${c.hover}"><td style="padding:10px 14px;font-weight:600">Start</td><td style="padding:10px 14px">${form.startDate || "To be agreed"}</td></tr>
         ${form.furnitureIncluded ? `<tr style="background:${c.hover}"><td style="padding:10px 14px;font-weight:600">Furniture</td><td style="padding:10px 14px">${form.furnitureDescription || "Included"}</td></tr>
-<tr><td style="padding:10px 14px;font-weight:600">Furniture rent</td><td style="padding:10px 14px">€${form.furnitureMonthlyPrice ? Number(form.furnitureMonthlyPrice).toLocaleString("en-IE") : "0"}/month excl. VAT</td></tr>` : ""}
+<tr><td style="padding:10px 14px;font-weight:600">Furniture rent</td><td style="padding:10px 14px">€${form.furnitureMonthlyPrice ? Number(form.furnitureMonthlyPrice).toLocaleString("en-IE") : "0"}/month excl. VAT</td></tr>` : ""}${form.furnitureIncluded && form.furnitureMonthlyPrice && form.monthlyPrice ? `<tr style="background:${c.primary}"><td style="padding:10px 14px;font-weight:700;color:${c.white}">Total monthly</td><td style="padding:10px 14px;font-weight:700;color:${c.white}">€${(Number(form.monthlyPrice) + Number(form.furnitureMonthlyPrice)).toLocaleString()} / month excl. VAT</td></tr>` : ""}
       </table>
       <h3 style="font-size:15px;border-bottom:1px solid ${c.border};padding-bottom:6px;color:${c.text}">Terms &amp; conditions</h3>
       <p style="font-size:13px;color:${c.text};opacity:0.85">${(form.termsText || "").replace(/\n/g, "<br>")}</p>
