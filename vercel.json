@@ -4,5 +4,11 @@
     "src/app/api/**": {
       "maxDuration": 30
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/task-reminders",
+      "schedule": "0 4 * * *"
+    }
+  ]
 }
