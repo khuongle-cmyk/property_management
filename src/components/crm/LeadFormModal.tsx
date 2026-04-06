@@ -14,6 +14,7 @@ interface EditLeadModalProps {
   leadId: string | null;
   onSave: () => void;
   onDelete?: () => void;
+  [key: string]: any;
 }
 
 export default function EditLeadModal({ isOpen, onClose, leadId, onSave, onDelete }: EditLeadModalProps) {
