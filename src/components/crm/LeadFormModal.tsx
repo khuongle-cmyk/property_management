@@ -1,480 +1,544 @@
-"use client";
+'use client';
 
-import { useEffect, useMemo, useState } from "react";
-import { LEAD_SOURCES } from "@/lib/crm";
-import { COMPANY_SIZES, vatFiFormatWarning, ytunnusFormatWarning } from "@/lib/crm/finnish-company";
-import { formatPropertyLabel } from "@/lib/properties/label";
+import { useState, useEffect } from 'react';
+import { createClient } from '@/lib/supabase/client';
+import {
+  EDIT_LEAD_MODAL_STAGE_OPTIONS,
+  dbStageValueFromLeadForm,
+  leadStageColumnKeyFromDb,
+} from '@/lib/crm/lead-stage-form';
 
-export type LeadFormProperty = { id: string; name: string | null; city: string | null };
-
-const SPACE_TYPES: { value: string; label: string }[] = [
-  { value: "", label: "—" },
-  { value: "office", label: "Office" },
-  { value: "meeting_room", label: "Meeting room" },
-  { value: "venue", label: "Venue" },
-  { value: "hot_desk", label: "Hot desk" },
-];
-
-const COMPANY_TYPE_OPTIONS: { value: string; label: string }[] = [
-  { value: "", label: "—" },
-  { value: "oy", label: "Oy (osakeyhtiö)" },
-  { value: "oyj", label: "Oyj (julkinen osakeyhtiö)" },
-  { value: "ky", label: "Ky (kommandiittiyhtiö)" },
-  { value: "ay", label: "Ay (avoin yhtiö / general partnership)" },
-  { value: "toiminimi", label: "Toiminimi (sole trader)" },
-  { value: "other", label: "Other" },
-];
-
-const COMPANY_SIZE_OPTIONS: { value: string; label: string }[] = [
-  { value: "", label: "—" },
-  ...COMPANY_SIZES.map((s) => ({ value: s, label: s === "200+" ? "200+ employees" : `${s} employees` })),
-];
-
-function splitLegacyContact(full: string): { first: string; last: string } {
-  const t = full.trim();
-  const i = t.indexOf(" ");
-  if (i === -1) return { first: t, last: "" };
-  return { first: t.slice(0, i), last: t.slice(i + 1).trim() };
+interface EditLeadModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  leadId: string | null;
+  onSave: () => void;
+  onDelete?: () => void;
 }
 
-export type LeadFormModalProps = {
-  open: boolean;
-  mode: "create" | "edit";
-  leadId?: string;
-  tenantId: string;
-  properties: LeadFormProperty[];
-  initial?: {
-    company_name?: string;
-    contact_person_name?: string;
-    contact_first_name?: string | null;
-    contact_last_name?: string | null;
-    contact_title?: string | null;
-    contact_direct_phone?: string | null;
-    email?: string;
-    phone?: string | null;
-    source?: string;
-    property_id?: string | null;
-    interested_space_type?: string | null;
-    approx_size_m2?: number | null;
-    approx_budget_eur_month?: number | null;
-    preferred_move_in_date?: string | null;
-    notes?: string | null;
-    business_id?: string | null;
-    company_registration?: string | null;
-    vat_number?: string | null;
-    company_type?: string | null;
-    industry_sector?: string | null;
-    industry?: string | null;
-    company_size?: string | null;
-    company_website?: string | null;
-    website?: string | null;
-    billing_street?: string | null;
-    billing_address?: string | null;
-    billing_postal_code?: string | null;
-    billing_city?: string | null;
-    billing_email?: string | null;
-    e_invoice_address?: string | null;
-    e_invoice_operator_code?: string | null;
-    e_invoice_operator?: string | null;
-    contact_phone_direct?: string | null;
-  };
-  onClose: () => void;
-  onSaved: () => void;
-  /** After successful create; receive new lead id (fetch row in parent if needed). */
-  onCreatedLeadId?: (id: string) => void | Promise<void>;
-};
-
-const overlay: React.CSSProperties = {
-  position: "fixed",
-  inset: 0,
-  background: "rgba(0,0,0,0.45)",
-  zIndex: 200,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  padding: 16,
-};
-
-const box: React.CSSProperties = {
-  background: "#fff",
-  borderRadius: 12,
-  padding: 20,
-  maxWidth: 680,
-  width: "100%",
-  maxHeight: "90vh",
-  overflow: "auto",
-};
-
-const sectionTitle: React.CSSProperties = { margin: "16px 0 8px", fontSize: 15, fontWeight: 700, color: "#0f172a" };
-
-export function LeadFormModal({
-  open,
-  mode,
-  leadId,
-  tenantId,
-  properties,
-  initial,
-  onClose,
-  onSaved,
-  onCreatedLeadId,
-}: LeadFormModalProps) {
-  const [companyName, setCompanyName] = useState("");
-  const [businessId, setBusinessId] = useState("");
-  const [vatNumber, setVatNumber] = useState("");
-  const [companyType, setCompanyType] = useState("");
-  const [industrySector, setIndustrySector] = useState("");
-  const [companySize, setCompanySize] = useState("");
-  const [companyWebsite, setCompanyWebsite] = useState("");
-  const [billingStreet, setBillingStreet] = useState("");
-  const [billingPostal, setBillingPostal] = useState("");
-  const [billingCity, setBillingCity] = useState("");
-  const [billingEmail, setBillingEmail] = useState("");
-  const [eInvoiceAddress, setEInvoiceAddress] = useState("");
-  const [eInvoiceOperator, setEInvoiceOperator] = useState("");
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [contactTitle, setContactTitle] = useState("");
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
-  const [directPhone, setDirectPhone] = useState("");
-  const [source, setSource] = useState<string>("other");
-  const [propertyId, setPropertyId] = useState("");
-  const [spaceType, setSpaceType] = useState("");
-  const [sizeM2, setSizeM2] = useState("");
-  const [budgetMonth, setBudgetMonth] = useState("");
-  const [moveIn, setMoveIn] = useState("");
-  const [notes, setNotes] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  const ytWarning = useMemo(() => ytunnusFormatWarning(businessId), [businessId]);
-  const vatWarn = useMemo(() => vatFiFormatWarning(vatNumber), [vatNumber]);
+export default function EditLeadModal({ isOpen, onClose, leadId, onSave, onDelete }: EditLeadModalProps) {
+  const supabase = createClient();
+  const [loading, setLoading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [formData, setFormData] = useState({
+    company_name: '',
+    y_tunnus: '',
+    vat_number: '',
+    company_type: '',
+    industry: '',
+    company_size: '',
+    website: '',
+    contact_first_name: '',
+    contact_last_name: '',
+    email: '',
+    phone: '',
+    contact_title: '',
+    contact_phone_direct: '',
+    billing_address: '',
+    billing_postal_code: '',
+    billing_city: '',
+    billing_email: '',
+    e_invoice_address: '',
+    e_invoice_operator: '',
+    e_invoice_operator_code: '',
+    stage: 'new',
+    source: '',
+    notes: '',
+    interested_space_type: '',
+    approx_size_m2: '',
+    budget_eur_month: '',
+    preferred_move_in_date: '',
+    next_action: '',
+    next_action_date: '',
+    pipeline_owner: '',
+  });
 
   useEffect(() => {
-    if (!open) return;
-    setError(null);
-    setCompanyName(initial?.company_name ?? "");
-    setBusinessId(initial?.company_registration ?? initial?.business_id ?? "");
-    setVatNumber(initial?.vat_number ?? "");
-    setCompanyType(initial?.company_type ?? "");
-    setIndustrySector(initial?.industry ?? initial?.industry_sector ?? "");
-    setCompanySize(initial?.company_size ?? "");
-    setCompanyWebsite(initial?.website ?? initial?.company_website ?? "");
-    setBillingStreet(initial?.billing_address ?? initial?.billing_street ?? "");
-    setBillingPostal(initial?.billing_postal_code ?? "");
-    setBillingCity(initial?.billing_city ?? "");
-    setBillingEmail(initial?.billing_email ?? "");
-    setEInvoiceAddress(initial?.e_invoice_address ?? "");
-    setEInvoiceOperator(initial?.e_invoice_operator ?? initial?.e_invoice_operator_code ?? "");
-
-    let fn = initial?.contact_first_name ?? "";
-    let ln = initial?.contact_last_name ?? "";
-    if (!fn && !ln && initial?.contact_person_name) {
-      const sp = splitLegacyContact(initial.contact_person_name);
-      fn = sp.first;
-      ln = sp.last;
+    if (leadId && isOpen) {
+      fetchLead();
+      setShowDeleteConfirm(false);
     }
-    setFirstName(fn);
-    setLastName(ln);
-    setContactTitle(initial?.contact_title ?? "");
-    setEmail(initial?.email ?? "");
-    setPhone(initial?.phone ?? "");
-    setDirectPhone(initial?.contact_phone_direct ?? initial?.contact_direct_phone ?? "");
-    setSource(initial?.source ?? "other");
-    setPropertyId(initial?.property_id ?? "");
-    setSpaceType(initial?.interested_space_type ?? "");
-    setSizeM2(initial?.approx_size_m2 != null ? String(initial.approx_size_m2) : "");
-    setBudgetMonth(initial?.approx_budget_eur_month != null ? String(initial.approx_budget_eur_month) : "");
-    const mid = initial?.preferred_move_in_date;
-    setMoveIn(mid ? mid.slice(0, 10) : "");
-    setNotes(initial?.notes ?? "");
-  }, [open, initial]);
+  }, [leadId, isOpen]);
 
-  if (!open) return null;
+  const fetchLead = async () => {
+    if (!leadId) return;
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('leads')
+        .select('*')
+        .eq('id', leadId)
+        .single();
 
-  function buildPayload() {
-    const sizeNum = sizeM2.trim() ? Number(sizeM2) : null;
-    const budgetNum = budgetMonth.trim() ? Number(budgetMonth) : null;
-    const contactPerson = `${firstName} ${lastName}`.trim();
-    return {
-      company_name: companyName.trim(),
-      contact_person_name: contactPerson,
-      contact_first_name: firstName.trim() || null,
-      contact_last_name: lastName.trim() || null,
-      contact_title: contactTitle.trim() || null,
-      contact_direct_phone: directPhone.trim() || null,
-      email: email.trim(),
-      phone: phone.trim() || null,
-      source,
-      property_id: propertyId.trim() || null,
-      interested_space_type: spaceType.trim() || null,
-      approx_size_m2: sizeNum != null && Number.isFinite(sizeNum) ? sizeNum : null,
-      approx_budget_eur_month: budgetNum != null && Number.isFinite(budgetNum) ? budgetNum : null,
-      preferred_move_in_date: moveIn.trim() || null,
-      notes: notes.trim() || null,
-      business_id: businessId.trim() || null,
-      company_registration: businessId.trim() || null,
-      vat_number: vatNumber.trim() || null,
-      company_type: companyType.trim() || null,
-      industry_sector: industrySector.trim() || null,
-      industry: industrySector.trim() || null,
-      company_size: companySize.trim() || null,
-      company_website: companyWebsite.trim() || null,
-      website: companyWebsite.trim() || null,
-      billing_street: billingStreet.trim() || null,
-      billing_address: billingStreet.trim() || null,
-      billing_postal_code: billingPostal.trim() || null,
-      billing_city: billingCity.trim() || null,
-      billing_email: billingEmail.trim() || null,
-      e_invoice_address: eInvoiceAddress.trim() || null,
-      e_invoice_operator_code: eInvoiceOperator.trim() || null,
-      e_invoice_operator: eInvoiceOperator.trim() || null,
-      contact_phone_direct: directPhone.trim() || null,
-    };
-  }
-
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!companyName.trim() || !email.trim()) {
-      setError("Company name and email are required.");
-      return;
-    }
-    if (!firstName.trim() || !lastName.trim()) {
-      setError("Contact first name and last name are required.");
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    const payload = buildPayload();
-    if (mode === "create") {
-      const res = await fetch("/api/crm/leads", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tenantId, ...payload }),
-      });
-      const j = (await res.json()) as { error?: string; id?: string | null };
-      setSaving(false);
-      if (!res.ok) {
-        setError(j.error ?? "Save failed");
-        return;
+      if (error) throw error;
+      if (data) {
+        setFormData({
+          company_name: data.company_name || '',
+          y_tunnus: data.y_tunnus || '',
+          vat_number: data.vat_number || '',
+          company_type: data.company_type || '',
+          industry: data.industry || '',
+          company_size: data.company_size || '',
+          website: data.website || '',
+          contact_first_name: data.contact_first_name || '',
+          contact_last_name: data.contact_last_name || '',
+          email: data.email || '',
+          phone: data.phone || '',
+          contact_title: data.contact_title || '',
+          contact_phone_direct: data.contact_phone_direct || '',
+          billing_address: data.billing_address || '',
+          billing_postal_code: data.billing_postal_code || '',
+          billing_city: data.billing_city || '',
+          billing_email: data.billing_email || '',
+          e_invoice_address: data.e_invoice_address || '',
+          e_invoice_operator: data.e_invoice_operator || '',
+          e_invoice_operator_code: data.e_invoice_operator_code || '',
+          stage: leadStageColumnKeyFromDb(data.stage),
+          source: data.source || '',
+          notes: data.notes || '',
+          interested_space_type: data.interested_space_type || '',
+          approx_size_m2: data.approx_size_m2 ? String(data.approx_size_m2) : '',
+          budget_eur_month: data.budget_eur_month ? String(data.budget_eur_month) : '',
+          preferred_move_in_date: data.preferred_move_in_date || '',
+          next_action: data.next_action || '',
+          next_action_date: data.next_action_date || '',
+          pipeline_owner: data.pipeline_owner || '',
+        });
       }
-      const rawId = j.id != null ? String(j.id).trim() : "";
-      if (rawId) {
-        await Promise.resolve(onCreatedLeadId?.(rawId));
-      }
-      onSaved();
+    } catch (err) {
+      console.error('Error fetching lead:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!leadId) return;
+    setLoading(true);
+    try {
+      const updateData: any = {
+        company_name: formData.company_name,
+        y_tunnus: formData.y_tunnus,
+        vat_number: formData.vat_number,
+        company_type: formData.company_type,
+        industry: formData.industry,
+        company_size: formData.company_size,
+        website: formData.website,
+        contact_first_name: formData.contact_first_name,
+        contact_last_name: formData.contact_last_name,
+        email: formData.email,
+        phone: formData.phone,
+        contact_title: formData.contact_title,
+        contact_phone_direct: formData.contact_phone_direct,
+        billing_address: formData.billing_address,
+        billing_postal_code: formData.billing_postal_code,
+        billing_city: formData.billing_city,
+        billing_email: formData.billing_email,
+        e_invoice_address: formData.e_invoice_address,
+        e_invoice_operator: formData.e_invoice_operator,
+        e_invoice_operator_code: formData.e_invoice_operator_code,
+        stage: dbStageValueFromLeadForm(formData.stage),
+        source: formData.source,
+        notes: formData.notes,
+        interested_space_type: formData.interested_space_type,
+        approx_size_m2: formData.approx_size_m2 ? Number(formData.approx_size_m2) : null,
+        budget_eur_month: formData.budget_eur_month ? Number(formData.budget_eur_month) : null,
+        preferred_move_in_date: formData.preferred_move_in_date || null,
+        next_action: formData.next_action,
+        next_action_date: formData.next_action_date || null,
+        pipeline_owner: formData.pipeline_owner,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase
+        .from('leads')
+        .update(updateData)
+        .eq('id', leadId);
+
+      if (error) throw error;
+      onSave();
       onClose();
-      return;
+    } catch (err) {
+      console.error('Error updating lead:', err);
+    } finally {
+      setLoading(false);
     }
-    if (!leadId) {
-      setSaving(false);
-      setError("Missing lead id");
-      return;
-    }
-    const res = await fetch(`/api/crm/leads/${leadId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const j = (await res.json()) as { error?: string };
-    setSaving(false);
-    if (!res.ok) {
-      setError(j.error ?? "Update failed");
-      return;
-    }
-    onSaved();
-    onClose();
-  }
+  };
 
-  const label: React.CSSProperties = { display: "grid", gap: 4 };
+  const handleDelete = async () => {
+    if (!leadId) return;
+    setDeleting(true);
+    try {
+      await supabase
+        .from('leads')
+        .update({
+          won_room_id: null,
+          won_proposal_id: null,
+          assigned_agent_user_id: null,
+          interested_property_id: null,
+        })
+        .eq('id', leadId);
+
+      const { error } = await supabase
+        .from('leads')
+        .delete()
+        .eq('id', leadId);
+
+      if (error) throw error;
+      setShowDeleteConfirm(false);
+      onDelete?.();
+      onSave();
+      onClose();
+    } catch (err) {
+      console.error('Error deleting lead:', err);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleChange = (field: string, value: string) => {
+    setFormData(prev => ({ ...prev, [field]: value }));
+  };
+
+  if (!isOpen) return null;
+
+  // ── VillageWorks Design Manual Tokens ──
+  const colors = {
+    petrolGreen: '#21524F',
+    petrolDark: '#1a4340',
+    petrolLight: '#e8f0ee',
+    cream: '#faf8f5',
+    creamDark: '#f0ece6',
+    beige: '#F3DFC6',
+    warmGray: '#6b6560',
+    warmGrayLight: '#9a9590',
+    textPrimary: '#2c2825',
+    textSecondary: '#6b6560',
+    white: '#ffffff',
+    red: '#c0392b',
+    redLight: '#fdf0ee',
+    border: '#e5e0da',
+    borderFocus: '#21524F',
+    overlay: 'rgba(0, 0, 0, 0.4)',
+  };
+
+  const fonts = {
+    heading: "'Instrument Serif', Georgia, serif",
+    body: "'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif",
+  };
+
+  const sectionTitleStyle: React.CSSProperties = {
+    fontFamily: fonts.heading, fontSize: '18px', fontWeight: 400,
+    color: colors.petrolGreen, marginBottom: '16px', paddingBottom: '8px',
+    borderBottom: `1px solid ${colors.border}`,
+  };
+
+  const labelStyle: React.CSSProperties = {
+    fontFamily: fonts.body, fontSize: '13px', fontWeight: 500,
+    color: colors.textSecondary, marginBottom: '4px', display: 'block',
+  };
+
+  const inputStyle: React.CSSProperties = {
+    fontFamily: fonts.body, fontSize: '14px', color: colors.textPrimary,
+    backgroundColor: colors.white, border: `1px solid ${colors.border}`,
+    borderRadius: '8px', padding: '10px 14px', width: '100%',
+    outline: 'none', transition: 'border-color 0.2s, box-shadow 0.2s',
+    boxSizing: 'border-box',
+  };
+
+  const selectStyle: React.CSSProperties = {
+    ...inputStyle, appearance: 'none' as const,
+    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b6560' d='M2 4l4 4 4-4'/%3E%3C/svg%3E")`,
+    backgroundRepeat: 'no-repeat', backgroundPosition: 'right 14px center', paddingRight: '36px',
+  };
+
+  const onFocus = (e: React.FocusEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+    e.target.style.borderColor = colors.borderFocus;
+    e.target.style.boxShadow = `0 0 0 3px ${colors.petrolLight}`;
+  };
+  const onBlur = (e: React.FocusEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+    e.target.style.borderColor = colors.border;
+    e.target.style.boxShadow = 'none';
+  };
+
+  const InputField = ({ label, field, placeholder, required, type = 'text' }: {
+    label: string; field: string; placeholder?: string; required?: boolean; type?: string;
+  }) => (
+    <div style={{ marginBottom: '14px' }}>
+      <label style={labelStyle}>
+        {label}{required && <span style={{ color: colors.red, marginLeft: '3px' }}>*</span>}
+      </label>
+      <input type={type} value={(formData as any)[field] || ''}
+        onChange={(e) => handleChange(field, e.target.value)}
+        placeholder={placeholder || ''} style={inputStyle}
+        onFocus={onFocus} onBlur={onBlur} />
+    </div>
+  );
+
+  const SelectField = ({ label, field, options }: {
+    label: string; field: string; options: { value: string; label: string }[];
+  }) => (
+    <div style={{ marginBottom: '14px' }}>
+      <label style={labelStyle}>{label}</label>
+      <select value={(formData as any)[field] || ''}
+        onChange={(e) => handleChange(field, e.target.value)}
+        style={selectStyle} onFocus={onFocus} onBlur={onBlur}>
+        <option value="">— Select —</option>
+        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </div>
+  );
+
+  const gridTwo: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' };
+  const gridThree: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' };
 
   return (
-    <div style={overlay} role="presentation" onClick={onClose}>
-      <div role="dialog" aria-modal style={box} onClick={(e) => e.stopPropagation()}>
-        <h2 style={{ marginTop: 0 }}>{mode === "create" ? "Add lead" : "Edit lead"}</h2>
-        <p style={{ fontSize: 14, color: "#64748b", marginTop: 0 }}>
-          {mode === "create"
-            ? "Creates a lead in the New stage and assigns you as the agent."
-            : "Updates this lead’s details. Y-tunnus and e-invoice fields support Finnish invoicing (Finvoice)."}
-        </p>
-        {error ? <p style={{ color: "#b91c1c" }}>{error}</p> : null}
-        <form onSubmit={onSubmit} style={{ display: "grid", gap: 10 }}>
-          <h3 style={{ ...sectionTitle, marginTop: 0 }}>1. Company information</h3>
-          <label style={label}>
-            Company name *
-            <input value={companyName} onChange={(e) => setCompanyName(e.target.value)} required style={{ padding: 8 }} />
-          </label>
-          <label style={label}>
-            Company registration (Y-tunnus)
-            <input
-              value={businessId}
-              onChange={(e) => setBusinessId(e.target.value)}
-              placeholder="1234567-8"
-              style={{ padding: 8 }}
-              autoComplete="off"
-            />
-            {ytWarning ? <span style={{ fontSize: 13, color: "#b45309" }}>{ytWarning}</span> : null}
-          </label>
-          <label style={label}>
-            VAT number (ALV-numero)
-            <input
-              value={vatNumber}
-              onChange={(e) => setVatNumber(e.target.value)}
-              placeholder="FI12345678"
-              style={{ padding: 8 }}
-            />
-            {vatWarn ? <span style={{ fontSize: 13, color: "#b45309" }}>{vatWarn}</span> : null}
-          </label>
-          <label style={label}>
-            Company type
-            <select value={companyType} onChange={(e) => setCompanyType(e.target.value)} style={{ padding: 8 }}>
-              {COMPANY_TYPE_OPTIONS.map((o) => (
-                <option key={o.value || "empty"} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label style={label}>
-            Industry
-            <input value={industrySector} onChange={(e) => setIndustrySector(e.target.value)} style={{ padding: 8 }} />
-          </label>
-          <label style={label}>
-            Company size
-            <select value={companySize} onChange={(e) => setCompanySize(e.target.value)} style={{ padding: 8 }}>
-              {COMPANY_SIZE_OPTIONS.map((o) => (
-                <option key={o.value || "empty"} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label style={label}>
-            Website
-            <input
-              type="url"
-              value={companyWebsite}
-              onChange={(e) => setCompanyWebsite(e.target.value)}
-              placeholder="https://"
-              style={{ padding: 8 }}
-            />
-          </label>
-          <h3 style={sectionTitle}>2. Contact person</h3>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <label style={label}>
-              First name *
-              <input value={firstName} onChange={(e) => setFirstName(e.target.value)} required style={{ padding: 8 }} />
-            </label>
-            <label style={label}>
-              Last name *
-              <input value={lastName} onChange={(e) => setLastName(e.target.value)} required style={{ padding: 8 }} />
-            </label>
-          </div>
-          <label style={label}>
-            Title / position
-            <input value={contactTitle} onChange={(e) => setContactTitle(e.target.value)} style={{ padding: 8 }} />
-          </label>
-          <label style={label}>
-            Email *
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required style={{ padding: 8 }} />
-          </label>
-          <label style={label}>
-            Phone
-            <input value={phone} onChange={(e) => setPhone(e.target.value)} style={{ padding: 8 }} />
-          </label>
-          <label style={label}>
-            Contact phone (direct)
-            <input value={directPhone} onChange={(e) => setDirectPhone(e.target.value)} style={{ padding: 8 }} />
-          </label>
+    <div style={{
+      position: 'fixed', inset: 0, backgroundColor: colors.overlay,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      zIndex: 50, padding: '20px',
+    }} onClick={onClose}>
+      <div style={{
+        backgroundColor: colors.cream, borderRadius: '16px', width: '100%',
+        maxWidth: '720px', maxHeight: '90vh', display: 'flex', flexDirection: 'column',
+        boxShadow: '0 25px 60px rgba(0,0,0,0.15), 0 8px 20px rgba(0,0,0,0.08)',
+        overflow: 'hidden',
+      }} onClick={(e) => e.stopPropagation()}>
 
-          <h3 style={sectionTitle}>3. Space requirements</h3>
-          <label style={label}>
-            Source
-            <select value={source} onChange={(e) => setSource(e.target.value)} style={{ padding: 8 }}>
-              {LEAD_SOURCES.map((s) => (
-                <option key={s} value={s}>
-                  {s.replace(/_/g, " ")}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label style={label}>
-            Interested property
-            <select value={propertyId} onChange={(e) => setPropertyId(e.target.value)} style={{ padding: 8 }}>
-              <option value="">—</option>
-              {properties.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {formatPropertyLabel(p, { includeCity: true })}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label style={label}>
-            Space type
-            <select value={spaceType} onChange={(e) => setSpaceType(e.target.value)} style={{ padding: 8 }}>
-              {SPACE_TYPES.map((o) => (
-                <option key={o.value || "empty"} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label style={label}>
-            Size needed (m²)
-            <input value={sizeM2} onChange={(e) => setSizeM2(e.target.value)} inputMode="decimal" style={{ padding: 8 }} />
-          </label>
-          <label style={label}>
-            Budget (€ / month)
-            <input value={budgetMonth} onChange={(e) => setBudgetMonth(e.target.value)} inputMode="decimal" style={{ padding: 8 }} />
-          </label>
-          <label style={label}>
-            Preferred move-in date
-            <input type="date" value={moveIn} onChange={(e) => setMoveIn(e.target.value)} style={{ padding: 8 }} />
-          </label>
-          <h3 style={sectionTitle}>4. Billing details</h3>
-          <label style={label}>
-            Billing address
-            <input value={billingStreet} onChange={(e) => setBillingStreet(e.target.value)} style={{ padding: 8 }} />
-          </label>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10 }}>
-            <label style={label}>
-              Billing postal code
-              <input value={billingPostal} onChange={(e) => setBillingPostal(e.target.value)} style={{ padding: 8 }} />
-            </label>
-            <label style={label}>
-              Billing city
-              <input value={billingCity} onChange={(e) => setBillingCity(e.target.value)} style={{ padding: 8 }} />
-            </label>
+        {/* Header */}
+        <div style={{
+          padding: '28px 32px 20px', borderBottom: `1px solid ${colors.border}`,
+          display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px',
+        }}>
+          <div>
+            <h2 style={{
+              fontFamily: fonts.heading, fontSize: '26px', fontWeight: 400,
+              color: colors.textPrimary, margin: 0, lineHeight: 1.2,
+            }}>Edit Lead</h2>
+            <p style={{
+              fontFamily: fonts.body, fontSize: '13px', color: colors.warmGrayLight,
+              margin: '6px 0 0', lineHeight: 1.4,
+            }}>Update lead details. Y-tunnus and e-invoice fields support Finnish invoicing (Finvoice).</p>
           </div>
-          <label style={label}>
-            Billing email
-            <input type="email" value={billingEmail} onChange={(e) => setBillingEmail(e.target.value)} style={{ padding: 8 }} />
-          </label>
-          <label style={label}>
-            E-invoice address (verkkolaskuosoite)
-            <input value={eInvoiceAddress} onChange={(e) => setEInvoiceAddress(e.target.value)} style={{ padding: 8 }} />
-          </label>
-          <label style={label}>
-            E-invoice operator
-            <input value={eInvoiceOperator} onChange={(e) => setEInvoiceOperator(e.target.value)} style={{ padding: 8 }} />
-          </label>
+          <button onClick={onClose} style={{
+            background: 'none', border: 'none', cursor: 'pointer', padding: '4px',
+            color: colors.warmGrayLight, borderRadius: '6px',
+          }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = colors.textPrimary)}
+            onMouseLeave={(e) => (e.currentTarget.style.color = colors.warmGrayLight)}
+            aria-label="Close">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="5" y1="5" x2="15" y2="15" /><line x1="15" y1="5" x2="5" y2="15" />
+            </svg>
+          </button>
+        </div>
 
-          <h3 style={sectionTitle}>5. Notes</h3>
-          <label style={label}>
-            Notes
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} style={{ padding: 8 }} />
-          </label>
+        {/* Scrollable Body */}
+        <div style={{ padding: '24px 32px', overflowY: 'auto', flex: 1 }}>
+          {loading ? (
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              padding: '60px 0', fontFamily: fonts.body, fontSize: '14px', color: colors.warmGrayLight,
+            }}>
+              <svg width="20" height="20" viewBox="0 0 20 20" style={{ marginRight: '10px', animation: 'spin 1s linear infinite' }}>
+                <circle cx="10" cy="10" r="8" stroke={colors.petrolGreen} strokeWidth="2" fill="none" strokeDasharray="36 14" />
+              </svg>
+              Loading lead details...
+            </div>
+          ) : (
+            <>
+              <h3 style={sectionTitleStyle}>1. Company Information</h3>
+              <InputField label="Company name" field="company_name" required />
+              <div style={gridTwo}>
+                <InputField label="Y-tunnus" field="y_tunnus" placeholder="1234567-8" />
+                <InputField label="VAT number (ALV-numero)" field="vat_number" placeholder="FI12345678" />
+              </div>
+              <div style={gridTwo}>
+                <SelectField label="Company type" field="company_type" options={[
+                  { value: 'oy', label: 'Oy (Ltd)' }, { value: 'oyj', label: 'Oyj (Plc)' },
+                  { value: 'tmi', label: 'Tmi (Sole trader)' }, { value: 'ky', label: 'Ky (Partnership)' },
+                  { value: 'ay', label: 'Ay (General partnership)' }, { value: 'osk', label: 'Osk (Cooperative)' },
+                  { value: 'ry', label: 'Ry (Association)' }, { value: 'saatio', label: 'Säätiö (Foundation)' },
+                  { value: 'other', label: 'Other' },
+                ]} />
+                <SelectField label="Industry" field="industry" options={[
+                  { value: 'technology', label: 'Technology' }, { value: 'finance', label: 'Finance & Banking' },
+                  { value: 'consulting', label: 'Consulting' }, { value: 'legal', label: 'Legal' },
+                  { value: 'marketing', label: 'Marketing & Media' }, { value: 'healthcare', label: 'Healthcare' },
+                  { value: 'education', label: 'Education' }, { value: 'retail', label: 'Retail & E-commerce' },
+                  { value: 'manufacturing', label: 'Manufacturing' }, { value: 'real_estate', label: 'Real Estate' },
+                  { value: 'nonprofit', label: 'Non-profit' }, { value: 'other', label: 'Other' },
+                ]} />
+              </div>
+              <div style={gridTwo}>
+                <SelectField label="Company size" field="company_size" options={[
+                  { value: '1-5', label: '1–5 employees' }, { value: '6-20', label: '6–20 employees' },
+                  { value: '21-50', label: '21–50 employees' }, { value: '51-200', label: '51–200 employees' },
+                  { value: '201-500', label: '201–500 employees' }, { value: '500+', label: '500+ employees' },
+                ]} />
+                <InputField label="Website" field="website" placeholder="https://" />
+              </div>
 
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
-            <button type="button" onClick={onClose} disabled={saving} style={{ padding: "8px 14px" }}>
-              Cancel
-            </button>
-            <button type="submit" disabled={saving} style={{ padding: "8px 14px", fontWeight: 600 }}>
-              {saving ? "Saving…" : "Save"}
-            </button>
-          </div>
-        </form>
+              <h3 style={{ ...sectionTitleStyle, marginTop: '28px' }}>2. Contact Person</h3>
+              <div style={gridTwo}>
+                <InputField label="First name" field="contact_first_name" required />
+                <InputField label="Last name" field="contact_last_name" required />
+              </div>
+              <div style={gridTwo}>
+                <InputField label="Email" field="email" type="email" placeholder="name@company.com" />
+                <InputField label="Phone" field="phone" type="tel" placeholder="+358" />
+              </div>
+              <div style={gridTwo}>
+                <InputField label="Title / Role" field="contact_title" placeholder="e.g. CEO, Office Manager" />
+                <InputField label="Direct phone" field="contact_phone_direct" type="tel" placeholder="+358" />
+              </div>
+
+              <h3 style={{ ...sectionTitleStyle, marginTop: '28px' }}>3. Billing Address</h3>
+              <InputField label="Street address" field="billing_address" />
+              <div style={gridThree}>
+                <InputField label="Postal code" field="billing_postal_code" />
+                <InputField label="City" field="billing_city" />
+                <InputField label="Billing email" field="billing_email" type="email" placeholder="billing@company.com" />
+              </div>
+
+              <h3 style={{ ...sectionTitleStyle, marginTop: '28px' }}>4. E-Invoicing (Finvoice)</h3>
+              <div style={gridThree}>
+                <InputField label="E-invoice address" field="e_invoice_address" placeholder="003712345678" />
+                <InputField label="Operator name" field="e_invoice_operator" placeholder="e.g. Basware" />
+                <InputField label="Operator code" field="e_invoice_operator_code" placeholder="e.g. BAWCFI22" />
+              </div>
+
+              <h3 style={{ ...sectionTitleStyle, marginTop: '28px' }}>5. Space Interest</h3>
+              <div style={gridThree}>
+                <SelectField label="Space type" field="interested_space_type" options={[
+                  { value: 'private_office', label: 'Private Office' }, { value: 'open_desk', label: 'Open Desk' },
+                  { value: 'meeting_room', label: 'Meeting Room' }, { value: 'event_space', label: 'Event / Venue' },
+                  { value: 'virtual_office', label: 'Virtual Office' }, { value: 'coworking', label: 'Coworking' },
+                  { value: 'other', label: 'Other' },
+                ]} />
+                <InputField label="Approx. size (m²)" field="approx_size_m2" type="number" placeholder="e.g. 50" />
+                <InputField label="Budget (€/month)" field="budget_eur_month" type="number" placeholder="e.g. 2000" />
+              </div>
+              <div style={gridTwo}>
+                <InputField label="Preferred move-in date" field="preferred_move_in_date" type="date" />
+                <InputField label="Pipeline owner" field="pipeline_owner" placeholder="e.g. Mariia, Inka" />
+              </div>
+
+              <h3 style={{ ...sectionTitleStyle, marginTop: '28px' }}>6. Lead Status</h3>
+              <div style={gridTwo}>
+                <SelectField label="Stage" field="stage" options={EDIT_LEAD_MODAL_STAGE_OPTIONS} />
+                <SelectField label="Source" field="source" options={[
+                  { value: 'website', label: 'Website' }, { value: 'referral', label: 'Referral' },
+                  { value: 'tour', label: 'Office Tour' }, { value: 'cold_call', label: 'Cold Call' },
+                  { value: 'event', label: 'Event' }, { value: 'linkedin', label: 'LinkedIn' },
+                  { value: 'partner', label: 'Partner' }, { value: 'other', label: 'Other' },
+                ]} />
+              </div>
+              <div style={gridTwo}>
+                <InputField label="Next action" field="next_action" placeholder="e.g. Send proposal, Schedule tour" />
+                <InputField label="Next action date" field="next_action_date" type="date" />
+              </div>
+              <div style={{ marginBottom: '14px' }}>
+                <label style={labelStyle}>Notes</label>
+                <textarea value={formData.notes}
+                  onChange={(e) => handleChange('notes', e.target.value)}
+                  placeholder="Internal notes about this lead..."
+                  style={{ ...inputStyle, minHeight: '80px', resize: 'vertical' as const }}
+                  onFocus={onFocus as any} onBlur={onBlur as any} />
+              </div>
+
+              {/* Delete Danger Zone */}
+              <div style={{
+                marginTop: '32px', padding: '16px 20px',
+                backgroundColor: colors.redLight, borderRadius: '10px', border: '1px solid #f0d0cc',
+              }}>
+                {!showDeleteConfirm ? (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div>
+                      <p style={{ fontFamily: fonts.body, fontSize: '14px', fontWeight: 600, color: colors.red, margin: 0 }}>Danger zone</p>
+                      <p style={{ fontFamily: fonts.body, fontSize: '12px', color: colors.warmGray, margin: '2px 0 0' }}>
+                        Permanently delete this lead and all associated data.
+                      </p>
+                    </div>
+                    <button onClick={() => setShowDeleteConfirm(true)} style={{
+                      fontFamily: fonts.body, fontSize: '13px', fontWeight: 500,
+                      color: colors.red, backgroundColor: 'transparent',
+                      border: `1px solid ${colors.red}`, borderRadius: '8px',
+                      padding: '9px 18px', cursor: 'pointer', transition: 'background-color 0.2s, color 0.2s',
+                    }}
+                      onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.red; e.currentTarget.style.color = colors.white; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = colors.red; }}
+                    >
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                          <path d="M2 3.5h10M5.5 6v4M8.5 6v4M3 3.5l.5 8a1 1 0 001 1h5a1 1 0 001-1l.5-8M5 3.5V2a1 1 0 011-1h2a1 1 0 011 1v1.5" />
+                        </svg>
+                        Delete lead
+                      </span>
+                    </button>
+                  </div>
+                ) : (
+                  <div>
+                    <p style={{ fontFamily: fonts.body, fontSize: '14px', fontWeight: 600, color: colors.red, margin: '0 0 4px' }}>Are you sure?</p>
+                    <p style={{ fontFamily: fonts.body, fontSize: '12px', color: colors.warmGray, margin: '0 0 12px' }}>
+                      This action cannot be undone. The lead &quot;{formData.company_name || 'Unnamed'}&quot; will be permanently removed.
+                    </p>
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                      <button onClick={handleDelete} disabled={deleting} style={{
+                        fontFamily: fonts.body, fontSize: '13px', fontWeight: 500,
+                        color: colors.white, backgroundColor: colors.red,
+                        border: `1px solid ${colors.red}`, borderRadius: '8px',
+                        padding: '9px 18px', cursor: 'pointer', opacity: deleting ? 0.6 : 1,
+                      }}>{deleting ? 'Deleting...' : 'Yes, delete permanently'}</button>
+                      <button onClick={() => setShowDeleteConfirm(false)} style={{
+                        fontFamily: fonts.body, fontSize: '14px', fontWeight: 500,
+                        color: colors.textSecondary, backgroundColor: 'transparent',
+                        border: `1px solid ${colors.border}`, borderRadius: '8px',
+                        padding: '10px 20px', cursor: 'pointer',
+                      }}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{
+          padding: '16px 32px', borderTop: `1px solid ${colors.border}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '12px',
+          backgroundColor: colors.creamDark,
+        }}>
+          <button onClick={onClose} style={{
+            fontFamily: fonts.body, fontSize: '14px', fontWeight: 500,
+            color: colors.textSecondary, backgroundColor: 'transparent',
+            border: `1px solid ${colors.border}`, borderRadius: '8px',
+            padding: '10px 20px', cursor: 'pointer',
+          }}
+            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.white; }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+          >Cancel</button>
+          <button onClick={handleSave} disabled={loading} style={{
+            fontFamily: fonts.body, fontSize: '14px', fontWeight: 600,
+            color: colors.white, backgroundColor: colors.petrolGreen,
+            border: 'none', borderRadius: '8px', padding: '10px 24px',
+            cursor: 'pointer', transition: 'background-color 0.2s',
+            opacity: loading ? 0.6 : 1,
+          }}
+            onMouseEnter={(e) => { if (!loading) e.currentTarget.style.backgroundColor = colors.petrolDark; }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = colors.petrolGreen; }}
+          >{loading ? 'Saving...' : 'Save changes'}</button>
+        </div>
       </div>
+
+      <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   );
 }

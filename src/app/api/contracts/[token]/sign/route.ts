@@ -279,7 +279,7 @@ export async function POST(_req: Request, context: Ctx) {
       return NextResponse.json({ ok: true });
     }
 
-    if (row.status === "partially_signed" && row.signed_at && !isCounterSign) {
+    if ((row.status === "partially_signed") && row.signed_at && !isCounterSign) {
       return NextResponse.json(
         { error: "You have already signed this contract. Please wait for the VillageWorks counter-signature to complete the process." },
         { status: 400 },
